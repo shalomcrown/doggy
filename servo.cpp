@@ -2,6 +2,7 @@
 #include <cmath>
 #include <linux/i2c.h>
 #include <i2c/smbus.h>
+#include <iostream>
 
 #include "i2c_interface.hpp"
 #include "servo.h"
@@ -36,8 +37,8 @@ constexpr uint8_t OUTDRV             = 0x04;
 
 // =============================================================================
 
-void Servo::openBoard() {
-    bus_fd = openBus("/dev/i2c-1", 0x40);
+Servo::Servo() : bus_fd(openBus("/dev/i2c-1", 0x40)) {
+//    bus_fd = openBus("/dev/i2c-1", 0x40);
 
     writeRegisterByte(bus_fd, MODE2, OUTDRV);
     usleep(5'000);
@@ -47,7 +48,7 @@ void Servo::openBoard() {
     mode1_val &= ~SLEEP;
     writeRegisterByte(bus_fd, MODE1, mode1_val);
     usleep(5'000);
-    set_pwm_freq(200.0);
+    set_pwm_freq(50.0);
     set_all_pwm(0,0);
 }
 
@@ -88,10 +89,10 @@ void Servo::set_pwm_freq(const double freq_hz) {
 
 void Servo::set_pwm(const int channel, const uint16_t on, const uint16_t off) {
   const auto channel_offset = 4 * channel;
-  writeRegisterByte(bus_fd,LED0_ON_L+channel_offset, on & 0xFF);
-  writeRegisterByte(bus_fd,LED0_ON_H+channel_offset, on >> 8);
-  writeRegisterByte(bus_fd,LED0_OFF_L+channel_offset, off & 0xFF);
-  writeRegisterByte(bus_fd,LED0_OFF_H+channel_offset, off >> 8);
+  writeRegisterByte(bus_fd, LED0_ON_L + channel_offset, on & 0xFF);
+  writeRegisterByte(bus_fd, LED0_ON_H + channel_offset, on >> 8);
+  writeRegisterByte(bus_fd, LED0_OFF_L + channel_offset, off & 0xFF);
+  writeRegisterByte(bus_fd, LED0_OFF_H + channel_offset, off >> 8);
 }
 
 // =============================================================================
@@ -101,4 +102,19 @@ void Servo::set_pwm_ms(const int channel, const double ms) {
   auto bits_per_ms = 4096 / period_ms;
   auto bits = ms * bits_per_ms;
   set_pwm(channel, 0, bits);
+}
+
+// =============================================================================
+
+void Servo::set_angle(const int channel, const double angleDegrees) {
+    std::cout << "Set andgle: " << angleDegrees << " To channel: " << channel << std::endl;
+    double value = maxPwmMs * angleDegrees / maxAngle + minPwmMs;
+    set_pwm_ms(channel,  value);
+}
+
+// =============================================================================
+
+Servo::~Servo() {
+    set_all_pwm(0,0);
+    closeBus(bus_fd);
 }

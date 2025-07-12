@@ -1,27 +1,31 @@
 #include <iostream>
 #include <unistd.h>
+
 #include "gpioPin.hpp"
 #include "servo.h"
+
 
 using namespace std;
 
 
 
 int main() {
+
     cout << "Servo test!" << endl;
 
     Servo servo;
-    servo.openBoard();
 
     while(true) {
-      servo.set_pwm(0, 0, 370);
       usleep(1'000'000);
-      servo.set_pwm(0, 0, 415);
+      servo.set_angle(0, 0);
       usleep(1'000'000);
-      servo.set_pwm(0, 0, 460);
+      servo.set_angle(0, 10);
       usleep(1'000'000);
-      servo.set_pwm(0, 0, 415);
+      servo.set_angle(0, 45);
       usleep(1'000'000);
+      servo.set_angle(0, 90);
+      usleep(1'000'000);
+      servo.set_angle(0, 180);
     }
 
     return 0;
