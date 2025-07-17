@@ -1,7 +1,8 @@
 #ifndef SERVO_H
 #define SERVO_H
-
-
+#include <unistd.h>
+#include <cmath>
+#include <stdint.h>
 
 class Servo {
 private:

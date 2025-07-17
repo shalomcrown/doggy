@@ -2,7 +2,7 @@
 #include <unistd.h>
 
 #include "gpioPin.hpp"
-#include "servo.h"
+#include "doggy.h"
 
 
 using namespace std;
@@ -11,22 +11,12 @@ using namespace std;
 
 int main() {
 
-    cout << "Servo test!" << endl;
+    cout << "Doggy test!" << endl;
 
-    Servo servo;
+    Dog doggy;
 
-    while(true) {
-      usleep(1'000'000);
-      servo.set_angle(0, 0);
-      usleep(1'000'000);
-      servo.set_angle(0, 10);
-      usleep(1'000'000);
-      servo.set_angle(0, 45);
-      usleep(1'000'000);
-      servo.set_angle(0, 90);
-      usleep(1'000'000);
-      servo.set_angle(0, 180);
-    }
+    doggy.allToNinety();
 
+    usleep(1000000);
     return 0;
 }

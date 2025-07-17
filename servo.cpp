@@ -38,8 +38,6 @@ constexpr uint8_t OUTDRV             = 0x04;
 // =============================================================================
 
 Servo::Servo() : bus_fd(openBus("/dev/i2c-1", 0x40)) {
-//    bus_fd = openBus("/dev/i2c-1", 0x40);
-
     writeRegisterByte(bus_fd, MODE2, OUTDRV);
     usleep(5'000);
     writeRegisterByte(bus_fd, MODE1, ALLCALL);
