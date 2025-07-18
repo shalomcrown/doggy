@@ -1,9 +1,11 @@
 #include <sys/ioctl.h>
+#include <cstring>
 #include <stdio.h>
 #include <stdarg.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <system_error>
+#include <iostream>
 
 extern "C" {
 #include <linux/i2c.h>
@@ -60,6 +62,75 @@ uint8_t readRegisterByte(const int bus_fd, const uint8_t register_address) {
   }
 
   return data.byte & 0xFF;
+}
+
+
+// =================================================================
+
+
+int i2c_rdwr_block(int fd, uint8_t reg, uint8_t read_write, uint8_t length, unsigned char* buffer)
+{
+    struct i2c_smbus_ioctl_data ioctl_data;
+    union i2c_smbus_data smbus_data;
+
+    int rv;
+
+    if(length > I2C_SMBUS_BLOCK_MAX)
+    {
+        std::cerr << "Requested Length is greater than the maximum specified" << std::endl;
+        return -1;
+    }
+
+    // First byte is always the size to write and to receive
+    // https://github.com/torvalds/linux/blob/master/drivers/i2c/i2c-core-smbus.c
+    // (See i2c_smbus_xfer_emulated CASE:I2C_SMBUS_I2C_BLOCK_DATA)
+    smbus_data.block[0] = length;
+
+    if ( read_write != I2C_SMBUS_READ )
+    {
+        for(int i = 0; i < length; i++)
+        {
+            smbus_data.block[i + 1] = buffer[i];
+        }
+    }
+
+
+    ioctl_data.read_write = read_write;
+    ioctl_data.command = reg;
+    ioctl_data.size = I2C_SMBUS_I2C_BLOCK_DATA;
+    ioctl_data.data = &smbus_data;
+
+    rv = ioctl (fd, I2C_SMBUS, &ioctl_data);
+    if (rv < 0)
+    {
+        std::cerr << "Accessing I2C Read/Write failed! Error is: " << strerror(errno) << std::endl;
+        return rv;
+    }
+
+    if (read_write == I2C_SMBUS_READ)
+    {
+        for(int i = 0; i < length; i++)
+        {
+            // Skip the first byte, which is the length of the rest of the block.
+            buffer[i] = smbus_data.block[i+1];
+        }
+    }
+
+    return rv;
+}
+
+
+
+void readRegisterBlock(const int bus_fd, const uint8_t register_address, uint8_t blockSize, uint8_t *blockData) {
+
+//    const auto err = i2c_smbus_read_i2c_block_data(bus_fd, register_address, blockSize, blockData);
+    const auto err = i2c_rdwr_block(bus_fd, register_address, I2C_SMBUS_READ, blockSize, blockData);
+
+    if (err) {
+      const auto msg = "Could not read value at register " + std::to_string(register_address);
+      throw std::system_error(-err, std::system_category(), msg);
+    }
+
 }
 
 // =============================================================================

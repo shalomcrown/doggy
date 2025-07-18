@@ -3,6 +3,7 @@
 
 #include "gpioPin.hpp"
 #include "doggy.h"
+#include "imu.h"
 
 
 using namespace std;
@@ -10,13 +11,22 @@ using namespace std;
 
 
 int main() {
-
     cout << "Doggy test!" << endl;
 
-    Dog doggy;
+    Imu imu;
 
-    doggy.allToNinety();
+    for (int i = 100; i > 0; i--) {
+        auto acc = imu.readAccelerometer();
 
-    usleep(1000000);
+        cout << "Accelerometer: " << acc << std::endl;
+        usleep(300000);
+    }
+
+
+//    Dog doggy;
+//    doggy.allToNinety();
+//    usleep(10000000);
+
+
     return 0;
 }

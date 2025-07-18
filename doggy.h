@@ -18,6 +18,14 @@ public:
     void allToNinety();
 };
 
+class Head {
+public:
+    Servo &servo;
+    int neck;
+    Head(int neck, Servo &servo);
+    void lookForward();
+};
+
 class Dog {
 public:
     Servo servo;
@@ -25,6 +33,8 @@ public:
     Leg frontLeft;
     Leg rearLeft;
     Leg rearRight;
+    Head head;
+
 
     Dog();
     void allToNinety();

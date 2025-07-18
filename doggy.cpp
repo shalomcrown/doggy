@@ -5,6 +5,13 @@ Leg::Leg(int waistServo, int hipServo, int kneeServo, Servo &servo) :
     waistServo(waistServo), hipServo(hipServo), kneeServo(kneeServo), servo(servo) {
 }
 
+Head::Head(int neck, Servo &servo) : servo(servo), neck(neck) {
+}
+
+void Head::lookForward() {
+    servo.set_angle(neck, 90);
+}
+
 // =================================================================
 
 void Leg::allToNinety() {
@@ -16,6 +23,7 @@ void Leg::allToNinety() {
 // =================================================================
 
 Dog::Dog() : servo(),
+    head(15, servo),
     frontRight(11, 12, 13, servo),  frontLeft(2, 3, 4, servo),
     rearLeft(7, 6, 5, servo),       rearRight(8, 9,10, servo) {
 }
@@ -26,4 +34,5 @@ void Dog::allToNinety() {
     frontRight.allToNinety();
     frontLeft.allToNinety();
     rearLeft.allToNinety();
+    head.lookForward();
 }
