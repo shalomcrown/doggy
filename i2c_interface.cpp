@@ -67,6 +67,7 @@ uint8_t readRegisterByte(const int bus_fd, const uint8_t register_address) {
 
 // =================================================================
 
+// See: https://stackoverflow.com/questions/55976683/read-a-block-of-data-from-a-specific-registerfifo-using-c-c-and-i2c-in-raspb
 
 int i2c_rdwr_block(int fd, uint8_t reg, uint8_t read_write, uint8_t length, unsigned char* buffer)
 {

@@ -13,7 +13,7 @@ public:
     dlib::vector<double> gyroOffset {0.0, 0.0, 0.0};
     dlib::vector<double> acceleratorOffset {0.0, 0.0, 0.0};
 
-    double accelerometerFullScale {8.0};
+    double accelerometerSensitivityPerBit {16384.0};
 
     dlib::vector<double> readGyro();
     dlib::vector<double> readAccelerometer();
