@@ -18,7 +18,11 @@ int main() {
     for (int i = 100; i > 0; i--) {
         auto acc = imu.readAccelerometer();
 
-        cout << "Accelerometer: " << acc << std::endl;
+        cout << "Accelerometer: " << acc;
+        cout << " Gyro: " << imu.readGyro();
+        cout << " Temperature:" << imu.readTemperature();
+
+        cout << std::endl;
         usleep(300000);
     }
 
