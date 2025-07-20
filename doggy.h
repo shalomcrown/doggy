@@ -1,6 +1,7 @@
 #ifndef DOGGY_H
 #define DOGGY_H
 
+#include "imu.h"
 #define ADAFRUIT_SERVO_BUS 1
 #define ADAFRUIT_SERVO_ID 0x40
 
@@ -13,9 +14,13 @@ public:
     int kneeServo;
 
     Servo &servo;
+    Imu imu;
     Leg(int waistServo, int hipServo, int kneeServo, Servo &servo);
 
     void allToNinety();
+    void setKnee(double angle);
+    void setHip(double angle);
+    void setWaist(double angle);
 };
 
 class Head {
@@ -38,6 +43,7 @@ public:
 
     Dog();
     void allToNinety();
+    bool homing();
 
 };
 

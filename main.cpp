@@ -13,22 +13,11 @@ using namespace std;
 int main() {
     cout << "Doggy test!" << endl;
 
-    Imu imu;
 
-    for (int i = 100; i > 0; i--) {
-        auto acc = imu.readAccelerometer();
+    Dog doggy;
 
-        cout << "Accelerometer: " << acc;
-        cout << " Gyro: " << imu.readGyro();
-        cout << " Temperature:" << imu.readTemperature();
+    doggy.homing();
 
-        cout << std::endl;
-        usleep(300000);
-    }
-
-
-//    Dog doggy;
-//    doggy.allToNinety();
 //    usleep(10000000);
 
 

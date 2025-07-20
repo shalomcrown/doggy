@@ -14,6 +14,20 @@ void Head::lookForward() {
 
 // =================================================================
 
+void Leg::setKnee(double angle) {
+    servo.set_angle(kneeServo, angle);
+}
+
+void Leg::setHip(double angle) {
+    servo.set_angle(hipServo, angle);
+}
+
+void Leg::setWaist(double angle) {
+    servo.set_angle(waistServo, angle);
+}
+
+// =================================================================
+
 void Leg::allToNinety() {
     servo.set_angle(waistServo, 90);
     servo.set_angle(hipServo, 90);
@@ -35,4 +49,16 @@ void Dog::allToNinety() {
     frontLeft.allToNinety();
     rearLeft.allToNinety();
     head.lookForward();
+}
+
+// =================================================================
+bool Dog::homing() {
+    allToNinety();
+
+    frontRight.setKnee(135);
+    frontLeft.setKnee(135);
+    rearLeft.setKnee(135);
+    rearRight.setKnee(135);
+
+    return true;
 }
