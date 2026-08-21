@@ -1,7 +1,6 @@
 #include <iostream>
 #include <unistd.h>
 
-#include "gpioPin.hpp"
 #include "doggy.h"
 #include "imu.h"
 

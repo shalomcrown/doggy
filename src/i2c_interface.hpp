@@ -1,6 +1,7 @@
 #ifndef I2C_INTERFACE_HPP
 #define I2C_INTERFACE_HPP
 
+#include <cstdint>
 #include <string>
 #include <unistd.h>
 
