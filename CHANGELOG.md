@@ -14,6 +14,9 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 ### Added
 - `scripts/install-prereqs.sh` installs Raspberry Pi native build deps and Ubuntu aarch64 cross tools (Qt Creator and editors included by default; no Windows target).
 - CMake presets `native-debug`, `native-release`, and `ubuntu-aarch64-cross` (cross requires a Pi sysroot).
+- `install.sh` copies a `.deb` to a remote host over SSH and installs it with `apt-get`.
+- In-process web UI (cpp-httplib): Home button, servo table, sliders (100ms idle before send).
+- `ServoBoard` is the PCA9685; `Servo` is one named channel with last commanded angle/PWM.
 
 ### Changed
 - ⚠ Breaking: application sources moved to `src/`. Configure with the new CMake presets instead of listing files at the repo root.

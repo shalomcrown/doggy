@@ -25,6 +25,32 @@ cmake --build --preset native-debug
 
 Use `native-release` for an optimised binary.
 
+## Web UI
+
+`./doggy` stays running and serves a single page (LAN, no login):
+
+```sh
+./build/native-debug/doggy
+# http://<pi-ip>:8080
+```
+
+- **Home** runs the homing pose
+- The table lists each named servo (last commanded PWM and angle) with a slider. The slider sends `POST /api/servos/{id}` after **100ms idle**
+
+Port: `DOGGY_HTTP_PORT` (default `8080`). HTML: `DOGGY_WEB_ROOT` or `/usr/share/doggy` after the DEB is installed.
+
+## Package and install on a remote Pi
+
+```sh
+cmake --preset native-release
+cmake --build --preset native-release --target package
+./install.sh user@hostname                  # newest .deb under build/
+./install.sh user@hostname path/to.deb      # explicit package
+./install.sh --dry-run user@hostname        # print scp/ssh only
+```
+
+The script copies the `.deb` to `/tmp` over SSH and runs `sudo apt-get install`.
+
 ## Ubuntu → Raspberry Pi aarch64 cross-build
 
 Cross-compilation needs a Raspberry Pi OS **sysroot** (headers and ARM libraries for i2c and dlib). Configure fails without it.
@@ -43,7 +69,7 @@ rsync -aH --info=progress2 pi-user@raspberrypi:/usr/ /path/to/pi-sysroot/usr/
 
 ## Tests
 
-There is no C++ unit-test framework yet. CTest runs the prereqs-script checks:
+CTest covers installer scripts, PWM math, and the HTTP API (no I2C):
 
 ```sh
 cmake --preset native-debug

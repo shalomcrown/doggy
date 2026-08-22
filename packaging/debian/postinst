@@ -1,0 +1,35 @@
+#!/bin/sh
+set -e
+
+ensure_user() {
+    if getent passwd doggy >/dev/null 2>&1; then
+        return 0
+    fi
+
+    useradd --system --no-create-home --home /nonexistent \
+        --shell /usr/sbin/nologin --comment "doggy robot dog" doggy
+}
+
+ensure_i2c_group() {
+    if getent group i2c >/dev/null 2>&1; then
+        usermod -aG i2c doggy
+    fi
+}
+
+reload_and_start() {
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload
+        systemctl enable doggy.service
+        systemctl restart doggy.service || systemctl start doggy.service || true
+    fi
+}
+
+case "$1" in
+    configure)
+        ensure_user
+        ensure_i2c_group
+        reload_and_start
+        ;;
+esac
+
+exit 0

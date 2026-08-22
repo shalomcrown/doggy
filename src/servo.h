@@ -1,31 +1,30 @@
 #ifndef SERVO_H
 #define SERVO_H
-#include <unistd.h>
-#include <cmath>
-#include <stdint.h>
+
+#include <cstdint>
+#include <string>
+
+class ServoBoard;
+
+// ================================================================================
 
 class Servo {
 private:
-    int bus_fd;
-    double frequency;
-    double maxAngle = 180;
-    double minPwmMs = 0.5;
-    double maxPwmMs = 2.0;
+    ServoBoard &board;
+    int channel;
+    std::string servoName;
+    double angleDegrees;
+    uint16_t pwmTicks;
 
 public:
+    Servo(ServoBoard &board, int channel, std::string name);
 
-    void openBoard();
-    void set_all_pwm(const uint16_t on, const uint16_t off);
-    void set_pwm_freq(const double freq_hz);
-    void set_pwm(const int channel, const uint16_t on, const uint16_t off);
-    void set_pwm_ms(const int channel, const double ms);
-    void set_angle(const int channel, const double angleDegrees);
+    int id() const;
+    const std::string &name() const;
+    double angle() const;
+    int pwm() const;
 
-    ~Servo();
-    Servo();
+    void setAngle(double degrees);
 };
 
-
-
-
-#endif // SERVO_H
+#endif

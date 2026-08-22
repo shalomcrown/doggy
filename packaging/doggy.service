@@ -1,0 +1,17 @@
+[Unit]
+Description=shaloms-doggy robot dog web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=doggy
+Group=doggy
+SupplementaryGroups=i2c
+ExecStart=/usr/bin/doggy
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

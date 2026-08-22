@@ -1,21 +1,27 @@
 #ifndef DOGGY_H
 #define DOGGY_H
 
+#include "dog_api.h"
 #include "imu.h"
+#include "servo.h"
+#include "servo_board.h"
+
+#include <mutex>
+#include <vector>
+
 #define ADAFRUIT_SERVO_BUS 1
 #define ADAFRUIT_SERVO_ID 0x40
 
-#include "servo.h"
+// ================================================================================
 
 class Leg {
 public:
-    int waistServo;
-    int hipServo;
-    int kneeServo;
-
-    Servo &servo;
+    Servo &waist;
+    Servo &hip;
+    Servo &knee;
     Imu imu;
-    Leg(int waistServo, int hipServo, int kneeServo, Servo &servo);
+
+    Leg(Servo &waist, Servo &hip, Servo &knee);
 
     void allToNinety();
     void setKnee(double angle);
@@ -23,28 +29,54 @@ public:
     void setWaist(double angle);
 };
 
+// ================================================================================
+
 class Head {
 public:
-    Servo &servo;
-    int neck;
-    Head(int neck, Servo &servo);
+    Servo &neck;
+
+    Head(Servo &neck);
     void lookForward();
 };
 
-class Dog {
+// ================================================================================
+
+class Dog : public DogApi {
 public:
-    Servo servo;
+    ServoBoard board;
+    Servo frontRightWaist;
+    Servo frontRightHip;
+    Servo frontRightKnee;
+    Servo frontLeftWaist;
+    Servo frontLeftHip;
+    Servo frontLeftKnee;
+    Servo rearLeftWaist;
+    Servo rearLeftHip;
+    Servo rearLeftKnee;
+    Servo rearRightWaist;
+    Servo rearRightHip;
+    Servo rearRightKnee;
+    Servo headNeck;
     Leg frontRight;
     Leg frontLeft;
     Leg rearLeft;
     Leg rearRight;
     Head head;
 
-
     Dog();
     void allToNinety();
+
+    std::vector<ServoSnapshot> listServos() override;
+    CommandResult home() override;
+    CommandResult setServoAngle(int id, double angle) override;
     bool homing();
 
+private:
+    std::vector<Servo *> servos;
+    std::mutex mutex;
+
+    Servo *findServo(int id);
+    std::vector<ServoSnapshot> snapshotUnlocked() const;
 };
 
-#endif // DOGGY_H
+#endif
