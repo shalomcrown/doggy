@@ -42,7 +42,19 @@ int main() {
     const std::string emptyJson = status_to_json(empty);
     expect(emptyJson.find("\"errors\":[]") != std::string::npos, "empty status json errors");
     expect(emptyJson.find("\"imu\"") != std::string::npos, "empty status json has imu");
+    expect(emptyJson.find("\"battery\"") != std::string::npos, "empty status json has battery");
     expect(emptyJson.find("\"ok\":false") != std::string::npos, "empty status imu.ok false");
+    expect(emptyJson.find("\"voltage_v\"") != std::string::npos,
+           "empty status json has voltage_v");
+
+    DogStatus withBattery;
+    withBattery.battery.ok = true;
+    withBattery.battery.voltage_v = 7.4;
+    const std::string batteryJson = status_to_json(withBattery);
+    expect(batteryJson.find("\"ok\":true") != std::string::npos,
+           "status json battery.ok true");
+    expect(batteryJson.find("\"voltage_v\":7.4") != std::string::npos,
+           "status json battery voltage");
 
     DogStatus withI2c;
     withI2c.errors.push_back(DogError{

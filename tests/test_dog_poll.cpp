@@ -32,6 +32,12 @@ int main() {
         expect(second.imu.ok == false, "closed IMU stays not ok across polls");
     }
 
+    if (first.battery.ok) {
+        expect(second.battery.ok, "open ADC stays ok across polls");
+    } else {
+        expect(second.battery.ok == false, "closed ADC stays not ok across polls");
+    }
+
     if (failures != 0) {
         return 1;
     }

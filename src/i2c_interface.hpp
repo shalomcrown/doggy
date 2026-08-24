@@ -7,6 +7,8 @@
 
 
 int openBus(const std::string& device, const uint8_t address);
+void writeByte(const int bus_fd, const uint8_t value);
+uint8_t readByte(const int bus_fd);
 void writeRegisterByte(const int bus_fd, const uint8_t register_address, const uint8_t value);
 uint8_t readRegisterByte(const int bus_fd, const uint8_t register_address);
 void readRegisterBlock(const int bus_fd, const uint8_t register_address, uint8_t blockSize, uint8_t *blockData);

@@ -88,7 +88,14 @@ inline std::string status_to_json(const DogStatus &status) {
     append_xyz_json(os, "accel", status.imu.accel);
     os << ',';
     append_xyz_json(os, "gyro", status.imu.gyro);
-    os << "}}";
+    os << "},\"battery\":{\"ok\":";
+    if (status.battery.ok) {
+        os << "true";
+    } else {
+        os << "false";
+    }
+
+    os << ",\"voltage_v\":" << status.battery.voltage_v << "}}";
     return os.str();
 }
 

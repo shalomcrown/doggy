@@ -50,6 +50,7 @@ void Leg::allToNinety() {
 Dog::Dog() :
     board(),
     imu(),
+    ads(),
     frontRightWaist(board, 11, "front-right-waist"),
     frontRightHip(board, 12, "front-right-hip"),
     frontRightKnee(board, 13, "front-right-knee"),
@@ -86,6 +87,13 @@ Dog::Dog() :
         status.errors.push_back(DogError{
             DogErrorCode::i2c,
             "Could not open IMU on /dev/i2c-1 address 0x68"
+        });
+    }
+
+    if (ads.isOpen() == false) {
+        status.errors.push_back(DogError{
+            DogErrorCode::i2c,
+            "Could not open ADC on /dev/i2c-1 address 0x48"
         });
     }
 }
@@ -225,7 +233,27 @@ void Dog::pollImuUnlocked() {
 
 // ================================================================================
 
+void Dog::pollBatteryUnlocked() {
+    BatteryReading reading;
+    reading.ok = ads.isOpen();
+    if (reading.ok == false) {
+        status.battery = reading;
+        return;
+    }
+
+    try {
+        reading.voltage_v = ads.readBatteryVoltage();
+    } catch (const std::system_error &) {
+        reading.ok = false;
+    }
+
+    status.battery = reading;
+}
+
+// ================================================================================
+
 void Dog::poll() {
     std::lock_guard<std::mutex> lock(mutex);
     pollImuUnlocked();
+    pollBatteryUnlocked();
 }

@@ -36,6 +36,26 @@ int openBus(const std::string& device, const uint8_t address) {
 
 // =============================================================================
 
+void writeByte(const int bus_fd, const uint8_t value) {
+    const auto err = i2c_smbus_write_byte(bus_fd, value);
+    if (err) {
+        throw std::system_error(errno, std::system_category(), "Could not write I2C byte");
+    }
+}
+
+// =============================================================================
+
+uint8_t readByte(const int bus_fd) {
+    const auto err = i2c_smbus_read_byte(bus_fd);
+    if (err < 0) {
+        throw std::system_error(errno, std::system_category(), "Could not read I2C byte");
+    }
+
+    return static_cast<uint8_t>(err);
+}
+
+// =============================================================================
+
 void writeRegisterByte(const int bus_fd, const uint8_t register_address, const uint8_t value) {
   i2c_smbus_data data;
   data.byte = value;

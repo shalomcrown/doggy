@@ -89,6 +89,8 @@ add_executable(doggy
     src/servo.cpp
     src/imu.h
     src/imu.cpp
+    src/ads7830.h
+    src/ads7830.cpp
 )
 set(DOGGY_VERSION_BASE "1.0.0")
 set(DOGGY_VERSION_HEADER "${CMAKE_BINARY_DIR}/generated/doggy_version.h")
@@ -160,6 +162,10 @@ add_executable(test_pwm_math tests/test_pwm_math.cpp)
 target_include_directories(test_pwm_math PRIVATE "${CMAKE_SOURCE_DIR}/src")
 add_test(NAME pwm_math COMMAND test_pwm_math)
 
+add_executable(test_ads7830 tests/test_ads7830.cpp)
+target_include_directories(test_ads7830 PRIVATE "${CMAKE_SOURCE_DIR}/src")
+add_test(NAME ads7830 COMMAND test_ads7830)
+
 add_executable(test_servo_board
     tests/test_servo_board.cpp
     src/servo_board.cpp
@@ -180,6 +186,7 @@ add_executable(test_dog_poll
     tests/test_dog_poll.cpp
     src/doggy.cpp
     src/imu.cpp
+    src/ads7830.cpp
     src/servo.cpp
     src/servo_board.cpp
     src/i2c_interface.cpp

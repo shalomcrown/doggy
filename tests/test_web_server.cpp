@@ -129,6 +129,8 @@ int main() {
            "page fetches /api/status");
     expect(page && page->body.find("id=\"imu\"") != std::string::npos,
            "page has an IMU section");
+    expect(page && page->body.find("id=\"battery\"") != std::string::npos,
+           "page has a battery section");
 
     auto healthy = cli.Get("/api/status");
     expect(healthy && healthy->status == 200, "GET /api/status is 200");
@@ -136,8 +138,12 @@ int main() {
            "GET /api/status empty errors");
     expect(healthy && healthy->body.find("\"imu\"") != std::string::npos,
            "GET /api/status includes imu");
+    expect(healthy && healthy->body.find("\"battery\"") != std::string::npos,
+           "GET /api/status includes battery");
     expect(healthy && healthy->body.find("\"ok\":false") != std::string::npos,
            "GET /api/status imu.ok is false by default");
+    expect(healthy && healthy->body.find("\"voltage_v\"") != std::string::npos,
+           "GET /api/status includes voltage_v");
 
     dog.status.imu.ok = true;
     dog.status.imu.temperature_c = 37.5;
@@ -150,6 +156,12 @@ int main() {
            "GET /api/status temperature");
     expect(imuOk && imuOk->body.find("\"x\":0.1") != std::string::npos,
            "GET /api/status accel x");
+
+    dog.status.battery.ok = true;
+    dog.status.battery.voltage_v = 7.4;
+    auto batteryOk = cli.Get("/api/status");
+    expect(batteryOk && batteryOk->body.find("\"voltage_v\":7.4") != std::string::npos,
+           "GET /api/status battery voltage");
 
     dog.status.errors.push_back(DogError{DogErrorCode::i2c, "Could not open i2c bus.: No such file or directory"});
     auto unhealthy = cli.Get("/api/status");

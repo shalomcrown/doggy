@@ -11,7 +11,7 @@
     input[type="range"] { width: 12rem; }
     #status { min-height: 1.2em; }
     #errors { color: #8b0000; white-space: pre-wrap; }
-    #imu { margin-top: 1rem; }
+    #imu, #battery { margin-top: 1rem; }
   </style>
 </head>
 <body>
@@ -49,6 +49,11 @@
     </table>
     <p>Temperature: <span id="imu-temp">—</span> °C</p>
   </section>
+  <section id="battery" aria-labelledby="battery-heading">
+    <h2 id="battery-heading">Battery</h2>
+    <p id="battery-ok">Battery: unknown</p>
+    <p>Voltage: <span id="battery-v">—</span> V</p>
+  </section>
   <table>
     <thead>
       <tr>
@@ -75,6 +80,8 @@
     const imuGxEl = document.getElementById("imu-gx");
     const imuGyEl = document.getElementById("imu-gy");
     const imuGzEl = document.getElementById("imu-gz");
+    const batteryOkEl = document.getElementById("battery-ok");
+    const batteryVEl = document.getElementById("battery-v");
     let statusPollBusy = false;
 
     function setStatus(text) {
@@ -119,6 +126,21 @@
       imuGzEl.textContent = formatNum(imu.gyro && imu.gyro.z);
     }
 
+    function applyBattery(battery) {
+      if (battery === undefined || battery === null) {
+        batteryOkEl.textContent = "Battery: unavailable";
+        return;
+      }
+
+      if (battery.ok) {
+        batteryOkEl.textContent = "Battery: ok";
+      } else {
+        batteryOkEl.textContent = "Battery: not connected";
+      }
+
+      batteryVEl.textContent = formatNum(battery.voltage_v);
+    }
+
     async function loadDogStatus() {
       if (statusPollBusy) {
         return;
@@ -135,6 +157,7 @@
         const data = await res.json();
         applyErrors(data.errors || []);
         applyImu(data.imu);
+        applyBattery(data.battery);
       } catch (err) {
         applyErrors([{ message: "Failed to load status" }]);
       } finally {

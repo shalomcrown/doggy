@@ -1,6 +1,7 @@
 #ifndef DOGGY_H
 #define DOGGY_H
 
+#include "ads7830.h"
 #include "dog_api.h"
 #include "imu.h"
 #include "servo.h"
@@ -46,6 +47,7 @@ class Dog : public DogApi {
 public:
     ServoBoard board;
     Imu imu;
+    Ads7830 ads;
     Servo frontRightWaist;
     Servo frontRightHip;
     Servo frontRightKnee;
@@ -84,6 +86,7 @@ private:
     Servo *findServo(int id);
     std::vector<ServoSnapshot> snapshotUnlocked() const;
     void pollImuUnlocked();
+    void pollBatteryUnlocked();
 };
 
 #endif

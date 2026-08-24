@@ -39,10 +39,19 @@ public:
 
 // ================================================================================
 
+class BatteryReading {
+public:
+    bool ok = false;
+    double voltage_v = 0.0;
+};
+
+// ================================================================================
+
 class DogStatus {
 public:
     std::vector<DogError> errors;
     ImuReading imu;
+    BatteryReading battery;
 };
 
 #endif
