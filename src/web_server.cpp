@@ -3,7 +3,10 @@
 
 #include "httplib.h"
 
+#include <plog/Log.h>
+
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -92,7 +95,6 @@ public:
             }
         });
 
-
         server.Post(R"(/api/servos/(\d+))", [this](const httplib::Request &req, httplib::Response &res) {
             int id = 0;
             try {
@@ -129,6 +131,33 @@ public:
 
             res.set_content(error_json("bad_angle"), "application/json");
         });
+
+        server.set_logger([](const httplib::Request &req, const httplib::Response &res) {
+            const bool api =
+                    req.path == "/api" || req.path.compare(0, 5, "/api/") == 0;
+            const bool failed = res.status >= 400;
+            if (api == false && failed == false) {
+                return;
+            }
+
+            if (failed) {
+                PLOG_ERROR << req.method << " " << req.path << " " << res.status;
+                return;
+            }
+
+            if (req.method == "GET" && req.path == "/api/status") {
+                return;
+            }
+
+            PLOG_INFO << req.method << " " << req.path << " " << res.status;
+        });
+
+        server.set_exception_handler(
+                [](const httplib::Request &req, httplib::Response &res, std::exception_ptr) {
+                    PLOG_ERROR << "exception " << req.method << " " << req.path;
+                    res.status = 500;
+                    res.set_content(error_json("internal"), "application/json");
+                });
     }
 };
 

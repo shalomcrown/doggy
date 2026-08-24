@@ -49,12 +49,13 @@ void Leg::allToNinety() {
 
 Dog::Dog() :
     board(),
+    imu(),
     frontRightWaist(board, 11, "front-right-waist"),
     frontRightHip(board, 12, "front-right-hip"),
     frontRightKnee(board, 13, "front-right-knee"),
-    frontLeftWaist(board, 2, "front-left-waist"),
+    frontLeftWaist(board, 4, "front-left-waist"),
     frontLeftHip(board, 3, "front-left-hip"),
-    frontLeftKnee(board, 4, "front-left-knee"),
+    frontLeftKnee(board, 2, "front-left-knee"),
     rearLeftWaist(board, 7, "rear-left-waist"),
     rearLeftHip(board, 6, "rear-left-hip"),
     rearLeftKnee(board, 5, "rear-left-knee"),
@@ -78,6 +79,13 @@ Dog::Dog() :
         status.errors.push_back(DogError{
             DogErrorCode::i2c,
             board.lastError()
+        });
+    }
+
+    if (imu.isOpen() == false) {
+        status.errors.push_back(DogError{
+            DogErrorCode::i2c,
+            "Could not open IMU on /dev/i2c-1 address 0x68"
         });
     }
 }
@@ -186,4 +194,38 @@ CommandResult Dog::setServoAngle(int id, double angle) {
 DogStatus Dog::getStatus() const {
     std::lock_guard<std::mutex> lock(mutex);
     return status;
+}
+
+// ================================================================================
+
+void Dog::pollImuUnlocked() {
+    ImuReading reading;
+    reading.ok = imu.isOpen();
+    if (reading.ok == false) {
+        status.imu = reading;
+        return;
+    }
+
+    try {
+        const dlib::vector<double> accel = imu.readAccelerometer();
+        const dlib::vector<double> gyro = imu.readGyro();
+        reading.temperature_c = imu.readTemperature();
+        reading.accel.x = accel.x();
+        reading.accel.y = accel.y();
+        reading.accel.z = accel.z();
+        reading.gyro.x = gyro.x();
+        reading.gyro.y = gyro.y();
+        reading.gyro.z = gyro.z();
+    } catch (const std::system_error &) {
+        reading.ok = false;
+    }
+
+    status.imu = reading;
+}
+
+// ================================================================================
+
+void Dog::poll() {
+    std::lock_guard<std::mutex> lock(mutex);
+    pollImuUnlocked();
 }

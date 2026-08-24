@@ -101,16 +101,34 @@ ask_reboot() {
                 shutdown -r +1 "shaloms-doggy: reboot to enable I2C" || true
             fi
         fi
+
+        db_stop || true
     else
         echo "I2C was enabled in the boot config. Reboot before using the servos." >&2
     fi
+}
+
+ensure_log_dir() {
+    log_dir="${DOGGY_LOG_DIR:-/var/log/doggy}"
+    mkdir -p "$log_dir"
+    if getent passwd doggy >/dev/null 2>&1; then
+        chown doggy:doggy "$log_dir" || true
+    fi
+
+    chmod 0750 "$log_dir" || true
 }
 
 reload_and_start() {
     if command -v systemctl >/dev/null 2>&1; then
         systemctl daemon-reload
         systemctl enable doggy.service
-        systemctl restart doggy.service || systemctl start doggy.service || true
+        if systemctl restart doggy.service; then
+            :
+        else
+            echo "warning: systemctl restart doggy.service failed" >&2
+            systemctl start doggy.service \
+                || echo "warning: systemctl start doggy.service failed" >&2
+        fi
     fi
 }
 
@@ -118,12 +136,12 @@ case "$1" in
     configure)
         ensure_user
         ensure_i2c_group
+        ensure_log_dir
+        reload_and_start
         if enable_i2c_boot_config; then
             mark_reboot_required
             ask_reboot
         fi
-
-        reload_and_start
         ;;
 esac
 

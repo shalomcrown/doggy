@@ -19,6 +19,7 @@ public:
     dlib::vector<double> readGyro();
     dlib::vector<double> readAccelerometer();
     double readTemperature();
+    bool isOpen() const;
 
 };
 

@@ -60,3 +60,9 @@ dlib::vector<double> Imu::readGyro() {
 
     return dlib::vector<double>(x, y, z) + gyroOffset;
 }
+
+// ================================================================================
+
+bool Imu::isOpen() const {
+    return bus_fd >= 0;
+}

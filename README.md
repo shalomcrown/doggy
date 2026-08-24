@@ -13,7 +13,7 @@ Run the installer once before building. First-class hosts: **Debian / Raspberry 
 ./scripts/install-prereqs.sh --dry-run       # preview without making changes
 ```
 
-Native packages include compile deps (`cmake`, `ninja-build`, `g++`, `libi2c-dev`, `libdlib-dev`) and dev tools (`qtcreator`, `git`, `vim`, `zssh`, `lrzsz`).
+Native packages include compile deps (`cmake`, `ninja-build`, `g++`, `libi2c-dev`, `libdlib-dev`, `zlib1g-dev`) and dev tools (`qtcreator`, `git`, `vim`, `zssh`, `lrzsz`).
 
 ## Native Raspberry Pi build
 
@@ -48,8 +48,11 @@ The firmware binary stays running and serves a single page (LAN, no login):
 
 - **Home** runs the homing pose
 - The table lists each named servo (last commanded PWM and angle) with a slider. The slider sends `POST /api/servos/{id}` after **100ms idle**
+- The IMU section shows the last body MPU6050 sample (accel in g, gyro in °/s, temperature in °C). The page polls `GET /api/status` every 200 ms.
 
-Port: `DOGGY_HTTP_PORT` (default `8080`). HTML: `DOGGY_WEB_ROOT` or `/usr/share/doggy` after the DEB is installed. `GET /api/status` lists hardware errors (for example I2C bus missing); the page shows them at the top.
+Port: `DOGGY_HTTP_PORT` (default `8080`). HTML: `DOGGY_WEB_ROOT` or `/usr/share/doggy` after the DEB is installed. `GET /api/status` lists hardware errors (for example I2C bus missing) and the cached IMU reading; the page shows errors at the top. The firmware main loop samples the IMU every 200 ms independently of the web UI.
+
+Logs go to `/var/log/doggy/doggy.log` (override with `DOGGY_LOG_DIR`). The file is rolled on every start and when it exceeds the size cap; 10 files are kept and rolled copies are named `doggy-YYYY-MM-DD-HHMM.log.gz`. `/api/...` requests are logged except successful `GET /api/status` (the UI polls it at 5 Hz). HTTP failures (4xx/5xx) and hardware errors are logged at error severity. The packaged unit sets `LogsDirectory=doggy` so the directory is owned by user `doggy`.
 
 ## Package and install on a remote Pi
 
@@ -61,9 +64,9 @@ cmake --build --preset native-release --target package
 ./install.sh --dry-run user@hostname        # print scp/ssh only
 ```
 
-The script copies the `.deb` to `/tmp` over SSH and runs `sudo apt-get install`. The package creates system user `doggy` if needed, enables I2C in `/boot/firmware/config.txt` when missing, and may ask you to reboot. It then enables `doggy.service` (`User=doggy`, I2C via the `i2c` group).
+The script copies the `.deb` to `/tmp` over SSH and runs `sudo apt-get install`. The package creates system user `doggy` if needed, enables I2C in `/boot/firmware/config.txt` when missing, and may ask you to reboot. It then enables and **restarts** `doggy.service` (`User=doggy`, I2C via the `i2c` group) before any reboot prompt. An upgrade does not stop the unit in `prerm`, so a failed `postinst` cannot leave the dog down.
 
-CMake configure fetches cpp-httplib v0.18.3 (needs network once, or set `FETCHCONTENT_SOURCE_DIR_CPP_HTTPLIB`).
+CMake configure fetches cpp-httplib v0.18.3 and plog 1.1.11 (needs network once, or set `FETCHCONTENT_SOURCE_DIR_CPP_HTTPLIB` / `FETCHCONTENT_SOURCE_DIR_PLOG`).
 
 Each build stamps the version as `1.0.0-YYYY-MM-DD-HHMM-<short-git-hash>` (local time). The DEB filename uses the same string. The process prints it when it starts.
 
@@ -85,7 +88,7 @@ rsync -aH --info=progress2 pi-user@raspberrypi:/usr/ /path/to/pi-sysroot/usr/
 
 ## Tests
 
-CTest covers installer scripts, the SSH helper, PWM math, and the HTTP API (no I2C):
+CTest covers installer scripts, the SSH helper, PWM math, HTTP API, and log rotation (no I2C):
 
 ```sh
 cmake --preset native-debug

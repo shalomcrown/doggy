@@ -39,7 +39,10 @@ int main() {
     expect(parse_angle_json("{}", angle) == false, "missing angle fails");
 
     DogStatus empty;
-    expect(status_to_json(empty) == "{\"errors\":[]}", "empty status json");
+    const std::string emptyJson = status_to_json(empty);
+    expect(emptyJson.find("\"errors\":[]") != std::string::npos, "empty status json errors");
+    expect(emptyJson.find("\"imu\"") != std::string::npos, "empty status json has imu");
+    expect(emptyJson.find("\"ok\":false") != std::string::npos, "empty status imu.ok false");
 
     DogStatus withI2c;
     withI2c.errors.push_back(DogError{

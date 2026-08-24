@@ -59,6 +59,12 @@ inline const char *dog_error_code_json(DogErrorCode code) {
 
 // ================================================================================
 
+inline void append_xyz_json(std::ostringstream &os, const char *key, const Vec3 &v) {
+    os << '"' << key << "\":{\"x\":" << v.x << ",\"y\":" << v.y << ",\"z\":" << v.z << '}';
+}
+
+// ================================================================================
+
 inline std::string status_to_json(const DogStatus &status) {
     std::ostringstream os;
     os << "{\"errors\":[";
@@ -71,7 +77,18 @@ inline std::string status_to_json(const DogStatus &status) {
            << "\",\"message\":\"" << json_escape(status.errors[i].message) << "\"}";
     }
 
-    os << "]}";
+    os << "],\"imu\":{\"ok\":";
+    if (status.imu.ok) {
+        os << "true";
+    } else {
+        os << "false";
+    }
+
+    os << ",\"temperature_c\":" << status.imu.temperature_c << ',';
+    append_xyz_json(os, "accel", status.imu.accel);
+    os << ',';
+    append_xyz_json(os, "gyro", status.imu.gyro);
+    os << "}}";
     return os.str();
 }
 

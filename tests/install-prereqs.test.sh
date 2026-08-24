@@ -55,7 +55,7 @@ else
     fail "native plan includes devtools by default"
 fi
 
-for pkg in cmake ninja-build g++ libi2c-dev libdlib-dev \
+for pkg in cmake ninja-build g++ libi2c-dev libdlib-dev zlib1g-dev \
            qtcreator vim git zssh lrzsz; do
     if grep -E "(^| )${pkg}( |$)" "$TMPDIR/plan-trixie" >/dev/null \
             || grep -q "native_packages=.*${pkg}" "$TMPDIR/plan-trixie"; then

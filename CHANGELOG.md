@@ -12,6 +12,8 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 > Work merged but not yet shipped. Move entries to a versioned section on release.
 
 ### Added
+- Firmware main loop samples the body IMU every 200 ms; `GET /api/status` includes the cached `imu` reading (ok, temperature_c, accel, gyro) and the page polls it five times per second.
+- Process logs at `/var/log/doggy/doggy.log` (plog): roll on start and at the size cap, keep 10 files; gzip archives are `doggy-YYYY-MM-DD-HHMM.log.gz`; `/api` calls and failures are logged (successful `GET /api/status` is skipped so 5 Hz polling does not fill the log).
 - Repo-root `./doggy` opens an SSH session as user `doggy` (`zssh` if present, else `ssh`); extra args are jump hosts; unknown-host prompts are disabled.
 - `scripts/install-prereqs.sh` installs Raspberry Pi native build deps and Ubuntu aarch64 cross tools (Qt Creator and editors included by default; no Windows target).
 - CMake presets `native-debug`, `native-release`, and `ubuntu-aarch64-cross` (cross requires a Pi sysroot).
@@ -30,6 +32,7 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 - Removed unused Arduino-style `gpioPin` helper (libgpiod v1, never called). Firmware talks to the dog over I2C only.
 
 ### Fixed
+- `postinst` restarts `doggy.service` before the I2C reboot prompt; `prerm` no longer stops the unit on upgrade.
 - `install()` now uses `RUNTIME DESTINATION bin` for the `doggy` executable.
 - I2C headers compile under C++20: `i2c_interface.hpp` now includes `<cstdint>` so `uint8_t` is defined.
 

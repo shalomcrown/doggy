@@ -2,7 +2,7 @@
 set -e
 
 case "$1" in
-    remove|upgrade|deconfigure)
+    remove|deconfigure)
         if command -v systemctl >/dev/null 2>&1; then
             systemctl stop doggy.service || true
         fi

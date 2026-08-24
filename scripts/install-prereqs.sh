@@ -123,7 +123,7 @@ detect_os() {
     fi
 }
 native_packages() {
-    printf '%s' "ca-certificates cmake ninja-build g++ build-essential pkg-config git i2c-tools libi2c-dev libdlib-dev qtcreator zssh lrzsz vim"
+    printf '%s' "ca-certificates cmake ninja-build g++ build-essential pkg-config git i2c-tools libi2c-dev libdlib-dev zlib1g-dev qtcreator zssh lrzsz vim"
 }
 cross_packages() {
     printf '%s' "ca-certificates cmake ninja-build pkg-config git gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"

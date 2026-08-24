@@ -12,6 +12,8 @@
 #define ADAFRUIT_SERVO_BUS 1
 #define ADAFRUIT_SERVO_ID 0x40
 
+inline constexpr int kDoggyLoopPeriodMs = 200;
+
 // ================================================================================
 
 class Leg {
@@ -19,7 +21,6 @@ public:
     Servo &waist;
     Servo &hip;
     Servo &knee;
-    Imu imu;
 
     Leg(Servo &waist, Servo &hip, Servo &knee);
 
@@ -44,6 +45,7 @@ public:
 class Dog : public DogApi {
 public:
     ServoBoard board;
+    Imu imu;
     Servo frontRightWaist;
     Servo frontRightHip;
     Servo frontRightKnee;
@@ -65,6 +67,7 @@ public:
 
     Dog();
     void allToNinety();
+    void poll();
 
     std::vector<ServoSnapshot> listServos() override;
     CommandResult home() override;
@@ -80,6 +83,7 @@ private:
 
     Servo *findServo(int id);
     std::vector<ServoSnapshot> snapshotUnlocked() const;
+    void pollImuUnlocked();
 };
 
 #endif

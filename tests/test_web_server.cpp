@@ -1,13 +1,18 @@
 #include "dog_api.h"
+#include "doggy_log.h"
 #include "web_server.h"
 
 #include "httplib.h"
 
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 // ================================================================================
@@ -93,6 +98,16 @@ int main() {
         return EXIT_FAILURE;
     }
 
+    const std::filesystem::path log_dir =
+            std::filesystem::temp_directory_path()
+            / ("doggy-web-log-" + std::to_string(getpid()));
+    std::filesystem::remove_all(log_dir);
+    std::filesystem::create_directories(log_dir);
+    DoggyLogOptions log_options;
+    log_options.directory = log_dir.string();
+    log_options.roll_on_start = false;
+    init_doggy_log(log_options);
+
     FakeDog dog;
     WebServer server(dog, index, "127.0.0.1", 0);
     if (server.start() == false) {
@@ -107,14 +122,34 @@ int main() {
     expect(page && page->status == 200, "GET / is 200");
     expect(page && page->body.find("IDLE_MS = 100") != std::string::npos,
            "page uses 100ms idle debounce");
+    expect(page && page->body.find("POLL_MS = 200") != std::string::npos,
+           "page polls status every 200ms");
     expect(page && page->body.find("Home") != std::string::npos, "page has Home button");
     expect(page && page->body.find("/api/status") != std::string::npos,
            "page fetches /api/status");
+    expect(page && page->body.find("id=\"imu\"") != std::string::npos,
+           "page has an IMU section");
 
     auto healthy = cli.Get("/api/status");
     expect(healthy && healthy->status == 200, "GET /api/status is 200");
     expect(healthy && healthy->body.find("\"errors\":[]") != std::string::npos,
            "GET /api/status empty errors");
+    expect(healthy && healthy->body.find("\"imu\"") != std::string::npos,
+           "GET /api/status includes imu");
+    expect(healthy && healthy->body.find("\"ok\":false") != std::string::npos,
+           "GET /api/status imu.ok is false by default");
+
+    dog.status.imu.ok = true;
+    dog.status.imu.temperature_c = 37.5;
+    dog.status.imu.accel = {0.1, 0.2, 0.3};
+    dog.status.imu.gyro = {1.0, 2.0, 3.0};
+    auto imuOk = cli.Get("/api/status");
+    expect(imuOk && imuOk->body.find("\"ok\":true") != std::string::npos,
+           "GET /api/status imu.ok true");
+    expect(imuOk && imuOk->body.find("\"temperature_c\":37.5") != std::string::npos,
+           "GET /api/status temperature");
+    expect(imuOk && imuOk->body.find("\"x\":0.1") != std::string::npos,
+           "GET /api/status accel x");
 
     dog.status.errors.push_back(DogError{DogErrorCode::i2c, "Could not open i2c bus.: No such file or directory"});
     auto unhealthy = cli.Get("/api/status");
@@ -154,6 +189,22 @@ int main() {
     expect(busy && busy->status == 409, "busy home is 409");
 
     server.stop();
+
+    std::ifstream log_in(doggy_log_path(log_dir.string()));
+    const std::string log_text{
+            std::istreambuf_iterator<char>(log_in),
+            std::istreambuf_iterator<char>()};
+    expect(log_text.find("GET /api/servos 200") != std::string::npos,
+           "API GET /api/servos is logged");
+    expect(log_text.find("GET /api/status 200") == std::string::npos,
+           "successful GET /api/status is not logged");
+    expect(log_text.find("POST /api/servos/99 404") != std::string::npos,
+           "API failure 404 is logged");
+    expect(log_text.find("GET / 200") == std::string::npos,
+           "index GET / is not logged as an API call");
+
+    std::filesystem::remove_all(log_dir);
+
     if (failures != 0) {
         return EXIT_FAILURE;
     }

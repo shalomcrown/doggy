@@ -36,6 +36,32 @@ FetchContent_MakeAvailable(cpp_httplib)
 
 # ==============================================================================
 
+FetchContent_Declare(
+    plog
+    URL https://github.com/SergiusTheBest/plog/archive/refs/tags/1.1.11.tar.gz
+    URL_HASH SHA256=d60b8b35f56c7c852b7f00f58cbe9c1c2e9e59566c5b200512d0cdbb6309a7c2
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+set(PLOG_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
+set(PLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(PLOG_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(plog)
+
+find_package(ZLIB REQUIRED)
+
+# ==============================================================================
+
+add_library(doggy_log STATIC
+    src/doggy_log.cpp
+)
+target_include_directories(doggy_log
+    PUBLIC
+        "${CMAKE_SOURCE_DIR}/src"
+)
+target_link_libraries(doggy_log PUBLIC plog::plog ZLIB::ZLIB)
+
+# ==============================================================================
+
 add_library(doggy_web STATIC
     src/web_server.cpp
 )
@@ -43,7 +69,7 @@ target_include_directories(doggy_web
     PUBLIC
         "${CMAKE_SOURCE_DIR}/src"
 )
-target_link_libraries(doggy_web PUBLIC pthread httplib::httplib)
+target_link_libraries(doggy_web PUBLIC pthread httplib::httplib doggy_log)
 target_compile_definitions(doggy_web
     PRIVATE
         DOGGY_WEB_SOURCE_DIR="${CMAKE_SOURCE_DIR}/web"
@@ -149,6 +175,22 @@ add_test(NAME web_server COMMAND test_web_server)
 set_tests_properties(web_server PROPERTIES
     ENVIRONMENT "DOGGY_TEST_INDEX=${CMAKE_SOURCE_DIR}/web/index.html"
 )
+
+add_executable(test_dog_poll
+    tests/test_dog_poll.cpp
+    src/doggy.cpp
+    src/imu.cpp
+    src/servo.cpp
+    src/servo_board.cpp
+    src/i2c_interface.cpp
+)
+target_include_directories(test_dog_poll PRIVATE "${CMAKE_SOURCE_DIR}/src")
+target_link_libraries(test_dog_poll PRIVATE i2c dlib pthread)
+add_test(NAME dog_poll COMMAND test_dog_poll)
+
+add_executable(test_doggy_log tests/test_doggy_log.cpp)
+target_link_libraries(test_doggy_log PRIVATE doggy_log)
+add_test(NAME doggy_log COMMAND test_doggy_log)
 
 # ==============================================================================
 

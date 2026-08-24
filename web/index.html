@@ -11,6 +11,7 @@
     input[type="range"] { width: 12rem; }
     #status { min-height: 1.2em; }
     #errors { color: #8b0000; white-space: pre-wrap; }
+    #imu { margin-top: 1rem; }
   </style>
 </head>
 <body>
@@ -18,6 +19,36 @@
   <p id="errors" role="alert"></p>
   <button type="button" id="home">Home</button>
   <p id="status" role="status"></p>
+  <section id="imu" aria-labelledby="imu-heading">
+    <h2 id="imu-heading">IMU</h2>
+    <p id="imu-ok">IMU: unknown</p>
+    <table>
+      <caption>IMU readings</caption>
+      <thead>
+        <tr>
+          <th scope="col"></th>
+          <th scope="col">X</th>
+          <th scope="col">Y</th>
+          <th scope="col">Z</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Accel (g)</th>
+          <td id="imu-ax">—</td>
+          <td id="imu-ay">—</td>
+          <td id="imu-az">—</td>
+        </tr>
+        <tr>
+          <th scope="row">Gyro (°/s)</th>
+          <td id="imu-gx">—</td>
+          <td id="imu-gy">—</td>
+          <td id="imu-gz">—</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>Temperature: <span id="imu-temp">—</span> °C</p>
+  </section>
   <table>
     <thead>
       <tr>
@@ -31,13 +62,31 @@
   </table>
   <script>
     const IDLE_MS = 100;
+    const POLL_MS = 200;
 
     const statusEl = document.getElementById("status");
     const errorsEl = document.getElementById("errors");
     const bodyEl = document.getElementById("servos");
+    const imuOkEl = document.getElementById("imu-ok");
+    const imuTempEl = document.getElementById("imu-temp");
+    const imuAxEl = document.getElementById("imu-ax");
+    const imuAyEl = document.getElementById("imu-ay");
+    const imuAzEl = document.getElementById("imu-az");
+    const imuGxEl = document.getElementById("imu-gx");
+    const imuGyEl = document.getElementById("imu-gy");
+    const imuGzEl = document.getElementById("imu-gz");
+    let statusPollBusy = false;
 
     function setStatus(text) {
       statusEl.textContent = text;
+    }
+
+    function formatNum(n) {
+      if (typeof n !== "number" || Number.isFinite(n) === false) {
+        return "—";
+      }
+
+      return n.toFixed(3);
     }
 
     function applyErrors(errors) {
@@ -49,15 +98,48 @@
       errorsEl.textContent = errors.map((err) => err.message || err.code).join("\n");
     }
 
-    async function loadDogStatus() {
-      const res = await fetch("/api/status");
-      if (res.ok === false) {
-        applyErrors([{ message: "Failed to load status" }]);
+    function applyImu(imu) {
+      if (imu === undefined || imu === null) {
+        imuOkEl.textContent = "IMU: unavailable";
         return;
       }
 
-      const data = await res.json();
-      applyErrors(data.errors || []);
+      if (imu.ok) {
+        imuOkEl.textContent = "IMU: ok";
+      } else {
+        imuOkEl.textContent = "IMU: not connected";
+      }
+
+      imuTempEl.textContent = formatNum(imu.temperature_c);
+      imuAxEl.textContent = formatNum(imu.accel && imu.accel.x);
+      imuAyEl.textContent = formatNum(imu.accel && imu.accel.y);
+      imuAzEl.textContent = formatNum(imu.accel && imu.accel.z);
+      imuGxEl.textContent = formatNum(imu.gyro && imu.gyro.x);
+      imuGyEl.textContent = formatNum(imu.gyro && imu.gyro.y);
+      imuGzEl.textContent = formatNum(imu.gyro && imu.gyro.z);
+    }
+
+    async function loadDogStatus() {
+      if (statusPollBusy) {
+        return;
+      }
+
+      statusPollBusy = true;
+      try {
+        const res = await fetch("/api/status");
+        if (res.ok === false) {
+          applyErrors([{ message: "Failed to load status" }]);
+          return;
+        }
+
+        const data = await res.json();
+        applyErrors(data.errors || []);
+        applyImu(data.imu);
+      } catch (err) {
+        applyErrors([{ message: "Failed to load status" }]);
+      } finally {
+        statusPollBusy = false;
+      }
     }
 
     function applyItems(items) {
@@ -146,6 +228,7 @@
 
     loadServos();
     loadDogStatus();
+    setInterval(loadDogStatus, POLL_MS);
   </script>
 </body>
 </html>

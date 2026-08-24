@@ -8,6 +8,7 @@ Type=simple
 User=doggy
 Group=doggy
 SupplementaryGroups=i2c
+LogsDirectory=doggy
 ExecStart=/usr/bin/doggy
 Restart=on-failure
 RestartSec=2

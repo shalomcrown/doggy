@@ -20,9 +20,29 @@ public:
 
 // ================================================================================
 
+class Vec3 {
+public:
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+};
+
+// ================================================================================
+
+class ImuReading {
+public:
+    bool ok = false;
+    double temperature_c = 0.0;
+    Vec3 accel;
+    Vec3 gyro;
+};
+
+// ================================================================================
+
 class DogStatus {
 public:
     std::vector<DogError> errors;
+    ImuReading imu;
 };
 
 #endif

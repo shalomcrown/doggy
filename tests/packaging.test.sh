@@ -23,10 +23,37 @@ else
     fail "CMake FetchContent pins cpp-httplib v0.18.3"
 fi
 
-if grep -q 'URL_HASH SHA256=' "$CMAKE"; then
+if grep -q 'a0567bcd6c3fe5cef1b329b96245119047f876b49e06cc129a36a7a8dffe173e' "$CMAKE"; then
     pass "CMake pins httplib archive SHA256"
 else
     fail "CMake pins httplib archive SHA256"
+fi
+
+if grep -q 'SergiusTheBest/plog' "$CMAKE" && grep -q '1.1.11' "$CMAKE"; then
+    pass "CMake FetchContent pins plog 1.1.11"
+else
+    fail "CMake FetchContent pins plog 1.1.11"
+fi
+
+if grep -q 'd60b8b35f56c7c852b7f00f58cbe9c1c2e9e59566c5b200512d0cdbb6309a7c2' "$CMAKE"; then
+    pass "CMake pins plog archive SHA256"
+else
+    fail "CMake pins plog archive SHA256"
+fi
+
+if [ -f "$UNIT" ] && grep -q '^LogsDirectory=doggy$' "$UNIT"; then
+    pass "unit LogsDirectory is doggy"
+else
+    fail "unit LogsDirectory is doggy"
+fi
+
+restart_line=$(grep -n 'reload_and_start' "$POSTINST" | tail -1 | cut -d: -f1)
+i2c_call_line=$(grep -n 'enable_i2c_boot_config' "$POSTINST" | tail -1 | cut -d: -f1)
+if [ -n "$restart_line" ] && [ -n "$i2c_call_line" ] \
+        && [ "$restart_line" -lt "$i2c_call_line" ]; then
+    pass "postinst restarts doggy.service before the I2C reboot prompt"
+else
+    fail "postinst restarts doggy.service before the I2C reboot prompt"
 fi
 
 if grep -q 'third_party/cpp-httplib' "$CMAKE"; then
@@ -174,7 +201,13 @@ printf 'systemctl %s\n' "$*" >>"$DOGGY_MOCK_LOG"
 exit 0
 EOF
 
-chmod +x "$MOCK_BIN/getent" "$MOCK_BIN/useradd" "$MOCK_BIN/usermod" "$MOCK_BIN/systemctl"
+cat >"$MOCK_BIN/chown" <<'EOF'
+#!/bin/sh
+printf 'chown %s\n' "$*" >>"$DOGGY_MOCK_LOG"
+exit 0
+EOF
+
+chmod +x "$MOCK_BIN/getent" "$MOCK_BIN/useradd" "$MOCK_BIN/usermod" "$MOCK_BIN/systemctl" "$MOCK_BIN/chown"
 
 BOOT_ON="$TMPDIR/boot-on.txt"
 printf 'dtparam=i2c_arm=on\n' >"$BOOT_ON"
@@ -191,6 +224,7 @@ run_script() {
     DOGGY_REBOOT_REQUIRED="$TMPDIR/run/reboot-required" \
     DOGGY_REBOOT_PKGS="$TMPDIR/run/reboot-required.pkgs" \
     DOGGY_MODULES_LOAD_DIR="$TMPDIR/modules-load" \
+    DOGGY_LOG_DIR="$TMPDIR/var-log-doggy" \
     PATH="$MOCK_BIN:$PATH" \
         "$script" "$@"
 }
@@ -221,6 +255,12 @@ if grep -q 'systemctl enable doggy.service' "$MOCK_LOG/commands" \
     pass "postinst enables and starts doggy.service"
 else
     fail "postinst enables and starts doggy.service"
+fi
+
+if [ -d "$TMPDIR/var-log-doggy" ]; then
+    pass "postinst creates the doggy log directory"
+else
+    fail "postinst creates the doggy log directory"
 fi
 
 : >"$MOCK_LOG/commands"
@@ -315,6 +355,17 @@ if [ -x "$PRERM" ] && run_script "$PRERM" remove; then
     fi
 else
     fail "prerm stop doggy.service on remove"
+fi
+
+: >"$MOCK_LOG/commands"
+if [ -x "$PRERM" ] && run_script "$PRERM" upgrade; then
+    if grep -q 'systemctl stop doggy.service' "$MOCK_LOG/commands"; then
+        fail "prerm does not stop doggy.service on upgrade"
+    else
+        pass "prerm does not stop doggy.service on upgrade"
+    fi
+else
+    fail "prerm does not stop doggy.service on upgrade"
 fi
 
 : >"$MOCK_LOG/commands"
