@@ -2,20 +2,25 @@
 #define SERVO_BOARD_H
 
 #include <cstdint>
+#include <string>
 
 // ================================================================================
 
 class ServoBoard {
 private:
-    int bus_fd;
-    double frequency;
+    int bus_fd = -1;
+    double frequency = 50.0;
     double maxAngle = 180;
     double minPwmMs = 0.5;
     double maxPwmMs = 2.0;
+    std::string lastErrorMessage;
 
 public:
     ServoBoard();
     ~ServoBoard();
+
+    bool isOpen() const;
+    const std::string &lastError() const;
 
     double pwmFrequency() const;
     double servoMaxAngle() const;

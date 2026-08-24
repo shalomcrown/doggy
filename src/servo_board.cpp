@@ -3,6 +3,7 @@
 #include <linux/i2c.h>
 #include <i2c/smbus.h>
 #include <iostream>
+#include <system_error>
 
 #include "i2c_interface.hpp"
 #include "pwm_math.h"
@@ -35,17 +36,35 @@ constexpr uint8_t OUTDRV             = 0x04;
 
 // ================================================================================
 
-ServoBoard::ServoBoard() : bus_fd(openBus("/dev/i2c-1", 0x40)) {
-    writeRegisterByte(bus_fd, MODE2, OUTDRV);
-    usleep(5'000);
-    writeRegisterByte(bus_fd, MODE1, ALLCALL);
-    usleep(5'000);
-    auto mode1_val = readRegisterByte(bus_fd, MODE1);
-    mode1_val &= ~SLEEP;
-    writeRegisterByte(bus_fd, MODE1, mode1_val);
-    usleep(5'000);
-    set_pwm_freq(50.0);
-    set_all_pwm(0, 0);
+ServoBoard::ServoBoard() : bus_fd(-1) {
+    try {
+        bus_fd = openBus("/dev/i2c-1", 0x40);
+        writeRegisterByte(bus_fd, MODE2, OUTDRV);
+        usleep(5'000);
+        writeRegisterByte(bus_fd, MODE1, ALLCALL);
+        usleep(5'000);
+        auto mode1_val = readRegisterByte(bus_fd, MODE1);
+        mode1_val &= ~SLEEP;
+        writeRegisterByte(bus_fd, MODE1, mode1_val);
+        usleep(5'000);
+        set_pwm_freq(50.0);
+        set_all_pwm(0, 0);
+    } catch (const std::system_error &ex) {
+        lastErrorMessage = ex.what();
+        bus_fd = -1;
+    }
+}
+
+// ================================================================================
+
+bool ServoBoard::isOpen() const {
+    return bus_fd >= 0;
+}
+
+// ================================================================================
+
+const std::string &ServoBoard::lastError() const {
+    return lastErrorMessage;
 }
 
 // ================================================================================
@@ -75,6 +94,10 @@ double ServoBoard::servoMaxPwmMs() const {
 // ================================================================================
 
 void ServoBoard::set_all_pwm(const uint16_t on, const uint16_t off) {
+    if (isOpen() == false) {
+        return;
+    }
+
     writeRegisterByte(bus_fd, ALL_LED_ON_L, on & 0xFF);
     writeRegisterByte(bus_fd, ALL_LED_ON_H, on >> 8);
     writeRegisterByte(bus_fd, ALL_LED_OFF_L, off & 0xFF);
@@ -85,6 +108,9 @@ void ServoBoard::set_all_pwm(const uint16_t on, const uint16_t off) {
 
 void ServoBoard::set_pwm_freq(const double freq_hz) {
     frequency = freq_hz;
+    if (isOpen() == false) {
+        return;
+    }
 
     auto prescaleval = 2.5e7; //    # 25MHz
     prescaleval /= 4096.0; //       # 12-bit
@@ -107,6 +133,10 @@ void ServoBoard::set_pwm_freq(const double freq_hz) {
 // ================================================================================
 
 void ServoBoard::set_pwm(const int channel, const uint16_t on, const uint16_t off) {
+    if (isOpen() == false) {
+        return;
+    }
+
     const auto channel_offset = 4 * channel;
     writeRegisterByte(bus_fd, LED0_ON_L + channel_offset, on & 0xFF);
     writeRegisterByte(bus_fd, LED0_ON_H + channel_offset, on >> 8);
@@ -135,6 +165,10 @@ void ServoBoard::set_angle(const int channel, const double angleDegrees) {
 // ================================================================================
 
 ServoBoard::~ServoBoard() {
+    if (isOpen() == false) {
+        return;
+    }
+
     set_all_pwm(0, 0);
     closeBus(bus_fd);
 }

@@ -10,10 +10,12 @@
     th, td { border: 1px solid #ccc; padding: 0.4rem 0.6rem; text-align: left; }
     input[type="range"] { width: 12rem; }
     #status { min-height: 1.2em; }
+    #errors { color: #8b0000; white-space: pre-wrap; }
   </style>
 </head>
 <body>
   <h1>Doggy</h1>
+  <p id="errors" role="alert"></p>
   <button type="button" id="home">Home</button>
   <p id="status" role="status"></p>
   <table>
@@ -31,10 +33,31 @@
     const IDLE_MS = 100;
 
     const statusEl = document.getElementById("status");
+    const errorsEl = document.getElementById("errors");
     const bodyEl = document.getElementById("servos");
 
     function setStatus(text) {
       statusEl.textContent = text;
+    }
+
+    function applyErrors(errors) {
+      if (errors === undefined || errors.length === 0) {
+        errorsEl.textContent = "";
+        return;
+      }
+
+      errorsEl.textContent = errors.map((err) => err.message || err.code).join("\n");
+    }
+
+    async function loadDogStatus() {
+      const res = await fetch("/api/status");
+      if (res.ok === false) {
+        applyErrors([{ message: "Failed to load status" }]);
+        return;
+      }
+
+      const data = await res.json();
+      applyErrors(data.errors || []);
     }
 
     function applyItems(items) {
@@ -122,6 +145,7 @@
     });
 
     loadServos();
+    loadDogStatus();
   </script>
 </body>
 </html>

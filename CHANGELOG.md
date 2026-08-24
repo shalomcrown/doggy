@@ -12,14 +12,21 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 > Work merged but not yet shipped. Move entries to a versioned section on release.
 
 ### Added
+- Repo-root `./doggy` opens an SSH session as user `doggy` (`zssh` if present, else `ssh`); extra args are jump hosts; unknown-host prompts are disabled.
 - `scripts/install-prereqs.sh` installs Raspberry Pi native build deps and Ubuntu aarch64 cross tools (Qt Creator and editors included by default; no Windows target).
 - CMake presets `native-debug`, `native-release`, and `ubuntu-aarch64-cross` (cross requires a Pi sysroot).
 - `install.sh` copies a `.deb` to a remote host over SSH and installs it with `apt-get`.
 - In-process web UI (cpp-httplib): Home button, servo table, sliders (100ms idle before send).
 - `ServoBoard` is the PCA9685; `Servo` is one named channel with last commanded angle/PWM.
+- DEB installs `doggy.service` to `/etc/systemd/system`, creates system user `doggy` if missing, and starts the UI on boot.
+- Each build stamps version `1.0.0-YYYY-MM-DD-HHMM-<short-git-hash>` (binary, startup line, and DEB).
+- `GET /api/status` and a page banner for hardware errors (I2C open failure no longer kills the process).
+- DEB `postinst` enables `dtparam=i2c_arm=on` in the Pi boot config when missing and asks to reboot.
 
 ### Changed
 - ⚠ Breaking: application sources moved to `src/`. Configure with the new CMake presets instead of listing files at the repo root.
+- ⚠ Breaking: cpp-httplib is downloaded by CMake (no `third_party/cpp-httplib`). Configure needs network or `FETCHCONTENT_SOURCE_DIR_CPP_HTTPLIB`.
+- ⚠ Breaking: installing the DEB enables and starts `doggy.service` as user `doggy` (stop a manual `./doggy` first, or `systemctl disable --now doggy`).
 - Removed unused Arduino-style `gpioPin` helper (libgpiod v1, never called). Firmware talks to the dog over I2C only.
 
 ### Fixed

@@ -69,14 +69,19 @@ public:
     std::vector<ServoSnapshot> listServos() override;
     CommandResult home() override;
     CommandResult setServoAngle(int id, double angle) override;
+    DogStatus getStatus() const override;
     bool homing();
+
+    DogStatus status;
 
 private:
     std::vector<Servo *> servos;
-    std::mutex mutex;
+    mutable std::mutex mutex;
 
     Servo *findServo(int id);
     std::vector<ServoSnapshot> snapshotUnlocked() const;
 };
 
 #endif
+
+

@@ -114,7 +114,9 @@ info "Remote:   $REMOTE_PATH"
 [ "$DRY_RUN" -eq 1 ] && info "Dry-run: no SSH or copy will be made"
 echo
 run scp "$DEB" "$HOST:$REMOTE_PATH"
-run ssh "$HOST" \
-    "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y '$REMOTE_PATH'"
+# -t: sudo needs a TTY to prompt; key-based SSH no longer provides one.
+# Do not set DEBIAN_FRONTEND=noninteractive: postinst may ask to reboot after enabling I2C.
+run ssh -t "$HOST" \
+    "sudo apt-get install -y '$REMOTE_PATH'"
 [ "$DRY_RUN" -eq 1 ] || ok "Installed $REMOTE_NAME on $HOST"
 exit 0

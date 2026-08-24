@@ -16,6 +16,96 @@ ensure_i2c_group() {
     fi
 }
 
+i2c_dtparam_enabled() {
+    grep -Eq '^[[:space:]]*dtparam=i2c(_arm)?=on' "$1"
+}
+
+resolve_boot_config() {
+    if [ -n "${DOGGY_BOOT_CONFIG:-}" ]; then
+        printf '%s' "$DOGGY_BOOT_CONFIG"
+        return 0
+    fi
+
+    if [ -f /boot/firmware/config.txt ]; then
+        printf '%s' /boot/firmware/config.txt
+        return 0
+    fi
+
+    if [ -f /boot/config.txt ]; then
+        printf '%s' /boot/config.txt
+        return 0
+    fi
+
+    return 1
+}
+
+enable_i2c_boot_config() {
+    boot_config=""
+    if boot_config=$(resolve_boot_config); then
+        :
+    else
+        return 1
+    fi
+
+    if [ -f "$boot_config" ]; then
+        :
+    else
+        return 1
+    fi
+
+    if i2c_dtparam_enabled "$boot_config"; then
+        return 1
+    fi
+
+    if grep -Eq '^[[:space:]]*#[[:space:]]*dtparam=i2c_arm=on' "$boot_config"; then
+        sed -i 's/^[[:space:]]*#[[:space:]]*dtparam=i2c_arm=on.*/dtparam=i2c_arm=on/' \
+            "$boot_config"
+    elif grep -Eq '^[[:space:]]*dtparam=i2c_arm=off' "$boot_config"; then
+        sed -i 's/^[[:space:]]*dtparam=i2c_arm=off.*/dtparam=i2c_arm=on/' \
+            "$boot_config"
+    else
+        printf '\n# Enabled by shaloms-doggy\ndtparam=i2c_arm=on\n' >>"$boot_config"
+    fi
+
+    modules_dir="${DOGGY_MODULES_LOAD_DIR:-/etc/modules-load.d}"
+    if [ -d "$modules_dir" ]; then
+        printf 'i2c-dev\n' >"$modules_dir/shaloms-doggy-i2c.conf"
+    fi
+
+    return 0
+}
+
+mark_reboot_required() {
+    reboot_file="${DOGGY_REBOOT_REQUIRED:-/var/run/reboot-required}"
+    reboot_pkgs="${DOGGY_REBOOT_PKGS:-/var/run/reboot-required.pkgs}"
+    reboot_dir=$(dirname "$reboot_file")
+    if [ -d "$reboot_dir" ]; then
+        printf '*** System restart required ***\n' >"$reboot_file"
+        printf 'shaloms-doggy\n' >>"$reboot_pkgs"
+    fi
+}
+
+ask_reboot() {
+    if [ "${DOGGY_SKIP_DEBCONF:-}" = 1 ]; then
+        return 0
+    fi
+
+    if [ -f /usr/share/debconf/confmodule ]; then
+        . /usr/share/debconf/confmodule
+        db_version 2.0
+        db_input high shaloms-doggy/reboot-now || true
+        db_go || true
+        db_get shaloms-doggy/reboot-now || true
+        if [ "$RET" = true ]; then
+            if command -v shutdown >/dev/null 2>&1; then
+                shutdown -r +1 "shaloms-doggy: reboot to enable I2C" || true
+            fi
+        fi
+    else
+        echo "I2C was enabled in the boot config. Reboot before using the servos." >&2
+    fi
+}
+
 reload_and_start() {
     if command -v systemctl >/dev/null 2>&1; then
         systemctl daemon-reload
@@ -28,6 +118,11 @@ case "$1" in
     configure)
         ensure_user
         ensure_i2c_group
+        if enable_i2c_boot_config; then
+            mark_reboot_required
+            ask_reboot
+        fi
+
         reload_and_start
         ;;
 esac

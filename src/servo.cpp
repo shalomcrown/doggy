@@ -43,9 +43,11 @@ void Servo::setAngle(double degrees) {
     if (degrees < 0.0) {
         degrees = 0.0;
     }
+
     if (degrees > maxAngle) {
         degrees = maxAngle;
     }
+
     angleDegrees = degrees;
     pwmTicks = pwm_ticks_from_angle(
             degrees,

@@ -48,10 +48,11 @@ else
     fail "CPack ships Debian maintainer scripts"
 fi
 
-if grep -q 'doggy.service' "$CMAKE"; then
-    pass "CMake installs doggy.service"
+if grep -q 'doggy.service' "$CMAKE" \
+        && grep -q '/etc/systemd/system' "$CMAKE"; then
+    pass "CMake installs doggy.service to /etc/systemd/system"
 else
-    fail "CMake installs doggy.service"
+    fail "CMake installs doggy.service to /etc/systemd/system"
 fi
 
 # ── unit file ────────────────────────────────────────────────────────────────
@@ -94,6 +95,24 @@ for script in "$POSTINST" "$PRERM" "$POSTRM"; do
         fail "$name is valid sh"
     fi
 done
+
+if [ -f "$ROOT/packaging/debian/config" ] && [ -f "$ROOT/packaging/debian/templates" ]; then
+    pass "debconf config and templates exist"
+else
+    fail "debconf config and templates exist"
+fi
+
+if [ -f "$ROOT/packaging/debian/config" ] && sh -n "$ROOT/packaging/debian/config"; then
+    pass "config is valid sh"
+else
+    fail "config is valid sh"
+fi
+
+if grep -q 'shaloms-doggy/reboot-now' "$ROOT/packaging/debian/templates"; then
+    pass "templates ask to reboot after enabling I2C"
+else
+    fail "templates ask to reboot after enabling I2C"
+fi
 
 if [ -f "$ROOT/packaging/debian/preinst" ]; then
     fail "no preinst (user is created in postinst)"
@@ -157,12 +176,21 @@ EOF
 
 chmod +x "$MOCK_BIN/getent" "$MOCK_BIN/useradd" "$MOCK_BIN/usermod" "$MOCK_BIN/systemctl"
 
+BOOT_ON="$TMPDIR/boot-on.txt"
+printf 'dtparam=i2c_arm=on\n' >"$BOOT_ON"
+mkdir -p "$TMPDIR/modules-load" "$TMPDIR/run"
+
 run_script() {
     local script="$1"
     shift
     : >"$MOCK_LOG/commands"
     DOGGY_MOCK_STATE="$MOCK_STATE" \
     DOGGY_MOCK_LOG="$MOCK_LOG/commands" \
+    DOGGY_BOOT_CONFIG="${DOGGY_BOOT_CONFIG:-$BOOT_ON}" \
+    DOGGY_SKIP_DEBCONF=1 \
+    DOGGY_REBOOT_REQUIRED="$TMPDIR/run/reboot-required" \
+    DOGGY_REBOOT_PKGS="$TMPDIR/run/reboot-required.pkgs" \
+    DOGGY_MODULES_LOAD_DIR="$TMPDIR/modules-load" \
     PATH="$MOCK_BIN:$PATH" \
         "$script" "$@"
 }
@@ -217,6 +245,64 @@ if [ -x "$POSTINST" ] && run_script "$POSTINST" configure; then
     fi
 else
     fail "postinst skips usermod when i2c group is missing"
+fi
+
+rm -f "$TMPDIR/run/reboot-required" "$TMPDIR/run/reboot-required.pkgs"
+printf 'arm_64bit=1\n' >"$TMPDIR/boot-missing.txt"
+if DOGGY_BOOT_CONFIG="$TMPDIR/boot-missing.txt" run_script "$POSTINST" configure; then
+    if grep -q '^dtparam=i2c_arm=on$' "$TMPDIR/boot-missing.txt" \
+            && [ -f "$TMPDIR/run/reboot-required" ]; then
+        pass "postinst appends dtparam=i2c_arm=on and flags reboot"
+    else
+        fail "postinst appends dtparam=i2c_arm=on and flags reboot"
+    fi
+else
+    fail "postinst appends dtparam=i2c_arm=on and flags reboot"
+fi
+
+if [ -f "$TMPDIR/modules-load/shaloms-doggy-i2c.conf" ] \
+        && grep -q '^i2c-dev$' "$TMPDIR/modules-load/shaloms-doggy-i2c.conf"; then
+    pass "postinst loads i2c-dev via modules-load.d"
+else
+    fail "postinst loads i2c-dev via modules-load.d"
+fi
+
+rm -f "$TMPDIR/run/reboot-required"
+printf '#dtparam=i2c_arm=on\n' >"$TMPDIR/boot-commented.txt"
+if DOGGY_BOOT_CONFIG="$TMPDIR/boot-commented.txt" run_script "$POSTINST" configure; then
+    if grep -q '^dtparam=i2c_arm=on$' "$TMPDIR/boot-commented.txt" \
+            && grep -q '^#dtparam=i2c_arm=on$' "$TMPDIR/boot-commented.txt"; then
+        fail "postinst uncomments dtparam=i2c_arm=on"
+    elif grep -q '^dtparam=i2c_arm=on$' "$TMPDIR/boot-commented.txt"; then
+        pass "postinst uncomments dtparam=i2c_arm=on"
+    else
+        fail "postinst uncomments dtparam=i2c_arm=on"
+    fi
+else
+    fail "postinst uncomments dtparam=i2c_arm=on"
+fi
+
+rm -f "$TMPDIR/run/reboot-required"
+printf 'dtparam=i2c_arm=off\n' >"$TMPDIR/boot-off.txt"
+if DOGGY_BOOT_CONFIG="$TMPDIR/boot-off.txt" run_script "$POSTINST" configure; then
+    if grep -q '^dtparam=i2c_arm=on$' "$TMPDIR/boot-off.txt"; then
+        pass "postinst turns dtparam=i2c_arm=off into on"
+    else
+        fail "postinst turns dtparam=i2c_arm=off into on"
+    fi
+else
+    fail "postinst turns dtparam=i2c_arm=off into on"
+fi
+
+rm -f "$TMPDIR/run/reboot-required" "$TMPDIR/run/reboot-required.pkgs"
+if run_script "$POSTINST" configure; then
+    if [ -f "$TMPDIR/run/reboot-required" ]; then
+        fail "already-enabled I2C does not flag reboot"
+    else
+        pass "already-enabled I2C does not flag reboot"
+    fi
+else
+    fail "already-enabled I2C does not flag reboot"
 fi
 
 rm -f "$MOCK_STATE/no_i2c"

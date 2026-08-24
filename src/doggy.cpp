@@ -1,5 +1,7 @@
 #include "doggy.h"
 
+#include <system_error>
+
 // ================================================================================
 
 Leg::Leg(Servo &waist, Servo &hip, Servo &knee) :
@@ -72,6 +74,12 @@ Dog::Dog() :
         &rearRightWaist, &rearRightHip, &rearRightKnee,
         &headNeck
     } {
+    if (board.isOpen() == false) {
+        status.errors.push_back(DogError{
+            DogErrorCode::i2c,
+            board.lastError()
+        });
+    }
 }
 
 // ================================================================================
@@ -92,6 +100,7 @@ Servo *Dog::findServo(int id) {
             return servo;
         }
     }
+
     return nullptr;
 }
 
@@ -108,6 +117,7 @@ std::vector<ServoSnapshot> Dog::snapshotUnlocked() const {
             servo->pwm()
         });
     }
+
     return items;
 }
 
@@ -125,11 +135,17 @@ CommandResult Dog::home() {
     if (lock.owns_lock() == false) {
         return CommandResult::busy;
     }
-    allToNinety();
-    frontRight.setKnee(135);
-    frontLeft.setKnee(135);
-    rearLeft.setKnee(135);
-    rearRight.setKnee(135);
+
+    try {
+        allToNinety();
+        frontRight.setKnee(135);
+        frontLeft.setKnee(135);
+        rearLeft.setKnee(135);
+        rearRight.setKnee(135);
+    } catch (const std::system_error &ex) {
+        status.errors.push_back(DogError{DogErrorCode::i2c, ex.what()});
+    }
+
     return CommandResult::ok;
 }
 
@@ -145,14 +161,29 @@ CommandResult Dog::setServoAngle(int id, double angle) {
     if (angle < 0.0 || angle > board.servoMaxAngle()) {
         return CommandResult::bad_angle;
     }
+
     std::unique_lock<std::mutex> lock(mutex, std::try_to_lock);
     if (lock.owns_lock() == false) {
         return CommandResult::busy;
     }
+
     Servo *servo = findServo(id);
     if (servo == nullptr) {
         return CommandResult::not_found;
     }
-    servo->setAngle(angle);
+
+    try {
+        servo->setAngle(angle);
+    } catch (const std::system_error &ex) {
+        status.errors.push_back(DogError{DogErrorCode::i2c, ex.what()});
+    }
+
     return CommandResult::ok;
+}
+
+// ================================================================================
+
+DogStatus Dog::getStatus() const {
+    std::lock_guard<std::mutex> lock(mutex);
+    return status;
 }

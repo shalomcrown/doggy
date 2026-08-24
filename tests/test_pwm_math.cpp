@@ -12,6 +12,7 @@ static void expect(bool cond, const char *name) {
         std::cout << "PASS " << name << std::endl;
         return;
     }
+
     std::cout << "FAIL " << name << std::endl;
     failures += 1;
 }
@@ -37,8 +38,22 @@ int main() {
     expect(std::abs(angle - 120.5) < 0.001, "parsed angle value");
     expect(parse_angle_json("{}", angle) == false, "missing angle fails");
 
+    DogStatus empty;
+    expect(status_to_json(empty) == "{\"errors\":[]}", "empty status json");
+
+    DogStatus withI2c;
+    withI2c.errors.push_back(DogError{
+        DogErrorCode::i2c,
+        "Could not open i2c bus.: No such file or directory"
+    });
+    const std::string statusJson = status_to_json(withI2c);
+    expect(statusJson.find("\"code\":\"i2c\"") != std::string::npos, "status json has i2c code");
+    expect(statusJson.find("Could not open i2c bus.") != std::string::npos,
+           "status json has i2c message");
+
     if (failures != 0) {
         return EXIT_FAILURE;
     }
+
     return EXIT_SUCCESS;
 }

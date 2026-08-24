@@ -1,6 +1,8 @@
 #ifndef DOG_API_H
 #define DOG_API_H
 
+#include "dog_status.h"
+
 #include <string>
 #include <vector>
 
@@ -30,6 +32,9 @@ public:
     virtual std::vector<ServoSnapshot> listServos() = 0;
     virtual CommandResult home() = 0;
     virtual CommandResult setServoAngle(int id, double angle) = 0;
+    virtual DogStatus getStatus() const = 0;
 };
 
 #endif
+
+

@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+#
+# doggy
+#
+# Open an SSH session as user doggy. Uses zssh when available, otherwise ssh.
+# Unknown-host prompts are disabled.
+#
+# Usage:
+#   ./doggy [options] <host> [jump ...]
+#
+# The first argument is the target host. Further arguments are ProxyJump hops
+# (in order). The login user on the target is always doggy.
+#
+# Options:
+#   --dry-run     Print the ssh/zssh command, do not execute
+#   -h, --help    Show this help
+set -u
+
+DRY_RUN=0
+
+die() { printf '%s\n' "$1" >&2; exit 1; }
+
+validate_hop() {
+    local hop="$1"
+    case "$hop" in
+        -*) die "Invalid host (must not start with -): $hop" ;;
+    esac
+
+    case "$hop" in
+        *[!A-Za-z0-9._@-]*) die "Invalid host characters: $hop" ;;
+    esac
+
+    case "$hop" in
+        *@) die "Invalid host: $hop" ;;
+        @*) die "Invalid host: $hop" ;;
+        *@*@*) die "Invalid host: $hop" ;;
+    esac
+}
+
+target_hostname() {
+    local raw="$1"
+    case "$raw" in
+        *@*) printf '%s' "${raw#*@}" ;;
+        *) printf '%s' "$raw" ;;
+    esac
+}
+
+POSITIONAL=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --dry-run) DRY_RUN=1; shift ;;
+        -h|--help)
+            grep '^#' "$0" | grep -v '^#!' | sed 's/^# \{0,1\}//'
+            exit 0 ;;
+        --) shift
+            while [ "$#" -gt 0 ]; do
+                POSITIONAL+=("$1")
+                shift
+            done
+            break ;;
+        -*) die "Unknown argument: $1 (try --help)" ;;
+        *) POSITIONAL+=("$1"); shift ;;
+    esac
+done
+
+if [ "${#POSITIONAL[@]}" -eq 0 ]; then
+    die "Missing host. Usage: ./doggy <host> [jump ...]"
+fi
+
+TARGET_RAW="${POSITIONAL[0]}"
+validate_hop "$TARGET_RAW"
+TARGET_HOST="$(target_hostname "$TARGET_RAW")"
+validate_hop "$TARGET_HOST"
+
+JUMPS=()
+i=1
+while [ "$i" -lt "${#POSITIONAL[@]}" ]; do
+    validate_hop "${POSITIONAL[$i]}"
+    JUMPS+=("${POSITIONAL[$i]}")
+    i=$((i + 1))
+done
+
+CLIENT=ssh
+if command -v zssh >/dev/null 2>&1; then
+    CLIENT=zssh
+fi
+
+SSH_OPTS=(
+    -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
+    -o GlobalKnownHostsFile=/dev/null
+)
+
+if [ "$CLIENT" = zssh ]; then
+    CMD=(zssh -- "${SSH_OPTS[@]}")
+else
+    CMD=(ssh "${SSH_OPTS[@]}")
+fi
+
+if [ "${#JUMPS[@]}" -gt 0 ]; then
+    IFS=,
+    CMD+=(-J "${JUMPS[*]}")
+    unset IFS
+fi
+
+CMD+=("doggy@${TARGET_HOST}")
+
+if [ "$DRY_RUN" -eq 1 ]; then
+    printf '[DRY-RUN]  '
+    printf '%q ' "${CMD[@]}"
+    printf '\n'
+    exit 0
+fi
+
+exec "${CMD[@]}"

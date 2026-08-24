@@ -25,9 +25,21 @@ cmake --build --preset native-debug
 
 Use `native-release` for an optimised binary.
 
+## SSH to a dog as user `doggy`
+
+The repo-root `./doggy` script is an SSH helper (not the firmware). It uses `zssh` when that is on `PATH`, otherwise `ssh`. The first argument is the target; further arguments are jump hosts. Host-key prompts are disabled (LAN convenience; connections are not authenticated against `known_hosts`).
+
+```sh
+./doggy doggy-1.local
+./doggy doggy-1.local bastion.example
+./doggy --dry-run doggy-1.local jump1 jump2
+```
+
+Login on the target is always `doggy@<host>`. Jump hops are passed as given (`user@hop` is allowed). A hop without `user@` uses OpenSSH’s default: the same user as the destination (`doggy`).
+
 ## Web UI
 
-`./doggy` stays running and serves a single page (LAN, no login):
+The firmware binary stays running and serves a single page (LAN, no login):
 
 ```sh
 ./build/native-debug/doggy
@@ -37,7 +49,7 @@ Use `native-release` for an optimised binary.
 - **Home** runs the homing pose
 - The table lists each named servo (last commanded PWM and angle) with a slider. The slider sends `POST /api/servos/{id}` after **100ms idle**
 
-Port: `DOGGY_HTTP_PORT` (default `8080`). HTML: `DOGGY_WEB_ROOT` or `/usr/share/doggy` after the DEB is installed.
+Port: `DOGGY_HTTP_PORT` (default `8080`). HTML: `DOGGY_WEB_ROOT` or `/usr/share/doggy` after the DEB is installed. `GET /api/status` lists hardware errors (for example I2C bus missing); the page shows them at the top.
 
 ## Package and install on a remote Pi
 
@@ -49,7 +61,11 @@ cmake --build --preset native-release --target package
 ./install.sh --dry-run user@hostname        # print scp/ssh only
 ```
 
-The script copies the `.deb` to `/tmp` over SSH and runs `sudo apt-get install`.
+The script copies the `.deb` to `/tmp` over SSH and runs `sudo apt-get install`. The package creates system user `doggy` if needed, enables I2C in `/boot/firmware/config.txt` when missing, and may ask you to reboot. It then enables `doggy.service` (`User=doggy`, I2C via the `i2c` group).
+
+CMake configure fetches cpp-httplib v0.18.3 (needs network once, or set `FETCHCONTENT_SOURCE_DIR_CPP_HTTPLIB`).
+
+Each build stamps the version as `1.0.0-YYYY-MM-DD-HHMM-<short-git-hash>` (local time). The DEB filename uses the same string. The process prints it when it starts.
 
 ## Ubuntu → Raspberry Pi aarch64 cross-build
 
@@ -69,7 +85,7 @@ rsync -aH --info=progress2 pi-user@raspberrypi:/usr/ /path/to/pi-sysroot/usr/
 
 ## Tests
 
-CTest covers installer scripts, PWM math, and the HTTP API (no I2C):
+CTest covers installer scripts, the SSH helper, PWM math, and the HTTP API (no I2C):
 
 ```sh
 cmake --preset native-debug

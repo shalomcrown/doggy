@@ -21,6 +21,7 @@ std::string read_file(const std::string &path) {
     if (in.is_open() == false) {
         return {};
     }
+
     std::ostringstream os;
     os << in.rdbuf();
     return os.str();
@@ -33,6 +34,7 @@ int status_for(CommandResult result) {
         case CommandResult::busy: return 409;
         case CommandResult::bad_angle: return 400;
     }
+
     return 500;
 }
 
@@ -66,11 +68,18 @@ public:
                 res.set_content(error_json("index_missing"), "application/json");
                 return;
             }
+
             res.set_content(html, "text/html; charset=utf-8");
         });
+
         server.Get("/api/servos", [this](const httplib::Request &, httplib::Response &res) {
             res.set_content(servos_to_json(this->api.listServos()), "application/json");
         });
+
+        server.Get("/api/status", [this](const httplib::Request &, httplib::Response &res) {
+            res.set_content(status_to_json(this->api.getStatus()), "application/json");
+        });
+
         server.Post("/api/home", [this](const httplib::Request &, httplib::Response &res) {
             const CommandResult result = this->api.home();
             res.status = status_for(result);
@@ -82,6 +91,8 @@ public:
                 res.set_content(error_json("home_failed"), "application/json");
             }
         });
+
+
         server.Post(R"(/api/servos/(\d+))", [this](const httplib::Request &req, httplib::Response &res) {
             int id = 0;
             try {
@@ -91,26 +102,31 @@ public:
                 res.set_content(error_json("bad_id"), "application/json");
                 return;
             }
+
             double angle = 0.0;
             if (parse_angle_json(req.body, angle) == false) {
                 res.status = 400;
                 res.set_content(error_json("bad_json"), "application/json");
                 return;
             }
+
             const CommandResult result = this->api.setServoAngle(id, angle);
             res.status = status_for(result);
             if (result == CommandResult::ok) {
                 res.set_content(servos_to_json(this->api.listServos()), "application/json");
                 return;
             }
+
             if (result == CommandResult::not_found) {
                 res.set_content(error_json("not_found"), "application/json");
                 return;
             }
+
             if (result == CommandResult::busy) {
                 res.set_content(error_json("busy"), "application/json");
                 return;
             }
+
             res.set_content(error_json("bad_angle"), "application/json");
         });
     }
@@ -136,12 +152,14 @@ bool WebServer::start() {
         if (impl->listen_port < 0) {
             return false;
         }
+
         impl->worker = std::thread([this]() {
             impl->server.listen_after_bind();
         });
         impl->server.wait_until_ready();
         return true;
     }
+
     impl->worker = std::thread([this]() {
         impl->server.listen(impl->bind_host, impl->listen_port);
     });
@@ -179,6 +197,7 @@ std::string default_index_html_path() {
             return p.string();
         }
     }
+
 #ifdef DOGGY_WEB_SOURCE_DIR
     {
         const fs::path p = fs::path(DOGGY_WEB_SOURCE_DIR) / "index.html";
@@ -186,10 +205,12 @@ std::string default_index_html_path() {
             return p.string();
         }
     }
+
 #endif
     const fs::path installed = "/usr/share/doggy/index.html";
     if (fs::is_regular_file(installed)) {
         return installed.string();
     }
+
     return {};
 }

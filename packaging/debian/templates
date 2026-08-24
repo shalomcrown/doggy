@@ -1,0 +1,9 @@
+Template: shaloms-doggy/reboot-now
+Type: boolean
+Default: false
+Description: Restart the system now to enable I2C?
+ I2C was enabled in the Raspberry Pi boot configuration
+ (dtparam=i2c_arm=on). A reboot is required before /dev/i2c-1 exists.
+ .
+ Choose Yes to reboot one minute after this package finishes installing.
+ Choose No if you will reboot yourself later.

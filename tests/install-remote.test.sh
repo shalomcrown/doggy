@@ -75,10 +75,10 @@ else
     fail "dry-run prints apt-get install of /tmp/<deb>"
 fi
 
-if grep -Eq 'ssh[[:space:]]+pi@robot' "$TMPDIR/dry"; then
-    pass "dry-run prints ssh to the given host"
+if grep -Eq 'ssh[[:space:]]+-t[[:space:]]+pi@robot' "$TMPDIR/dry"; then
+    pass "dry-run prints ssh -t so sudo can prompt"
 else
-    fail "dry-run prints ssh to the given host"
+    fail "dry-run prints ssh -t so sudo can prompt"
 fi
 
 # ── newest .deb under DOGGY_DEB_ROOT ─────────────────────────────────────────

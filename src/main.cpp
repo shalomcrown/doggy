@@ -2,6 +2,7 @@
 #include <iostream>
 
 #include "doggy.h"
+#include "doggy_version.h"
 #include "web_server.h"
 
 int main() {
@@ -23,7 +24,8 @@ int main() {
 
     Dog doggy;
     WebServer server(doggy, index, "0.0.0.0", port);
-    std::cout << "Doggy listening on http://0.0.0.0:" << port << std::endl;
+    std::cout << "Doggy " << DOGGY_VERSION
+              << " listening on http://0.0.0.0:" << port << std::endl;
     server.run();
     return 0;
 }

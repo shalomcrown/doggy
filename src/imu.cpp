@@ -1,17 +1,27 @@
 #include "imu.h"
 #include "i2c_interface.hpp"
 
-// =================================================================
-Imu::Imu() :  bus_fd(openBus("/dev/i2c-1", 0x68)) {
+#include <system_error>
 
-    writeRegisterByte(bus_fd, 0x6B, 0); // Reset
-    writeRegisterByte(bus_fd, 0x1C, 1 << 3); // Accelerometer range to 2g
-    writeRegisterByte(bus_fd, 0x1B, 0); // Gyto 250 degrees/s
+// =================================================================
+Imu::Imu() : bus_fd(-1) {
+    try {
+        bus_fd = openBus("/dev/i2c-1", 0x68);
+        writeRegisterByte(bus_fd, 0x6B, 0); // Reset
+        writeRegisterByte(bus_fd, 0x1C, 1 << 3); // Accelerometer range to 2g
+        writeRegisterByte(bus_fd, 0x1B, 0); // Gyto 250 degrees/s
+    } catch (const std::system_error &) {
+        bus_fd = -1;
+    }
 }
 
 // =================================================================
 
 dlib::vector<double> Imu::readAccelerometer() {
+    if (bus_fd < 0) {
+        return dlib::vector<double>(0.0, 0.0, 0.0);
+    }
+
     uint8_t data[6];
     readRegisterBlock(bus_fd, 0x3B, 6, data);
 
@@ -24,6 +34,10 @@ dlib::vector<double> Imu::readAccelerometer() {
 
 // =================================================================
 double Imu::readTemperature() {
+    if (bus_fd < 0) {
+        return 0.0;
+    }
+
     uint8_t data[2];
     readRegisterBlock(bus_fd, 0x41, 2, data);
 
@@ -33,6 +47,10 @@ double Imu::readTemperature() {
 // =================================================================
 
 dlib::vector<double> Imu::readGyro() {
+    if (bus_fd < 0) {
+        return dlib::vector<double>(0.0, 0.0, 0.0);
+    }
+
     uint8_t data[6];
     readRegisterBlock(bus_fd, 0x43, 6, data);
 

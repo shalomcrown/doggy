@@ -27,6 +27,7 @@ public:
         if (busy) {
             return CommandResult::busy;
         }
+
         items[0].angle = 135.0;
         items[0].pwm = 400;
         return CommandResult::ok;
@@ -36,16 +37,25 @@ public:
         if (busy) {
             return CommandResult::busy;
         }
+
         if (angle < 0.0 || angle > 180.0) {
             return CommandResult::bad_angle;
         }
+
         if (id != 11) {
             return CommandResult::not_found;
         }
+
         items[0].angle = angle;
         items[0].pwm = 200;
         return CommandResult::ok;
     }
+
+    DogStatus getStatus() const override {
+        return status;
+    }
+
+    DogStatus status;
 };
 
 // ================================================================================
@@ -57,6 +67,7 @@ static void expect(bool cond, const char *name) {
         std::cout << "PASS " << name << std::endl;
         return;
     }
+
     std::cout << "FAIL " << name << std::endl;
     failures += 1;
 }
@@ -68,8 +79,10 @@ static httplib::Result get_retry(httplib::Client &cli, const char *path) {
         if (res) {
             return res;
         }
+
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
+
     return res;
 }
 
@@ -95,6 +108,20 @@ int main() {
     expect(page && page->body.find("IDLE_MS = 100") != std::string::npos,
            "page uses 100ms idle debounce");
     expect(page && page->body.find("Home") != std::string::npos, "page has Home button");
+    expect(page && page->body.find("/api/status") != std::string::npos,
+           "page fetches /api/status");
+
+    auto healthy = cli.Get("/api/status");
+    expect(healthy && healthy->status == 200, "GET /api/status is 200");
+    expect(healthy && healthy->body.find("\"errors\":[]") != std::string::npos,
+           "GET /api/status empty errors");
+
+    dog.status.errors.push_back(DogError{DogErrorCode::i2c, "Could not open i2c bus.: No such file or directory"});
+    auto unhealthy = cli.Get("/api/status");
+    expect(unhealthy && unhealthy->body.find("\"code\":\"i2c\"") != std::string::npos,
+           "GET /api/status reports i2c code");
+    expect(unhealthy && unhealthy->body.find("Could not open i2c bus.") != std::string::npos,
+           "GET /api/status reports i2c message");
 
     auto list = cli.Get("/api/servos");
     expect(list && list->status == 200, "GET /api/servos is 200");
@@ -130,5 +157,6 @@ int main() {
     if (failures != 0) {
         return EXIT_FAILURE;
     }
+
     return EXIT_SUCCESS;
 }
