@@ -1,5 +1,6 @@
 #include "web_server.h"
 #include "web_json.h"
+#include "doggy_version.h"
 
 #include "httplib.h"
 
@@ -80,7 +81,8 @@ public:
         });
 
         server.Get("/api/status", [this](const httplib::Request &, httplib::Response &res) {
-            res.set_content(status_to_json(this->api.getStatus()), "application/json");
+            res.set_content(status_to_json(this->api.getStatus(), DOGGY_VERSION),
+                            "application/json");
         });
 
         server.Post("/api/home", [this](const httplib::Request &, httplib::Response &res) {

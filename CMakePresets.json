@@ -31,8 +31,7 @@
       "binaryDir": "${sourceDir}/build/ubuntu-aarch64-cross",
       "toolchainFile": "${sourceDir}/cmake/toolchains/aarch64-linux-gnu.cmake",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_SYSROOT": "$env{DOGGY_SYSROOT}"
+        "CMAKE_BUILD_TYPE": "Release"
       }
     }
   ],

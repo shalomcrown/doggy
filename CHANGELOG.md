@@ -12,11 +12,15 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 > Work merged but not yet shipped. Move entries to a versioned section on release.
 
 ### Added
+- `GET /api/status` includes the stamped `version`; the web title line and browser tab show `Doggy <version>`.
+- `./install-prereqs.sh` auto-selects native vs cross from host arch (toolchain only; no sysroot).
+- `./build.sh` packages a `.deb`: native `native-release` on aarch64/arm64, `ubuntu-aarch64-cross` on other hosts.
+- CMake FetchContent zlib 1.3.1; I2C SMBus uses the kernel ioctl; IMU uses `Vec3` instead of dlib so cross builds need no Pi sysroot.
 - Firmware main loop samples the body IMU and ADS7830 battery ADC every 200 ms; `GET /api/status` includes cached `imu` and `battery` readings and the page polls them five times per second.
 - Process logs at `/var/log/doggy/doggy.log` (plog): roll on start and at the size cap, keep 10 files; gzip archives are `doggy-YYYY-MM-DD-HHMM.log.gz`; `/api` calls and failures are logged (successful `GET /api/status` is skipped so 5 Hz polling does not fill the log).
 - Repo-root `./doggy` opens an SSH session as user `doggy` (`zssh` if present, else `ssh`); extra args are jump hosts; unknown-host prompts are disabled.
-- `scripts/install-prereqs.sh` installs Raspberry Pi native build deps and Ubuntu aarch64 cross tools (Qt Creator and editors included by default; no Windows target).
-- CMake presets `native-debug`, `native-release`, and `ubuntu-aarch64-cross` (cross requires a Pi sysroot).
+- `install-prereqs.sh` installs Raspberry Pi native build deps and Ubuntu aarch64 cross tools (Qt Creator and editors included by default; no Windows target).
+- CMake presets `native-debug`, `native-release`, and `ubuntu-aarch64-cross`.
 - `install.sh` copies a `.deb` to a remote host over SSH and installs it with `apt-get`.
 - In-process web UI (cpp-httplib): Home button, servo table, sliders (100ms idle before send).
 - `ServoBoard` is the PCA9685; `Servo` is one named channel with last commanded angle/PWM.
@@ -32,6 +36,7 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 - Removed unused Arduino-style `gpioPin` helper (libgpiod v1, never called). Firmware talks to the dog over I2C only.
 
 ### Fixed
+- Cross-built `.deb` packages are Debian architecture `arm64` (not host `amd64`).
 - `postinst` restarts `doggy.service` before the I2C reboot prompt; `prerm` no longer stops the unit on upgrade.
 - `install()` now uses `RUNTIME DESTINATION bin` for the `doggy` executable.
 - I2C headers compile under C++20: `i2c_interface.hpp` now includes `<cstdint>` so `uint8_t` is defined.

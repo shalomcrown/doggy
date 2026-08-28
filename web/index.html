@@ -15,7 +15,7 @@
   </style>
 </head>
 <body>
-  <h1>Doggy</h1>
+  <h1 id="page-title">Doggy</h1>
   <p id="errors" role="alert"></p>
   <button type="button" id="home">Home</button>
   <p id="status" role="status"></p>
@@ -82,7 +82,9 @@
     const imuGzEl = document.getElementById("imu-gz");
     const batteryOkEl = document.getElementById("battery-ok");
     const batteryVEl = document.getElementById("battery-v");
+    const titleEl = document.getElementById("page-title");
     let statusPollBusy = false;
+    let shownVersion = "";
 
     function setStatus(text) {
       statusEl.textContent = text;
@@ -141,6 +143,21 @@
       batteryVEl.textContent = formatNum(battery.voltage_v);
     }
 
+    function applyVersion(version) {
+      if (typeof version !== "string" || version.length === 0) {
+        return;
+      }
+
+      if (version === shownVersion) {
+        return;
+      }
+
+      shownVersion = version;
+      const label = "Doggy " + version;
+      titleEl.textContent = label;
+      document.title = label;
+    }
+
     async function loadDogStatus() {
       if (statusPollBusy) {
         return;
@@ -155,6 +172,7 @@
         }
 
         const data = await res.json();
+        applyVersion(data.version);
         applyErrors(data.errors || []);
         applyImu(data.imu);
         applyBattery(data.battery);

@@ -41,6 +41,44 @@ else
     fail "CMake pins plog archive SHA256"
 fi
 
+if grep -q 'madler/zlib' "$CMAKE" && grep -q 'v1.3.1' "$CMAKE"; then
+    pass "CMake FetchContent pins zlib v1.3.1"
+else
+    fail "CMake FetchContent pins zlib v1.3.1"
+fi
+
+if grep -q '17e88863f3600672ab49182f217281b6fc4d3c762bde361935e436a95214d05c' "$CMAKE"; then
+    pass "CMake pins zlib archive SHA256"
+else
+    fail "CMake pins zlib archive SHA256"
+fi
+
+if grep -q 'find_package(ZLIB' "$CMAKE"; then
+    fail "CMake does not find_package host ZLIB"
+else
+    pass "CMake does not find_package host ZLIB"
+fi
+
+if grep -Eq 'target_link_libraries\(doggy PRIVATE.*dlib' "$CMAKE" \
+        || grep -Eq 'target_link_libraries\(doggy PRIVATE.*i2c' "$CMAKE"; then
+    fail "firmware does not link distro dlib or libi2c"
+else
+    pass "firmware does not link distro dlib or libi2c"
+fi
+
+if grep -q 'libdlib-dev' "$CMAKE" || grep -q 'libi2c-dev' "$CMAKE"; then
+    fail "DEB depends do not include libdlib-dev or libi2c-dev"
+else
+    pass "DEB depends do not include libdlib-dev or libi2c-dev"
+fi
+
+if grep -Fq 'CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$"' "$CMAKE" \
+        && grep -Fq 'set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "arm64")' "$CMAKE"; then
+    pass "CPack Debian architecture is arm64 for aarch64/arm64 targets"
+else
+    fail "CPack Debian architecture is arm64 for aarch64/arm64 targets"
+fi
+
 if [ -f "$UNIT" ] && grep -q '^LogsDirectory=doggy$' "$UNIT"; then
     pass "unit LogsDirectory is doggy"
 else
@@ -54,6 +92,13 @@ if [ -n "$restart_line" ] && [ -n "$i2c_call_line" ] \
     pass "postinst restarts doggy.service before the I2C reboot prompt"
 else
     fail "postinst restarts doggy.service before the I2C reboot prompt"
+fi
+
+if grep -q 'i2c/smbus.h' "$ROOT/src/i2c_interface.cpp" \
+        || grep -q 'i2c/smbus.h' "$ROOT/src/servo_board.cpp"; then
+    fail "I2C sources do not include libi2c i2c/smbus.h"
+else
+    pass "I2C sources do not include libi2c i2c/smbus.h"
 fi
 
 if grep -q 'third_party/cpp-httplib' "$CMAKE"; then

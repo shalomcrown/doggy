@@ -1,22 +1,34 @@
-#include <sys/ioctl.h>
+#include <cerrno>
 #include <cstring>
-#include <stdio.h>
-#include <stdarg.h>
 #include <fcntl.h>
-#include <sys/ioctl.h>
-#include <system_error>
 #include <iostream>
-
-extern "C" {
 #include <linux/i2c.h>
 #include <linux/i2c-dev.h>
-#include <i2c/smbus.h>
-}
-
+#include <sys/ioctl.h>
+#include <system_error>
+#include <unistd.h>
 
 #include "i2c_interface.hpp"
 
 // Thanks to: https://github.com/barulicm/PiPCA9685
+// SMBus transfers use the kernel I2C_SMBUS ioctl (linux/i2c-dev.h), not libi2c.
+
+// =============================================================================
+
+static int smbus_xfer(
+    int fd,
+    char read_write,
+    uint8_t command,
+    int size,
+    union i2c_smbus_data *data
+) {
+    struct i2c_smbus_ioctl_data args{};
+    args.read_write = static_cast<__u8>(read_write);
+    args.command = command;
+    args.size = static_cast<__u32>(size);
+    args.data = data;
+    return ioctl(fd, I2C_SMBUS, &args);
+}
 
 // =============================================================================
 
@@ -37,7 +49,7 @@ int openBus(const std::string& device, const uint8_t address) {
 // =============================================================================
 
 void writeByte(const int bus_fd, const uint8_t value) {
-    const auto err = i2c_smbus_write_byte(bus_fd, value);
+    const auto err = smbus_xfer(bus_fd, I2C_SMBUS_WRITE, value, I2C_SMBUS_BYTE, nullptr);
     if (err) {
         throw std::system_error(errno, std::system_category(), "Could not write I2C byte");
     }
@@ -46,22 +58,23 @@ void writeByte(const int bus_fd, const uint8_t value) {
 // =============================================================================
 
 uint8_t readByte(const int bus_fd) {
-    const auto err = i2c_smbus_read_byte(bus_fd);
+    union i2c_smbus_data data{};
+    const auto err = smbus_xfer(bus_fd, I2C_SMBUS_READ, 0, I2C_SMBUS_BYTE, &data);
     if (err < 0) {
         throw std::system_error(errno, std::system_category(), "Could not read I2C byte");
     }
 
-    return static_cast<uint8_t>(err);
+    return static_cast<uint8_t>(data.byte);
 }
 
 // =============================================================================
 
 void writeRegisterByte(const int bus_fd, const uint8_t register_address, const uint8_t value) {
-  i2c_smbus_data data;
+  union i2c_smbus_data data{};
   data.byte = value;
 
-//  const auto err = i2c_smbus_write_byte_data(bus_fd, register_address, value);
-  const auto err = i2c_smbus_access(bus_fd, I2C_SMBUS_WRITE, register_address, I2C_SMBUS_BYTE_DATA, &data);
+  const auto err = smbus_xfer(
+      bus_fd, I2C_SMBUS_WRITE, register_address, I2C_SMBUS_BYTE_DATA, &data);
 
   if (err) {
     const auto msg = "Could not write value (" + std::to_string(value) + ") to register " + std::to_string(register_address);
@@ -72,13 +85,14 @@ void writeRegisterByte(const int bus_fd, const uint8_t register_address, const u
 // =============================================================================
 
 uint8_t readRegisterByte(const int bus_fd, const uint8_t register_address) {
-  i2c_smbus_data data;
+  union i2c_smbus_data data{};
 
-  const auto err = i2c_smbus_access(bus_fd, I2C_SMBUS_READ, register_address, I2C_SMBUS_BYTE_DATA, &data);
+  const auto err = smbus_xfer(
+      bus_fd, I2C_SMBUS_READ, register_address, I2C_SMBUS_BYTE_DATA, &data);
 
   if (err) {
     const auto msg = "Could not read value at register " + std::to_string(register_address);
-    throw std::system_error(-err, std::system_category(), msg);
+    throw std::system_error(errno, std::system_category(), msg);
   }
 
   return data.byte & 0xFF;
@@ -91,8 +105,8 @@ uint8_t readRegisterByte(const int bus_fd, const uint8_t register_address) {
 
 int i2c_rdwr_block(int fd, uint8_t reg, uint8_t read_write, uint8_t length, unsigned char* buffer)
 {
-    struct i2c_smbus_ioctl_data ioctl_data;
-    union i2c_smbus_data smbus_data;
+    struct i2c_smbus_ioctl_data ioctl_data{};
+    union i2c_smbus_data smbus_data{};
 
     int rv;
 
@@ -143,13 +157,11 @@ int i2c_rdwr_block(int fd, uint8_t reg, uint8_t read_write, uint8_t length, unsi
 
 
 void readRegisterBlock(const int bus_fd, const uint8_t register_address, uint8_t blockSize, uint8_t *blockData) {
-
-//    const auto err = i2c_smbus_read_i2c_block_data(bus_fd, register_address, blockSize, blockData);
     const auto err = i2c_rdwr_block(bus_fd, register_address, I2C_SMBUS_READ, blockSize, blockData);
 
     if (err) {
       const auto msg = "Could not read value at register " + std::to_string(register_address);
-      throw std::system_error(-err, std::system_category(), msg);
+      throw std::system_error(errno, std::system_category(), msg);
     }
 
 }

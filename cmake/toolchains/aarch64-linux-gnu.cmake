@@ -2,11 +2,8 @@
 #
 # Required:
 #   - aarch64-linux-gnu-gcc / aarch64-linux-gnu-g++ on PATH
-#   - CMAKE_SYSROOT pointing at a Raspberry Pi OS aarch64 sysroot (libraries
-#     and headers for libi2c and dlib). Configure fails without it.
 #
 # Example:
-#   export DOGGY_SYSROOT=/opt/rpi-sysroot
 #   cmake --preset ubuntu-aarch64-cross
 
 set(CMAKE_SYSTEM_NAME Linux)

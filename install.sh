@@ -94,7 +94,7 @@ find_newest_deb() {
 }
 if [ -z "$DEB" ]; then
     DEB="$(find_newest_deb)" || die \
-        "No .deb found under $DEB_ROOT. Build one with: cmake --build --preset native-release --target package"
+        "No .deb found under $DEB_ROOT. Build one with: ./build.sh"
 fi
 [ -f "$DEB" ] || die "Debian package is not a file: $DEB"
 case "$DEB" in

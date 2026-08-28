@@ -5,22 +5,27 @@
 # Install prerequisites for building doggy on Raspberry Pi OS (native) and
 # for aarch64 cross-compilation from Ubuntu.
 #
+# Default --mode follows the host arch: aarch64/arm64 → native, otherwise
+# cross. Cross compilation uses the Ubuntu aarch64 toolchain only; firmware
+# dependencies (zlib, I2C SMBus, IMU vectors) are built from source.
+#
 # First-class hosts: Debian/Raspberry Pi OS Bookworm and Trixie, Ubuntu 24.04.
 # Other distros continue best-effort (warn, skip unavailable packages, do not abort).
 #
 # There is no Windows target. The only runtime target is Raspberry Pi aarch64.
 #
 # Usage:
-#   ./scripts/install-prereqs.sh [options]
+#   ./install-prereqs.sh [options]
 #
 # Options:
-#   --mode <native|cross|all>   Which prereqs to install (default: native)
+#   --mode <native|cross|all>   Which prereqs to install (default: auto from arch)
 #   --print-plan                Print detected distro and package plan, then exit
 #   --dry-run                   Print what would be done, do not execute
 #   -h, --help                  Show this help
 set -u
 # ── defaults ──────────────────────────────────────────────────────────────────
-MODE="native"
+MODE=""
+MODE_SOURCE="auto"
 OS_RELEASE_FILE="${OS_RELEASE_FILE:-/etc/os-release}"
 DRY_RUN=0
 PRINT_PLAN=0
@@ -57,6 +62,9 @@ run() {
     fi
     "$@"
 }
+is_pi_arch() {
+    case "$1" in aarch64|arm64) return 0 ;; *) return 1 ;; esac
+}
 # Determine sudo invocation
 SUDO=""
 if [ "$(id -u)" -ne 0 ]; then
@@ -70,6 +78,7 @@ while [ "$#" -gt 0 ]; do
         --mode)
             [ "$#" -ge 2 ] || die "--mode requires an argument (try --help)"
             MODE="$2"
+            MODE_SOURCE="flag"
             shift 2 ;;
         --print-plan)            PRINT_PLAN=1;                shift   ;;
         --dry-run)               DRY_RUN=1;                   shift   ;;
@@ -79,6 +88,15 @@ while [ "$#" -gt 0 ]; do
         *) die "Unknown argument: $1 (try --help)" ;;
     esac
 done
+HOST_MACHINE="${DOGGY_HOST_MACHINE:-$(uname -m)}"
+if [ -z "$MODE" ]; then
+    if is_pi_arch "$HOST_MACHINE"; then
+        MODE="native"
+    else
+        MODE="cross"
+    fi
+    MODE_SOURCE="auto"
+fi
 case "$MODE" in native|cross|all) ;; *) die "Invalid --mode '$MODE' (try --help)"; esac
 export DEBIAN_FRONTEND=noninteractive
 os_release_val() {
@@ -123,7 +141,7 @@ detect_os() {
     fi
 }
 native_packages() {
-    printf '%s' "ca-certificates cmake ninja-build g++ build-essential pkg-config git i2c-tools libi2c-dev libdlib-dev zlib1g-dev qtcreator zssh lrzsz vim"
+    printf '%s' "ca-certificates cmake ninja-build g++ build-essential pkg-config git i2c-tools qtcreator zssh lrzsz vim"
 }
 cross_packages() {
     printf '%s' "ca-certificates cmake ninja-build pkg-config git gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"
@@ -134,11 +152,13 @@ print_plan() {
     printf 'os_version_id=%s\n' "$OS_VERSION_ID"
     printf 'os_family=%s\n' "$OS_FAMILY"
     printf 'os_known=%s\n' "$OS_KNOWN"
-    printf 'host_arch=%s\n' "$(uname -m)"
+    printf 'host_arch=%s\n' "$HOST_MACHINE"
     printf 'mode=%s\n' "$MODE"
+    printf 'mode_source=%s\n' "$MODE_SOURCE"
     printf 'target=raspberry-pi-aarch64\n'
     printf 'windows=unsupported\n'
     printf 'devtools=included\n'
+    printf 'sysroot=not-required\n'
     printf 'native_packages=%s\n' "$(native_packages)"
     printf 'cross_packages=%s\n' "$(cross_packages)"
     if [ "$OS_KNOWN" -eq 0 ]; then
@@ -202,9 +222,9 @@ if [ "$PRINT_PLAN" -eq 1 ]; then
 fi
 # ── banner ────────────────────────────────────────────────────────────────────
 echo
-info "Mode:                  $MODE"
+info "Mode:                  $MODE ($MODE_SOURCE)"
 info "Distro:                ${OS_PRETTY:-${OS_ID:-unknown}} (${OS_CODENAME:-n/a})"
-info "Host arch:             $(uname -m)"
+info "Host arch:             $HOST_MACHINE"
 info "Target:                Raspberry Pi aarch64"
 info "Windows:               unsupported"
 [ "$DRY_RUN" -eq 1 ] && info "Dry-run: no changes will be made"
@@ -214,10 +234,10 @@ echo
 # ═════════════════════════════════════════════════════════════════════════════
 if [ "$MODE" = "all" ] || [ "$MODE" = "native" ]; then
     info "────── Native Raspberry Pi prerequisites ──────"
-    if [ "$(uname -m)" != "aarch64" ]; then
-        warn "Native mode on $(uname -m): the robot target is Raspberry Pi aarch64. Use --mode cross with a sysroot for Ubuntu→Pi builds."
+    if ! is_pi_arch "$HOST_MACHINE"; then
+        warn "Native mode on $HOST_MACHINE: the robot target is Raspberry Pi aarch64. Omit --mode on Ubuntu for the cross toolchain."
     fi
-    step "apt-get install (build tools, GPIO/I2C/dlib, Qt Creator and editors)"
+    step "apt-get install (build tools, I2C tools, Qt Creator and editors)"
     # shellcheck disable=SC2046
     apt_install_best_effort $(native_packages)
     verify_commands cmake ninja g++ pkg-config git
@@ -228,8 +248,8 @@ fi
 # ═════════════════════════════════════════════════════════════════════════════
 if [ "$MODE" = "all" ] || [ "$MODE" = "cross" ]; then
     info "────── Ubuntu aarch64 cross-compilation prerequisites ──────"
-    if [ "$(uname -m)" = "aarch64" ]; then
-        warn "Already on aarch64; native builds do not need a cross compiler."
+    if is_pi_arch "$HOST_MACHINE"; then
+        warn "Already on $HOST_MACHINE; native builds do not need a cross compiler."
     fi
     step "apt-get install (aarch64 cross toolchain)"
     # shellcheck disable=SC2046
@@ -246,14 +266,8 @@ if [ "$MISSING_COUNT" -eq 0 ]; then
         && printf ' %b(%d warning(s))%b' "$C_YELLOW" "$WARN_COUNT" "$C_RESET"
     printf '\n'
     echo
-    info "Native Pi build:"
-    printf '  cmake --preset native-debug\n'
-    printf '  cmake --build --preset native-debug\n'
-    echo
-    info "Ubuntu → Pi aarch64 (requires a Raspberry Pi sysroot):"
-    printf '  export DOGGY_SYSROOT=/path/to/pi-sysroot\n'
-    printf '  cmake --preset ubuntu-aarch64-cross\n'
-    printf '  cmake --build --preset ubuntu-aarch64-cross\n'
+    info "Then package with:"
+    printf '  ./build.sh\n'
     exit 0
 fi
 printf '%b%d prerequisite(s) still missing after installation attempts.%b\n' \

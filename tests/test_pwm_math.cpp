@@ -39,7 +39,9 @@ int main() {
     expect(parse_angle_json("{}", angle) == false, "missing angle fails");
 
     DogStatus empty;
-    const std::string emptyJson = status_to_json(empty);
+    const std::string emptyJson = status_to_json(empty, "1.2.3-fixture");
+    expect(emptyJson.find("\"version\":\"1.2.3-fixture\"") != std::string::npos,
+           "empty status json has version");
     expect(emptyJson.find("\"errors\":[]") != std::string::npos, "empty status json errors");
     expect(emptyJson.find("\"imu\"") != std::string::npos, "empty status json has imu");
     expect(emptyJson.find("\"battery\"") != std::string::npos, "empty status json has battery");
@@ -50,7 +52,7 @@ int main() {
     DogStatus withBattery;
     withBattery.battery.ok = true;
     withBattery.battery.voltage_v = 7.4;
-    const std::string batteryJson = status_to_json(withBattery);
+    const std::string batteryJson = status_to_json(withBattery, "1.2.3-fixture");
     expect(batteryJson.find("\"ok\":true") != std::string::npos,
            "status json battery.ok true");
     expect(batteryJson.find("\"voltage_v\":7.4") != std::string::npos,
@@ -61,7 +63,10 @@ int main() {
         DogErrorCode::i2c,
         "Could not open i2c bus.: No such file or directory"
     });
-    const std::string statusJson = status_to_json(withI2c);
+    const std::string statusJson = status_to_json(withI2c, "1.2.3-fixture");
+    const std::string escapedJson = status_to_json(empty, "a\"b");
+    expect(escapedJson.find("\"version\":\"a\\\"b\"") != std::string::npos,
+           "status json version is json-escaped");
     expect(statusJson.find("\"code\":\"i2c\"") != std::string::npos, "status json has i2c code");
     expect(statusJson.find("Could not open i2c bus.") != std::string::npos,
            "status json has i2c message");

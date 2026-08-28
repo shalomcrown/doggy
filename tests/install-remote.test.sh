@@ -41,10 +41,10 @@ else
     pass "no .deb under DOGGY_DEB_ROOT exits non-zero"
 fi
 
-if grep -qi package "$TMPDIR/no-deb"; then
-    pass "missing .deb mentions how to package"
+if grep -q './build.sh' "$TMPDIR/no-deb"; then
+    pass "missing .deb mentions ./build.sh"
 else
-    fail "missing .deb mentions how to package"
+    fail "missing .deb mentions ./build.sh"
 fi
 
 # ── host starting with dash ──────────────────────────────────────────────────

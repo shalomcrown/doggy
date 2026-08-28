@@ -1,22 +1,10 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(doggy LANGUAGES CXX)
+project(doggy LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-
-# ==============================================================================
-
-if(CMAKE_CROSSCOMPILING)
-    if(NOT CMAKE_SYSROOT OR CMAKE_SYSROOT STREQUAL "/")
-        message(FATAL_ERROR
-            "aarch64 cross-compilation requires -DCMAKE_SYSROOT=/path/to/raspberry-pi-sysroot "
-            "(or DOGGY_SYSROOT when using the ubuntu-aarch64-cross preset).\n"
-            "Native Raspberry Pi builds do not need a sysroot."
-        )
-    endif()
-endif()
 
 # ==============================================================================
 
@@ -47,7 +35,25 @@ set(PLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(PLOG_INSTALL OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(plog)
 
-find_package(ZLIB REQUIRED)
+# ==============================================================================
+
+FetchContent_Declare(
+    zlib
+    URL https://github.com/madler/zlib/archive/refs/tags/v1.3.1.tar.gz
+    URL_HASH SHA256=17e88863f3600672ab49182f217281b6fc4d3c762bde361935e436a95214d05c
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
+set(ZLIB_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(zlib)
+if(TARGET zlibstatic)
+    set(DOGGY_ZLIB zlibstatic)
+elseif(TARGET zlib)
+    set(DOGGY_ZLIB zlib)
+else()
+    message(FATAL_ERROR "FetchContent zlib did not create zlibstatic or zlib")
+endif()
 
 # ==============================================================================
 
@@ -58,7 +64,7 @@ target_include_directories(doggy_log
     PUBLIC
         "${CMAKE_SOURCE_DIR}/src"
 )
-target_link_libraries(doggy_log PUBLIC plog::plog ZLIB::ZLIB)
+target_link_libraries(doggy_log PUBLIC plog::plog ${DOGGY_ZLIB})
 
 # ==============================================================================
 
@@ -68,6 +74,7 @@ add_library(doggy_web STATIC
 target_include_directories(doggy_web
     PUBLIC
         "${CMAKE_SOURCE_DIR}/src"
+        "${CMAKE_BINARY_DIR}/generated"
 )
 target_link_libraries(doggy_web PUBLIC pthread httplib::httplib doggy_log)
 target_compile_definitions(doggy_web
@@ -106,12 +113,13 @@ add_custom_target(doggy_version_stamp ALL
     COMMENT "Stamping doggy version (time + git hash)"
 )
 add_dependencies(doggy doggy_version_stamp)
+add_dependencies(doggy_web doggy_version_stamp)
 
 target_include_directories(doggy PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_BINARY_DIR}/generated"
 )
-target_link_libraries(doggy PRIVATE doggy_web i2c dlib)
+target_link_libraries(doggy PRIVATE doggy_web)
 target_compile_definitions(doggy
     PRIVATE
         DOGGY_WEB_SOURCE_DIR="${CMAKE_SOURCE_DIR}/web"
@@ -153,6 +161,12 @@ add_test(
 )
 
 add_test(
+    NAME build-script
+    COMMAND bash "${CMAKE_SOURCE_DIR}/tests/build-script.test.sh"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
+add_test(
     NAME version-stamp
     COMMAND bash "${CMAKE_SOURCE_DIR}/tests/version-stamp.test.sh"
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
@@ -172,7 +186,6 @@ add_executable(test_servo_board
     src/i2c_interface.cpp
 )
 target_include_directories(test_servo_board PRIVATE "${CMAKE_SOURCE_DIR}/src")
-target_link_libraries(test_servo_board PRIVATE i2c)
 add_test(NAME servo_board COMMAND test_servo_board)
 
 add_executable(test_web_server tests/test_web_server.cpp)
@@ -192,8 +205,12 @@ add_executable(test_dog_poll
     src/i2c_interface.cpp
 )
 target_include_directories(test_dog_poll PRIVATE "${CMAKE_SOURCE_DIR}/src")
-target_link_libraries(test_dog_poll PRIVATE i2c dlib pthread)
+target_link_libraries(test_dog_poll PRIVATE pthread)
 add_test(NAME dog_poll COMMAND test_dog_poll)
+
+add_executable(test_vec3 tests/test_vec3.cpp)
+target_include_directories(test_vec3 PRIVATE "${CMAKE_SOURCE_DIR}/src")
+add_test(NAME vec3 COMMAND test_vec3)
 
 add_executable(test_doggy_log tests/test_doggy_log.cpp)
 target_link_libraries(test_doggy_log PRIVATE doggy_log)
@@ -213,10 +230,16 @@ set(CPACK_DEBIAN_PACKAGE_DESCRIPTION "Freenove doggy software")
 set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
 set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Shalom Crown <shalomcrown@cmail.com>")
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "libdlib-dev, i2c-tools, libi2c-dev, zssh, lrzsz, vim, systemd, debconf")
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "i2c-tools, zssh, lrzsz, vim, systemd, debconf, ffmpeg")
 set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
     "${CMAKE_SOURCE_DIR}/packaging/debian/postinst;${CMAKE_SOURCE_DIR}/packaging/debian/prerm;${CMAKE_SOURCE_DIR}/packaging/debian/postrm;${CMAKE_SOURCE_DIR}/packaging/debian/config;${CMAKE_SOURCE_DIR}/packaging/debian/templates"
 )
 set(CPACK_DEBIAN_PACKAGE_CONTROL_STRICT_PERMISSION TRUE)
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+# CPackDeb defaults Architecture to host `dpkg --print-architecture`. Cross
+# builds from amd64 would then wrap an aarch64 binary in an amd64 package.
+# Debian's name for aarch64 is arm64 (what Raspberry Pi OS dpkg expects).
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+    set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "arm64")
+endif()
 include(CPack)

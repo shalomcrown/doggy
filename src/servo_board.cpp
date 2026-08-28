@@ -1,7 +1,5 @@
 #include <unistd.h>
 #include <cmath>
-#include <linux/i2c.h>
-#include <i2c/smbus.h>
 #include <iostream>
 #include <system_error>
 

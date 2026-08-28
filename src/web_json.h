@@ -65,9 +65,9 @@ inline void append_xyz_json(std::ostringstream &os, const char *key, const Vec3 
 
 // ================================================================================
 
-inline std::string status_to_json(const DogStatus &status) {
+inline std::string status_to_json(const DogStatus &status, const std::string &version) {
     std::ostringstream os;
-    os << "{\"errors\":[";
+    os << "{\"version\":\"" << json_escape(version) << "\",\"errors\":[";
     for (size_t i = 0; i < status.errors.size(); ++i) {
         if (i > 0) {
             os << ',';

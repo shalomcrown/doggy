@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Regression tests for scripts/install-prereqs.sh distro handling and modes.
+# Regression tests for ./install-prereqs.sh distro handling and modes.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SCRIPT="$ROOT/scripts/install-prereqs.sh"
+SCRIPT="$ROOT/install-prereqs.sh"
 FAILS=0
 
 pass() { printf 'PASS %s\n' "$1"; }
@@ -22,6 +22,18 @@ run_plan() {
     shift 2
     OS_RELEASE_FILE="$os_file" "$SCRIPT" --print-plan "$@" >"$out" 2>&1
 }
+
+if [ -x "$SCRIPT" ]; then
+    pass "install-prereqs.sh is executable"
+else
+    fail "install-prereqs.sh is executable"
+fi
+
+if bash -n "$SCRIPT"; then
+    pass "install-prereqs.sh is valid bash"
+else
+    fail "install-prereqs.sh is valid bash"
+fi
 
 # ── --print-plan must exist and succeed on Trixie ────────────────────────────
 write_os_release "$TMPDIR/trixie" \
@@ -55,13 +67,26 @@ else
     fail "native plan includes devtools by default"
 fi
 
-for pkg in cmake ninja-build g++ libi2c-dev libdlib-dev zlib1g-dev \
-           qtcreator vim git zssh lrzsz; do
+if grep -q 'sysroot=not-required' "$TMPDIR/plan-trixie"; then
+    pass "plan does not require a sysroot"
+else
+    fail "plan does not require a sysroot"
+fi
+
+for pkg in cmake ninja-build g++ qtcreator vim git zssh lrzsz i2c-tools; do
     if grep -E "(^| )${pkg}( |$)" "$TMPDIR/plan-trixie" >/dev/null \
             || grep -q "native_packages=.*${pkg}" "$TMPDIR/plan-trixie"; then
         pass "native plan includes $pkg"
     else
         fail "native plan includes $pkg"
+    fi
+done
+
+for pkg in libi2c-dev libdlib-dev zlib1g-dev; do
+    if grep -q "native_packages=.*${pkg}" "$TMPDIR/plan-trixie"; then
+        fail "native plan does not include $pkg"
+    else
+        pass "native plan does not include $pkg"
     fi
 done
 
@@ -166,15 +191,44 @@ else
     fail "--mode windows reports an error"
 fi
 
-# ── Default mode is native ───────────────────────────────────────────────────
-if run_plan "$TMPDIR/trixie" "$TMPDIR/plan-default"; then
-    if grep -q 'mode=native' "$TMPDIR/plan-default"; then
-        pass "default mode is native"
+# ── Auto mode from host arch ─────────────────────────────────────────────────
+if DOGGY_HOST_MACHINE=aarch64 run_plan "$TMPDIR/trixie" "$TMPDIR/plan-auto-pi"; then
+    if grep -q 'mode=native' "$TMPDIR/plan-auto-pi" \
+            && grep -q 'mode_source=auto' "$TMPDIR/plan-auto-pi"; then
+        pass "aarch64 auto mode is native"
     else
-        fail "default mode is native"
+        fail "aarch64 auto mode is native"
     fi
 else
-    fail "default mode is native (print-plan failed)"
+    fail "aarch64 auto mode is native (print-plan failed)"
+fi
+
+if DOGGY_HOST_MACHINE=arm64 run_plan "$TMPDIR/trixie" "$TMPDIR/plan-auto-arm64" \
+        && grep -q 'mode=native' "$TMPDIR/plan-auto-arm64"; then
+    pass "arm64 auto mode is native"
+else
+    fail "arm64 auto mode is native"
+fi
+
+if DOGGY_HOST_MACHINE=x86_64 run_plan "$TMPDIR/noble" "$TMPDIR/plan-auto-x86"; then
+    if grep -q 'mode=cross' "$TMPDIR/plan-auto-x86" \
+            && grep -q 'mode_source=auto' "$TMPDIR/plan-auto-x86" \
+            && grep -q 'sysroot=not-required' "$TMPDIR/plan-auto-x86"; then
+        pass "x86_64 auto mode is cross without sysroot"
+    else
+        fail "x86_64 auto mode is cross without sysroot"
+    fi
+else
+    fail "x86_64 auto mode is cross without sysroot (print-plan failed)"
+fi
+
+if DOGGY_HOST_MACHINE=x86_64 run_plan "$TMPDIR/noble" \
+        "$TMPDIR/plan-flag-native" --mode native \
+        && grep -q 'mode=native' "$TMPDIR/plan-flag-native" \
+        && grep -q 'mode_source=flag' "$TMPDIR/plan-flag-native"; then
+    pass "--mode native on x86_64 overrides auto-detect"
+else
+    fail "--mode native on x86_64 overrides auto-detect"
 fi
 
 # ── No pip --user (PEP 668) ──────────────────────────────────────────────────

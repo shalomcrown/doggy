@@ -17,9 +17,9 @@ Imu::Imu() : bus_fd(-1) {
 
 // =================================================================
 
-dlib::vector<double> Imu::readAccelerometer() {
+Vec3 Imu::readAccelerometer() {
     if (bus_fd < 0) {
-        return dlib::vector<double>(0.0, 0.0, 0.0);
+        return {};
     }
 
     uint8_t data[6];
@@ -29,7 +29,7 @@ dlib::vector<double> Imu::readAccelerometer() {
     double y = ((int16_t)((data[2] << 8) + (data[3] & 0xFF))) * 2.0 / accelerometerSensitivityPerBit;
     double z = ((int16_t)((data[4] << 8) + (data[5] & 0xFF))) * 2.0 / accelerometerSensitivityPerBit;
 
-    return dlib::vector<double>(x, y, z) + acceleratorOffset;
+    return Vec3{x, y, z} + acceleratorOffset;
 }
 
 // =================================================================
@@ -46,9 +46,9 @@ double Imu::readTemperature() {
 
 // =================================================================
 
-dlib::vector<double> Imu::readGyro() {
+Vec3 Imu::readGyro() {
     if (bus_fd < 0) {
-        return dlib::vector<double>(0.0, 0.0, 0.0);
+        return {};
     }
 
     uint8_t data[6];
@@ -58,7 +58,7 @@ dlib::vector<double> Imu::readGyro() {
     double y = ((int16_t)((data[2] << 8) + (data[3] & 0xFF))) * 2.0 / gyroSensitivityPerBit;
     double z = ((int16_t)((data[4] << 8) + (data[5] & 0xFF))) * 2.0 / gyroSensitivityPerBit;
 
-    return dlib::vector<double>(x, y, z) + gyroOffset;
+    return Vec3{x, y, z} + gyroOffset;
 }
 
 // ================================================================================

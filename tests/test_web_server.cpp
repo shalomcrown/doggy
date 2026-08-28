@@ -1,5 +1,6 @@
 #include "dog_api.h"
 #include "doggy_log.h"
+#include "doggy_version.h"
 #include "web_server.h"
 
 #include "httplib.h"
@@ -131,6 +132,12 @@ int main() {
            "page has an IMU section");
     expect(page && page->body.find("id=\"battery\"") != std::string::npos,
            "page has a battery section");
+    expect(page && page->body.find("id=\"page-title\"") != std::string::npos,
+           "page has a title heading");
+    expect(page && page->body.find("data.version") != std::string::npos,
+           "page applies status version");
+    expect(page && page->body.find("titleEl.textContent") != std::string::npos,
+           "page sets title via textContent");
 
     auto healthy = cli.Get("/api/status");
     expect(healthy && healthy->status == 200, "GET /api/status is 200");
@@ -144,6 +151,9 @@ int main() {
            "GET /api/status imu.ok is false by default");
     expect(healthy && healthy->body.find("\"voltage_v\"") != std::string::npos,
            "GET /api/status includes voltage_v");
+    expect(healthy && healthy->body.find(std::string("\"version\":\"") + DOGGY_VERSION + "\"")
+                   != std::string::npos,
+           "GET /api/status includes stamped version");
 
     dog.status.imu.ok = true;
     dog.status.imu.temperature_c = 37.5;

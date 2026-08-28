@@ -215,15 +215,9 @@ void Dog::pollImuUnlocked() {
     }
 
     try {
-        const dlib::vector<double> accel = imu.readAccelerometer();
-        const dlib::vector<double> gyro = imu.readGyro();
+        reading.accel = imu.readAccelerometer();
+        reading.gyro = imu.readGyro();
         reading.temperature_c = imu.readTemperature();
-        reading.accel.x = accel.x();
-        reading.accel.y = accel.y();
-        reading.accel.z = accel.z();
-        reading.gyro.x = gyro.x();
-        reading.gyro.y = gyro.y();
-        reading.gyro.z = gyro.z();
     } catch (const std::system_error &) {
         reading.ok = false;
     }
