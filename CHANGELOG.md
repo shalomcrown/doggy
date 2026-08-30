@@ -12,6 +12,12 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 > Work merged but not yet shipped. Move entries to a versioned section on release.
 
 ### Added
+- In-process HTTPS on port 443 (cpp-httplib v0.52.0 + Mbed TLS). Port 80 only 301-redirects; it does not serve the page or APIs. A self-signed cert is created once under `/etc/doggy/` (`tls.crt` / `tls.key`). The unit keeps `NoNewPrivileges=yes` and adds `CAP_NET_BIND_SERVICE`.
+- Power controls: `POST /api/system` (`restart` / `reboot` / `shutdown`) and `POST /api/system/pin`. LAN PIN is a salted SHA-256 hash via FetchContent Mbed TLS 3.6.7; the Unix password is never used. The DEB installs a polkit rule so user `doggy` can restart only `doggy.service` and reboot/poweroff.
+- `GET`/`PUT /api/config` and a Configuration section on the page. Channel changes apply immediately; I2C bus/address apply on restart.
+- JSON config at `DOGGY_CONFIG` or `/etc/doggy/doggy.json` (servo channels; I2C bus/address for the servo board, IMU, and ADS7830). Missing file is created with compiled defaults. `postinst` creates `/etc/doggy` owned by `doggy`.
+- `GET /api/status` includes servo PWM/angle (`servos.items`); the page table follows that poll. Angle is `null` when PWM is 0 (startup or Off).
+- Per-servo **Off** on the page (`POST /api/servos/{id}` `{ "enabled": false }`) writes PWM 0.
 - `GET /api/status` includes the stamped `version`; the web title line and browser tab show `Doggy <version>`.
 - `./install-prereqs.sh` auto-selects native vs cross from host arch (toolchain only; no sysroot).
 - `./build.sh` packages a `.deb`: native `native-release` on aarch64/arm64, `ubuntu-aarch64-cross` on other hosts.
@@ -30,6 +36,9 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 - DEB `postinst` enables `dtparam=i2c_arm=on` in the Pi boot config when missing and asks to reboot.
 
 ### Changed
+- ⚠ Breaking: the UI default is `https://<pi>/` (443). `http://<pi>:8080` no longer serves the app. Port 80 only redirects. Override with `DOGGY_HTTPS_PORT` / `DOGGY_HTTP_PORT`.
+- Shared helpers (`to_hex`, `hashes_equal`) live in `src/utils.cpp`; callers use those instead of local copies.
+- Servo JSON `angle` is `null` when PWM is 0 (was `0`). The bundled page treats that as unknown.
 - ⚠ Breaking: application sources moved to `src/`. Configure with the new CMake presets instead of listing files at the repo root.
 - ⚠ Breaking: cpp-httplib is downloaded by CMake (no `third_party/cpp-httplib`). Configure needs network or `FETCHCONTENT_SOURCE_DIR_CPP_HTTPLIB`.
 - ⚠ Breaking: installing the DEB enables and starts `doggy.service` as user `doggy` (stop a manual `./doggy` first, or `systemctl disable --now doggy`).

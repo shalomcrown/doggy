@@ -1,0 +1,19 @@
+polkit.addRule(function(action, subject) {
+    if (subject.user !== "doggy") {
+        return;
+    }
+
+    if (action.id === "org.freedesktop.systemd1.manage-units") {
+        if (action.lookup("unit") === "doggy.service"
+                && action.lookup("verb") === "restart") {
+            return polkit.Result.YES;
+        }
+    }
+
+    if (action.id === "org.freedesktop.login1.power-off"
+            || action.id === "org.freedesktop.login1.power-off-multiple-sessions"
+            || action.id === "org.freedesktop.login1.reboot"
+            || action.id === "org.freedesktop.login1.reboot-multiple-sessions") {
+        return polkit.Result.YES;
+    }
+});

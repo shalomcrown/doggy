@@ -57,3 +57,27 @@ void Servo::setAngle(double degrees) {
             maxAngle);
     board.set_pwm(channel, 0, pwmTicks);
 }
+
+// ================================================================================
+
+void Servo::off() {
+    pwmTicks = 0;
+    board.set_pwm(channel, 0, 0);
+}
+
+// ================================================================================
+
+void Servo::rebindChannel(int new_channel) {
+    if (new_channel == channel) {
+        return;
+    }
+
+    if (pwmTicks != 0) {
+        board.set_pwm(channel, 0, 0);
+    }
+
+    channel = new_channel;
+    if (pwmTicks != 0) {
+        board.set_pwm(channel, 0, pwmTicks);
+    }
+}

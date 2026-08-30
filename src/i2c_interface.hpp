@@ -5,6 +5,9 @@
 #include <string>
 #include <unistd.h>
 
+inline std::string i2c_device_path(int bus) {
+    return "/dev/i2c-" + std::to_string(bus);
+}
 
 int openBus(const std::string& device, const uint8_t address);
 void writeByte(const int bus_fd, const uint8_t value);

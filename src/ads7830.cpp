@@ -8,9 +8,14 @@
 
 // ================================================================================
 
-Ads7830::Ads7830() : bus_fd(-1) {
+Ads7830::Ads7830() : Ads7830(1, kAds7830Address) {
+}
+
+// ================================================================================
+
+Ads7830::Ads7830(int bus, uint8_t address) : bus_fd(-1) {
     try {
-        bus_fd = openBus("/dev/i2c-1", kAds7830Address);
+        bus_fd = openBus(i2c_device_path(bus), address);
     } catch (const std::system_error &) {
         bus_fd = -1;
     }

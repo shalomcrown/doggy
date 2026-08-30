@@ -25,6 +25,8 @@ public:
     int pwm() const;
 
     void setAngle(double degrees);
+    void off();
+    void rebindChannel(int new_channel);
 };
 
 #endif

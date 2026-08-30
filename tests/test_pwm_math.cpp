@@ -32,11 +32,30 @@ int main() {
     expect(json.find("\"items\"") != std::string::npos, "json has items wrapper");
     expect(json.find("front-right-waist") != std::string::npos, "json has name");
     expect(json.find("\"id\":11") != std::string::npos, "json has id");
+    expect(json.find("\"angle\":90") != std::string::npos, "json has numeric angle when pwm nonzero");
+
+    const std::string offJson = servos_to_json({{11, "front-right-waist", 90.0, 0}});
+    expect(offJson.find("\"angle\":null") != std::string::npos,
+           "json angle is null when pwm is 0");
+    expect(offJson.find("\"pwm\":0") != std::string::npos, "json has pwm 0");
 
     double angle = 0.0;
     expect(parse_angle_json("{\"angle\":120.5}", angle), "parse angle json");
     expect(std::abs(angle - 120.5) < 0.001, "parsed angle value");
     expect(parse_angle_json("{}", angle) == false, "missing angle fails");
+
+    bool disable = false;
+    expect(parse_servo_post("{\"enabled\":false}", disable, angle), "parse enabled false");
+    expect(disable, "enabled false sets disable");
+    expect(parse_servo_post("{\"enabled\": false, \"angle\":10}", disable, angle),
+           "enabled false wins over angle");
+    expect(disable, "enabled false with angle still disables");
+    expect(parse_servo_post("{\"angle\":45}", disable, angle), "parse angle still works");
+    expect(disable == false, "angle post is not disable");
+    expect(std::abs(angle - 45.0) < 0.001, "parsed servo post angle");
+    expect(parse_servo_post("{\"enabled\":true}", disable, angle) == false,
+           "enabled true without angle fails");
+    expect(parse_servo_post("{}", disable, angle) == false, "empty servo post fails");
 
     DogStatus empty;
     const std::string emptyJson = status_to_json(empty, "1.2.3-fixture");
@@ -48,6 +67,8 @@ int main() {
     expect(emptyJson.find("\"ok\":false") != std::string::npos, "empty status imu.ok false");
     expect(emptyJson.find("\"voltage_v\"") != std::string::npos,
            "empty status json has voltage_v");
+    expect(emptyJson.find("\"servos\":{\"items\":[]}") != std::string::npos,
+           "empty status json has empty servos items");
 
     DogStatus withBattery;
     withBattery.battery.ok = true;

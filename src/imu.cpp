@@ -4,9 +4,14 @@
 #include <system_error>
 
 // =================================================================
-Imu::Imu() : bus_fd(-1) {
+Imu::Imu() : Imu(1, 0x68) {
+}
+
+// =================================================================
+
+Imu::Imu(int bus, uint8_t address) : bus_fd(-1) {
     try {
-        bus_fd = openBus("/dev/i2c-1", 0x68);
+        bus_fd = openBus(i2c_device_path(bus), address);
         writeRegisterByte(bus_fd, 0x6B, 0); // Reset
         writeRegisterByte(bus_fd, 0x1C, 1 << 3); // Accelerometer range to 2g
         writeRegisterByte(bus_fd, 0x1B, 0); // Gyto 250 degrees/s

@@ -1,6 +1,20 @@
 #include "doggy.h"
+#include "i2c_interface.hpp"
+#include "utils.h"
 
+#include <chrono>
+#include <memory>
+#include <sstream>
 #include <system_error>
+#include <thread>
+
+static std::string i2c_open_failed(const char *name, int bus, uint8_t address) {
+    const unsigned char byte = static_cast<unsigned char>(address);
+    std::ostringstream os;
+    os << "Could not open " << name << " on " << i2c_device_path(bus)
+       << " address 0x" << to_hex(&byte, 1);
+    return os.str();
+}
 
 // ================================================================================
 
@@ -47,28 +61,49 @@ void Leg::allToNinety() {
 
 // ================================================================================
 
-Dog::Dog() :
-    board(),
-    imu(),
-    ads(),
-    frontRightWaist(board, 11, "front-right-waist"),
-    frontRightHip(board, 12, "front-right-hip"),
-    frontRightKnee(board, 13, "front-right-knee"),
-    frontLeftWaist(board, 4, "front-left-waist"),
-    frontLeftHip(board, 3, "front-left-hip"),
-    frontLeftKnee(board, 2, "front-left-knee"),
-    rearLeftWaist(board, 7, "rear-left-waist"),
-    rearLeftHip(board, 6, "rear-left-hip"),
-    rearLeftKnee(board, 5, "rear-left-knee"),
-    rearRightWaist(board, 8, "rear-right-waist"),
-    rearRightHip(board, 9, "rear-right-hip"),
-    rearRightKnee(board, 10, "rear-right-knee"),
-    headNeck(board, 15, "head-neck"),
+Dog::Dog() : Dog(Config{}, {}) {
+}
+
+// ================================================================================
+
+Dog::Dog(const Config &config) : Dog(config, {}) {
+}
+
+// ================================================================================
+
+Dog::Dog(const Config &config, std::string config_path) :
+    Dog(config, std::move(config_path), std::make_unique<NullSystemControl>()) {
+}
+
+// ================================================================================
+
+Dog::Dog(const Config &config, std::string config_path,
+         std::unique_ptr<SystemControl> system_control) :
+    board(config.i2c.servo_board.bus, config.i2c.servo_board.address),
+    imu(config.i2c.imu.bus, config.i2c.imu.address),
+    ads(config.i2c.ads.bus, config.i2c.ads.address),
+    frontRightWaist(board, config.servos.front_right_waist, "front-right-waist"),
+    frontRightHip(board, config.servos.front_right_hip, "front-right-hip"),
+    frontRightKnee(board, config.servos.front_right_knee, "front-right-knee"),
+    frontLeftWaist(board, config.servos.front_left_waist, "front-left-waist"),
+    frontLeftHip(board, config.servos.front_left_hip, "front-left-hip"),
+    frontLeftKnee(board, config.servos.front_left_knee, "front-left-knee"),
+    rearLeftWaist(board, config.servos.rear_left_waist, "rear-left-waist"),
+    rearLeftHip(board, config.servos.rear_left_hip, "rear-left-hip"),
+    rearLeftKnee(board, config.servos.rear_left_knee, "rear-left-knee"),
+    rearRightWaist(board, config.servos.rear_right_waist, "rear-right-waist"),
+    rearRightHip(board, config.servos.rear_right_hip, "rear-right-hip"),
+    rearRightKnee(board, config.servos.rear_right_knee, "rear-right-knee"),
+    headNeck(board, config.servos.head_neck, "head-neck"),
     frontRight(frontRightWaist, frontRightHip, frontRightKnee),
     frontLeft(frontLeftWaist, frontLeftHip, frontLeftKnee),
     rearLeft(rearLeftWaist, rearLeftHip, rearLeftKnee),
     rearRight(rearRightWaist, rearRightHip, rearRightKnee),
     head(headNeck),
+    config_(config),
+    config_path_(std::move(config_path)),
+    system_control_(system_control ? std::move(system_control)
+                                  : std::make_unique<NullSystemControl>()),
     servos{
         &frontRightWaist, &frontRightHip, &frontRightKnee,
         &frontLeftWaist, &frontLeftHip, &frontLeftKnee,
@@ -86,14 +121,14 @@ Dog::Dog() :
     if (imu.isOpen() == false) {
         status.errors.push_back(DogError{
             DogErrorCode::i2c,
-            "Could not open IMU on /dev/i2c-1 address 0x68"
+            i2c_open_failed("IMU", config.i2c.imu.bus, config.i2c.imu.address)
         });
     }
 
     if (ads.isOpen() == false) {
         status.errors.push_back(DogError{
             DogErrorCode::i2c,
-            "Could not open ADC on /dev/i2c-1 address 0x48"
+            i2c_open_failed("ADC", config.i2c.ads.bus, config.i2c.ads.address)
         });
     }
 }
@@ -199,9 +234,154 @@ CommandResult Dog::setServoAngle(int id, double angle) {
 
 // ================================================================================
 
+CommandResult Dog::disableServo(int id) {
+    std::unique_lock<std::mutex> lock(mutex, std::try_to_lock);
+    if (lock.owns_lock() == false) {
+        return CommandResult::busy;
+    }
+
+    Servo *servo = findServo(id);
+    if (servo == nullptr) {
+        return CommandResult::not_found;
+    }
+
+    try {
+        servo->off();
+    } catch (const std::system_error &ex) {
+        status.errors.push_back(DogError{DogErrorCode::i2c, ex.what()});
+    }
+
+    return CommandResult::ok;
+}
+
+// ================================================================================
+
 DogStatus Dog::getStatus() const {
     std::lock_guard<std::mutex> lock(mutex);
-    return status;
+    DogStatus copy = status;
+    copy.servos = snapshotUnlocked();
+    return copy;
+}
+
+// ================================================================================
+
+Config Dog::getConfig() const {
+    std::lock_guard<std::mutex> lock(mutex);
+    return config_;
+}
+
+// ================================================================================
+
+CommandResult Dog::replaceConfig(const Config &config) {
+    std::unique_lock<std::mutex> lock(mutex, std::try_to_lock);
+    if (lock.owns_lock() == false) {
+        return CommandResult::busy;
+    }
+
+    try {
+        frontRightWaist.rebindChannel(config.servos.front_right_waist);
+        frontRightHip.rebindChannel(config.servos.front_right_hip);
+        frontRightKnee.rebindChannel(config.servos.front_right_knee);
+        frontLeftWaist.rebindChannel(config.servos.front_left_waist);
+        frontLeftHip.rebindChannel(config.servos.front_left_hip);
+        frontLeftKnee.rebindChannel(config.servos.front_left_knee);
+        rearLeftWaist.rebindChannel(config.servos.rear_left_waist);
+        rearLeftHip.rebindChannel(config.servos.rear_left_hip);
+        rearLeftKnee.rebindChannel(config.servos.rear_left_knee);
+        rearRightWaist.rebindChannel(config.servos.rear_right_waist);
+        rearRightHip.rebindChannel(config.servos.rear_right_hip);
+        rearRightKnee.rebindChannel(config.servos.rear_right_knee);
+        headNeck.rebindChannel(config.servos.head_neck);
+        const SystemConfig kept_pin = config_.system;
+        config_ = config;
+        config_.system = kept_pin;
+        if (config_path_.empty() == false) {
+            Config::save_file(config_, config_path_);
+        }
+    } catch (const std::system_error &ex) {
+        status.errors.push_back(DogError{DogErrorCode::i2c, ex.what()});
+        return CommandResult::failed;
+    } catch (const ConfigError &) {
+        return CommandResult::failed;
+    }
+
+    return CommandResult::ok;
+}
+
+// ================================================================================
+
+CommandResult Dog::setSystemPin(const std::string &pin, const std::string &current_pin) {
+    std::unique_lock<std::mutex> lock(mutex, std::try_to_lock);
+    if (lock.owns_lock() == false) {
+        return CommandResult::busy;
+    }
+
+    if (Config::pin_length_ok(pin) == false) {
+        return CommandResult::bad_pin;
+    }
+
+    if (config_.system.pin_is_set()) {
+        if (Config::pin_matches(current_pin, config_.system.pin_hash) == false) {
+            return CommandResult::pin_invalid;
+        }
+    }
+
+    try {
+        config_.system.pin_hash = Config::hash_pin(pin);
+        if (config_path_.empty() == false) {
+            Config::save_file(config_, config_path_);
+        }
+    } catch (const ConfigError &) {
+        return CommandResult::failed;
+    }
+
+    pin_failures_ = 0;
+    pin_lockout_until_ = {};
+    return CommandResult::ok;
+}
+
+// ================================================================================
+
+CommandResult Dog::requestSystemAction(SystemAction action, const std::string &pin) {
+    std::unique_lock<std::mutex> lock(mutex, std::try_to_lock);
+    if (lock.owns_lock() == false) {
+        return CommandResult::busy;
+    }
+
+    if (system_action_pending_) {
+        return CommandResult::busy;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now < pin_lockout_until_) {
+        return CommandResult::rate_limited;
+    }
+
+    if (config_.system.pin_is_set() == false) {
+        return CommandResult::pin_unset;
+    }
+
+    if (Config::pin_matches(pin, config_.system.pin_hash) == false) {
+        pin_failures_ += 1;
+        if (pin_failures_ >= kPinMaxFailures) {
+            pin_lockout_until_ = now + std::chrono::seconds(kPinLockoutSeconds);
+            pin_failures_ = 0;
+            return CommandResult::rate_limited;
+        }
+
+        return CommandResult::pin_invalid;
+    }
+
+    pin_failures_ = 0;
+    system_action_pending_ = true;
+    SystemControl *control = system_control_.get();
+    std::thread([this, action, control]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(kSystemActionDelayMs));
+        control->perform(action);
+        std::lock_guard<std::mutex> done(mutex);
+        system_action_pending_ = false;
+    }).detach();
+    return CommandResult::ok;
 }
 
 // ================================================================================

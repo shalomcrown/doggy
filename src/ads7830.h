@@ -29,6 +29,7 @@ inline double ads7830_battery_voltage_v(uint8_t raw) {
 class Ads7830 {
 public:
     Ads7830();
+    Ads7830(int bus, uint8_t address);
     int bus_fd;
 
     bool isOpen() const;

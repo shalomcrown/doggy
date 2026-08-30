@@ -118,6 +118,16 @@ ensure_log_dir() {
     chmod 0750 "$log_dir" || true
 }
 
+ensure_config_dir() {
+    cfg_dir="${DOGGY_CONFIG_DIR:-/etc/doggy}"
+    mkdir -p "$cfg_dir"
+    if getent passwd doggy >/dev/null 2>&1; then
+        chown doggy:doggy "$cfg_dir" || true
+    fi
+
+    chmod 0755 "$cfg_dir" || true
+}
+
 reload_and_start() {
     if command -v systemctl >/dev/null 2>&1; then
         systemctl daemon-reload
@@ -137,6 +147,7 @@ case "$1" in
         ensure_user
         ensure_i2c_group
         ensure_log_dir
+        ensure_config_dir
         reload_and_start
         if enable_i2c_boot_config; then
             mark_reboot_required

@@ -11,15 +11,18 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(FetchContent)
 FetchContent_Declare(
     cpp_httplib
-    URL https://github.com/yhirose/cpp-httplib/archive/refs/tags/v0.18.3.tar.gz
-    URL_HASH SHA256=a0567bcd6c3fe5cef1b329b96245119047f876b49e06cc129a36a7a8dffe173e
+    URL https://github.com/yhirose/cpp-httplib/archive/refs/tags/v0.52.0.tar.gz
+    URL_HASH SHA256=7e0d6d716ca9308a144de249f16eb7907e93b85fb243da71bd2c2eab72ef72bb
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 set(HTTPLIB_INSTALL OFF CACHE BOOL "" FORCE)
 set(HTTPLIB_TEST OFF CACHE BOOL "" FORCE)
 set(HTTPLIB_USE_OPENSSL_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
+set(HTTPLIB_USE_WOLFSSL_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
+set(HTTPLIB_USE_MBEDTLS_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
 set(HTTPLIB_USE_ZLIB_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
 set(HTTPLIB_USE_BROTLI_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
+set(HTTPLIB_USE_ZSTD_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(cpp_httplib)
 
 # ==============================================================================
@@ -57,6 +60,37 @@ endif()
 
 # ==============================================================================
 
+FetchContent_Declare(
+    json
+    URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+    URL_HASH SHA256=d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+set(JSON_Install OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(json)
+
+# ==============================================================================
+
+# Official release tarball (not GitHub's auto source.tar.gz — that omits
+# generated files). https://github.com/Mbed-TLS/mbedtls/releases/tag/mbedtls-3.6.7
+FetchContent_Declare(
+    mbedtls
+    URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2
+    URL_HASH SHA256=a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+set(DISABLE_PACKAGE_CONFIG_AND_INSTALL ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(mbedtls)
+if(NOT TARGET mbedcrypto OR NOT TARGET mbedx509 OR NOT TARGET mbedtls)
+    message(FATAL_ERROR "FetchContent mbedtls did not create mbedtls/mbedx509/mbedcrypto")
+endif()
+
+# ==============================================================================
+
 add_library(doggy_log STATIC
     src/doggy_log.cpp
 )
@@ -70,14 +104,27 @@ target_link_libraries(doggy_log PUBLIC plog::plog ${DOGGY_ZLIB})
 
 add_library(doggy_web STATIC
     src/web_server.cpp
+    src/config.cpp
+    src/utils.cpp
+    src/tls_cert.cpp
 )
 target_include_directories(doggy_web
     PUBLIC
         "${CMAKE_SOURCE_DIR}/src"
         "${CMAKE_BINARY_DIR}/generated"
 )
-target_link_libraries(doggy_web PUBLIC pthread httplib::httplib doggy_log)
+target_link_libraries(doggy_web PUBLIC
+    pthread
+    httplib::httplib
+    doggy_log
+    nlohmann_json::nlohmann_json
+    mbedtls
+    mbedx509
+    mbedcrypto
+)
 target_compile_definitions(doggy_web
+    PUBLIC
+        CPPHTTPLIB_MBEDTLS_SUPPORT
     PRIVATE
         DOGGY_WEB_SOURCE_DIR="${CMAKE_SOURCE_DIR}/web"
 )
@@ -98,6 +145,8 @@ add_executable(doggy
     src/imu.cpp
     src/ads7830.h
     src/ads7830.cpp
+    src/system_control.h
+    src/system_control.cpp
 )
 set(DOGGY_VERSION_BASE "1.0.0")
 set(DOGGY_VERSION_HEADER "${CMAKE_BINARY_DIR}/generated/doggy_version.h")
@@ -119,7 +168,7 @@ target_include_directories(doggy PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_BINARY_DIR}/generated"
 )
-target_link_libraries(doggy PRIVATE doggy_web)
+target_link_libraries(doggy PRIVATE doggy_web nlohmann_json::nlohmann_json)
 target_compile_definitions(doggy
     PRIVATE
         DOGGY_WEB_SOURCE_DIR="${CMAKE_SOURCE_DIR}/web"
@@ -128,6 +177,7 @@ target_compile_definitions(doggy
 install(TARGETS doggy RUNTIME DESTINATION bin)
 install(FILES web/index.html DESTINATION share/doggy)
 install(FILES packaging/doggy.service DESTINATION /etc/systemd/system)
+install(FILES packaging/50-shaloms-doggy.rules DESTINATION share/polkit-1/rules.d)
 
 # ==============================================================================
 
@@ -174,6 +224,7 @@ add_test(
 
 add_executable(test_pwm_math tests/test_pwm_math.cpp)
 target_include_directories(test_pwm_math PRIVATE "${CMAKE_SOURCE_DIR}/src")
+target_link_libraries(test_pwm_math PRIVATE nlohmann_json::nlohmann_json)
 add_test(NAME pwm_math COMMAND test_pwm_math)
 
 add_executable(test_ads7830 tests/test_ads7830.cpp)
@@ -203,14 +254,37 @@ add_executable(test_dog_poll
     src/servo.cpp
     src/servo_board.cpp
     src/i2c_interface.cpp
+    src/config.cpp
+    src/utils.cpp
+    src/system_control.cpp
 )
 target_include_directories(test_dog_poll PRIVATE "${CMAKE_SOURCE_DIR}/src")
-target_link_libraries(test_dog_poll PRIVATE pthread)
+target_link_libraries(test_dog_poll PRIVATE pthread nlohmann_json::nlohmann_json mbedcrypto)
 add_test(NAME dog_poll COMMAND test_dog_poll)
 
 add_executable(test_vec3 tests/test_vec3.cpp)
 target_include_directories(test_vec3 PRIVATE "${CMAKE_SOURCE_DIR}/src")
 add_test(NAME vec3 COMMAND test_vec3)
+
+add_executable(test_tls_cert tests/test_tls_cert.cpp)
+target_link_libraries(test_tls_cert PRIVATE doggy_web)
+add_test(NAME tls_cert COMMAND test_tls_cert)
+
+add_executable(test_utils
+    tests/test_utils.cpp
+    src/utils.cpp
+)
+target_include_directories(test_utils PRIVATE "${CMAKE_SOURCE_DIR}/src")
+add_test(NAME utils COMMAND test_utils)
+
+add_executable(test_config
+    tests/test_config.cpp
+    src/config.cpp
+    src/utils.cpp
+)
+target_include_directories(test_config PRIVATE "${CMAKE_SOURCE_DIR}/src")
+target_link_libraries(test_config PRIVATE nlohmann_json::nlohmann_json mbedcrypto)
+add_test(NAME config COMMAND test_config)
 
 add_executable(test_doggy_log tests/test_doggy_log.cpp)
 target_link_libraries(test_doggy_log PRIVATE doggy_log)

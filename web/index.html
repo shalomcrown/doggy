@@ -9,9 +9,13 @@
     table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
     th, td { border: 1px solid #ccc; padding: 0.4rem 0.6rem; text-align: left; }
     input[type="range"] { width: 12rem; }
+    .servo-off { margin-left: 0.5rem; }
     #status { min-height: 1.2em; }
     #errors { color: #8b0000; white-space: pre-wrap; }
-    #imu, #battery { margin-top: 1rem; }
+    #imu, #battery, #config, #power { margin-top: 1rem; }
+    #config input { width: 6rem; }
+    #power button { margin-right: 0.5rem; }
+    .pin-field { display: block; margin: 0.4rem 0; }
   </style>
 </head>
 <body>
@@ -65,6 +69,47 @@
     </thead>
     <tbody id="servos"></tbody>
   </table>
+  <section id="config" aria-labelledby="config-heading">
+    <h2 id="config-heading">Configuration</h2>
+    <p id="config-note">I2C bus and address changes apply after restart. Servo channel changes apply immediately.</p>
+    <button type="button" id="config-refresh">Refresh</button>
+    <button type="button" id="config-save">Save</button>
+    <table>
+      <caption>Runtime configuration</caption>
+      <thead>
+        <tr>
+          <th scope="col">Class</th>
+          <th scope="col">Group</th>
+          <th scope="col">Name</th>
+          <th scope="col">Value</th>
+          <th scope="col">Name</th>
+          <th scope="col">Value</th>
+          <th scope="col">Name</th>
+          <th scope="col">Value</th>
+        </tr>
+      </thead>
+      <tbody id="config-body"></tbody>
+    </table>
+    <h3 id="pin-heading">System PIN</h3>
+    <p id="pin-state">PIN is not set. Set one before power actions will work.</p>
+    <label class="pin-field" for="pin-current">Current PIN
+      <input type="password" id="pin-current" autocomplete="current-password">
+    </label>
+    <label class="pin-field" for="pin-new">New PIN
+      <input type="password" id="pin-new" autocomplete="new-password" minlength="4" maxlength="64">
+    </label>
+    <button type="button" id="pin-save">Set PIN</button>
+  </section>
+  <section id="power" aria-labelledby="power-heading">
+    <h2 id="power-heading">Power</h2>
+    <p>Restart, reboot, and shutdown require the system PIN. They are not the Unix password.</p>
+    <label class="pin-field" for="system-pin">System PIN
+      <input type="password" id="system-pin" autocomplete="off">
+    </label>
+    <button type="button" id="system-restart">Restart service</button>
+    <button type="button" id="system-reboot">Reboot</button>
+    <button type="button" id="system-shutdown">Shut down Pi</button>
+  </section>
   <script>
     const IDLE_MS = 100;
     const POLL_MS = 200;
@@ -83,8 +128,18 @@
     const batteryOkEl = document.getElementById("battery-ok");
     const batteryVEl = document.getElementById("battery-v");
     const titleEl = document.getElementById("page-title");
+    const configBodyEl = document.getElementById("config-body");
+    const configRefreshEl = document.getElementById("config-refresh");
+    const configSaveEl = document.getElementById("config-save");
+    const pinStateEl = document.getElementById("pin-state");
+    const pinCurrentEl = document.getElementById("pin-current");
+    const pinNewEl = document.getElementById("pin-new");
+    const systemPinEl = document.getElementById("system-pin");
     let statusPollBusy = false;
     let shownVersion = "";
+    let draggingId = null;
+    let configDraft = null;
+    let configBusy = false;
 
     function setStatus(text) {
       statusEl.textContent = text;
@@ -143,6 +198,18 @@
       batteryVEl.textContent = formatNum(battery.voltage_v);
     }
 
+    function knownAngle(angle) {
+      return typeof angle === "number" && Number.isFinite(angle);
+    }
+
+    function formatAngle(angle) {
+      if (knownAngle(angle) === false) {
+        return "—";
+      }
+
+      return String(angle);
+    }
+
     function applyVersion(version) {
       if (typeof version !== "string" || version.length === 0) {
         return;
@@ -176,6 +243,14 @@
         applyErrors(data.errors || []);
         applyImu(data.imu);
         applyBattery(data.battery);
+        const items = data.servos && data.servos.items;
+        if (items) {
+          if (bodyEl.children.length === 0) {
+            applyItems(items);
+          } else {
+            applyServoReadings(items);
+          }
+        }
       } catch (err) {
         applyErrors([{ message: "Failed to load status" }]);
       } finally {
@@ -187,15 +262,18 @@
       bodyEl.replaceChildren();
       for (const servo of items) {
         const tr = document.createElement("tr");
+        tr.dataset.servoId = String(servo.id);
 
         const nameTd = document.createElement("td");
         nameTd.textContent = servo.name;
 
         const pwmTd = document.createElement("td");
+        pwmTd.className = "servo-pwm";
         pwmTd.textContent = String(servo.pwm);
 
         const angleTd = document.createElement("td");
-        angleTd.textContent = String(servo.angle);
+        angleTd.className = "servo-angle";
+        angleTd.textContent = formatAngle(servo.angle);
 
         const controlTd = document.createElement("td");
         const slider = document.createElement("input");
@@ -203,11 +281,19 @@
         slider.min = "0";
         slider.max = "180";
         slider.step = "1";
-        slider.value = String(servo.angle);
+        slider.value = knownAngle(servo.angle) ? String(servo.angle) : "90";
         slider.id = "servo-" + servo.id;
+        slider.className = "servo-slider";
         slider.setAttribute("aria-label", servo.name + " angle");
         let idleTimer = null;
+        slider.addEventListener("pointerdown", () => {
+          draggingId = servo.id;
+        });
+        slider.addEventListener("pointerup", () => {
+          draggingId = null;
+        });
         slider.addEventListener("input", () => {
+          draggingId = servo.id;
           angleTd.textContent = slider.value;
           if (idleTimer !== null) {
             clearTimeout(idleTimer);
@@ -218,8 +304,38 @@
         });
         controlTd.appendChild(slider);
 
+        const offBtn = document.createElement("button");
+        offBtn.type = "button";
+        offBtn.className = "servo-off";
+        offBtn.textContent = "Off";
+        offBtn.setAttribute("aria-label", servo.name + " off");
+        offBtn.addEventListener("click", () => {
+          sendOff(servo.id);
+        });
+        controlTd.appendChild(offBtn);
+
         tr.append(nameTd, pwmTd, angleTd, controlTd);
         bodyEl.appendChild(tr);
+      }
+    }
+
+    function applyServoReadings(items) {
+      for (const servo of items) {
+        const tr = bodyEl.querySelector('[data-servo-id="' + servo.id + '"]');
+        if (tr === null) {
+          continue;
+        }
+
+        const slider = tr.querySelector(".servo-slider");
+        if (draggingId === servo.id || document.activeElement === slider) {
+          continue;
+        }
+
+        tr.querySelector(".servo-pwm").textContent = String(servo.pwm);
+        tr.querySelector(".servo-angle").textContent = formatAngle(servo.angle);
+        if (knownAngle(servo.angle)) {
+          slider.value = String(servo.angle);
+        }
       }
     }
 
@@ -252,6 +368,201 @@
       applyItems(data.items || []);
     }
 
+    async function sendOff(id) {
+      const res = await fetch("/api/servos/" + id, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: false })
+      });
+      if (res.status === 409) {
+        setStatus("Busy — try again");
+        return;
+      }
+      if (res.ok === false) {
+        setStatus("Off failed");
+        return;
+      }
+      setStatus("");
+      const data = await res.json();
+      applyItems(data.items || []);
+    }
+
+    function displayName(key) {
+      const spaced = String(key).replaceAll("_", " ");
+      if (spaced.length === 0) {
+        return spaced;
+      }
+
+      return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+    }
+
+    function setDraftValue(path, value) {
+      if (configDraft === null) {
+        return;
+      }
+
+      let cur = configDraft;
+      for (let i = 0; i < path.length - 1; i += 1) {
+        cur = cur[path[i]];
+      }
+
+      cur[path[path.length - 1]] = value;
+    }
+
+    function makeValueInput(path, value, kind) {
+      const input = document.createElement("input");
+      input.setAttribute("aria-label", path.map(displayName).join(" "));
+      if (kind === "int") {
+        input.type = "number";
+        input.step = "1";
+        input.min = "0";
+        input.value = String(value);
+        input.addEventListener("input", () => {
+          setDraftValue(path, Number(input.value));
+        });
+      } else {
+        input.type = "text";
+        input.value = String(value);
+        input.addEventListener("input", () => {
+          setDraftValue(path, input.value);
+        });
+      }
+
+      return input;
+    }
+
+    function appendPair(tr, path, value, kind) {
+      const nameTd = document.createElement("td");
+      nameTd.textContent = displayName(path[path.length - 1]);
+      const valueTd = document.createElement("td");
+      valueTd.appendChild(makeValueInput(path, value, kind));
+      tr.append(nameTd, valueTd);
+    }
+
+    function appendEmptyPairs(tr, count) {
+      for (let i = 0; i < count; i += 1) {
+        tr.append(document.createElement("td"), document.createElement("td"));
+      }
+    }
+
+    function renderConfig(config) {
+      configDraft = config;
+      configBodyEl.replaceChildren();
+      if (config === null || config === undefined) {
+        return;
+      }
+
+      const i2c = config.i2c || {};
+      const i2cKeys = ["servo_board", "imu", "ads"];
+      i2cKeys.forEach((key, index) => {
+        const device = i2c[key] || {};
+        const tr = document.createElement("tr");
+        if (index === 0) {
+          const classTd = document.createElement("th");
+          classTd.scope = "rowgroup";
+          classTd.rowSpan = i2cKeys.length;
+          classTd.textContent = displayName("i2c");
+          tr.appendChild(classTd);
+        }
+
+        const groupTd = document.createElement("td");
+        groupTd.textContent = displayName(key);
+        tr.appendChild(groupTd);
+        appendPair(tr, ["i2c", key, "bus"], device.bus, "int");
+        appendPair(tr, ["i2c", key, "address"], device.address, "text");
+        appendEmptyPairs(tr, 1);
+        configBodyEl.appendChild(tr);
+      });
+
+      const servos = config.servos || {};
+      const servoKeys = Object.keys(servos);
+      const servoRows = [];
+      for (let i = 0; i < servoKeys.length; i += 3) {
+        servoRows.push(servoKeys.slice(i, i + 3));
+      }
+
+      servoRows.forEach((keys, index) => {
+        const tr = document.createElement("tr");
+        if (index === 0) {
+          const classTd = document.createElement("th");
+          classTd.scope = "rowgroup";
+          classTd.rowSpan = servoRows.length;
+          classTd.textContent = displayName("servos");
+          tr.appendChild(classTd);
+        }
+
+        const groupTd = document.createElement("td");
+        tr.appendChild(groupTd);
+        keys.forEach((key) => {
+          appendPair(tr, ["servos", key], servos[key], "int");
+        });
+        appendEmptyPairs(tr, 3 - keys.length);
+        configBodyEl.appendChild(tr);
+      });
+    }
+
+    async function loadConfig() {
+      if (configBusy) {
+        return;
+      }
+
+      configBusy = true;
+      configRefreshEl.disabled = true;
+      try {
+        const res = await fetch("/api/config");
+        if (res.ok === false) {
+          setStatus("Failed to load configuration");
+          return;
+        }
+
+        const data = await res.json();
+        renderConfig(data);
+        applyPinState(data.system);
+        setStatus("");
+      } catch (err) {
+        setStatus("Failed to load configuration");
+      } finally {
+        configRefreshEl.disabled = false;
+        configBusy = false;
+      }
+    }
+
+    async function saveConfig() {
+      if (configBusy || configDraft === null) {
+        return;
+      }
+
+      configBusy = true;
+      configSaveEl.disabled = true;
+      try {
+        const res = await fetch("/api/config", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(configDraft)
+        });
+        if (res.status === 409) {
+          setStatus("Busy — try again");
+          return;
+        }
+
+        if (res.ok === false) {
+          setStatus("Save failed");
+          return;
+        }
+
+        const data = await res.json();
+        renderConfig(data);
+        applyPinState(data.system);
+        setStatus("Saved");
+        await loadServos();
+      } catch (err) {
+        setStatus("Save failed");
+      } finally {
+        configSaveEl.disabled = false;
+        configBusy = false;
+      }
+    }
+
     document.getElementById("home").addEventListener("click", async () => {
       const res = await fetch("/api/home", { method: "POST" });
       if (res.status === 409) {
@@ -267,7 +578,123 @@
       applyItems(data.items || []);
     });
 
+    configRefreshEl.addEventListener("click", () => {
+      loadConfig();
+    });
+    configSaveEl.addEventListener("click", () => {
+      saveConfig();
+    });
+
+    function applyPinState(system) {
+      if (system && system.pin_set) {
+        pinStateEl.textContent = "PIN is set.";
+        return;
+      }
+
+      pinStateEl.textContent = "PIN is not set. Set one before power actions will work.";
+    }
+
+    async function savePin() {
+      const pin = pinNewEl.value;
+      const body = { pin: pin };
+      if (pinCurrentEl.value.length > 0) {
+        body.current_pin = pinCurrentEl.value;
+      }
+
+      const res = await fetch("/api/system/pin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      if (res.status === 403) {
+        setStatus("Current PIN is wrong");
+        return;
+      }
+
+      if (res.status === 400) {
+        setStatus("PIN must be 4–64 characters");
+        return;
+      }
+
+      if (res.ok === false) {
+        setStatus("Failed to set PIN");
+        return;
+      }
+
+      const data = await res.json();
+      applyPinState(data.system);
+      pinCurrentEl.value = "";
+      pinNewEl.value = "";
+      setStatus("PIN saved");
+    }
+
+    async function sendSystemAction(action) {
+      if (action === "shutdown") {
+        const typed = window.prompt("Type SHUTDOWN to confirm power off");
+        if (typed !== "SHUTDOWN") {
+          setStatus("Shutdown cancelled");
+          return;
+        }
+      } else if (window.confirm("Run " + action + " now?") === false) {
+        return;
+      }
+
+      let res;
+      try {
+        res = await fetch("/api/system", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: action, pin: systemPinEl.value })
+        });
+      } catch (err) {
+        setStatus("Connection closed after the power action");
+        return;
+      }
+
+      if (res.status === 403) {
+        setStatus("PIN is missing or wrong");
+        return;
+      }
+
+      if (res.status === 409) {
+        setStatus("Busy — try again");
+        return;
+      }
+
+      if (res.status === 429) {
+        setStatus("Too many wrong PINs — wait 30 seconds");
+        return;
+      }
+
+      if (res.ok === false && res.status !== 202) {
+        setStatus("Power action failed");
+        return;
+      }
+
+      if (action === "restart") {
+        setStatus("Restarting service…");
+      } else if (action === "reboot") {
+        setStatus("Rebooting…");
+      } else {
+        setStatus("Shutting down…");
+      }
+    }
+
+    document.getElementById("pin-save").addEventListener("click", () => {
+      savePin();
+    });
+    document.getElementById("system-restart").addEventListener("click", () => {
+      sendSystemAction("restart");
+    });
+    document.getElementById("system-reboot").addEventListener("click", () => {
+      sendSystemAction("reboot");
+    });
+    document.getElementById("system-shutdown").addEventListener("click", () => {
+      sendSystemAction("shutdown");
+    });
+
     loadServos();
+    loadConfig();
     loadDogStatus();
     setInterval(loadDogStatus, POLL_MS);
   </script>

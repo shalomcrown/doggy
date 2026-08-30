@@ -17,16 +17,22 @@ PRERM="$ROOT/packaging/debian/prerm"
 POSTRM="$ROOT/packaging/debian/postrm"
 
 # ── CMake fetches httplib; tree is not vendored ──────────────────────────────
-if grep -q 'FetchContent' "$CMAKE" && grep -q 'v0.18.3' "$CMAKE"; then
-    pass "CMake FetchContent pins cpp-httplib v0.18.3"
+if grep -q 'FetchContent' "$CMAKE" && grep -q 'v0.52.0' "$CMAKE"; then
+    pass "CMake FetchContent pins cpp-httplib v0.52.0"
 else
-    fail "CMake FetchContent pins cpp-httplib v0.18.3"
+    fail "CMake FetchContent pins cpp-httplib v0.52.0"
 fi
 
-if grep -q 'a0567bcd6c3fe5cef1b329b96245119047f876b49e06cc129a36a7a8dffe173e' "$CMAKE"; then
+if grep -q '7e0d6d716ca9308a144de249f16eb7907e93b85fb243da71bd2c2eab72ef72bb' "$CMAKE"; then
     pass "CMake pins httplib archive SHA256"
 else
     fail "CMake pins httplib archive SHA256"
+fi
+
+if grep -q 'CPPHTTPLIB_MBEDTLS_SUPPORT' "$CMAKE"; then
+    pass "CMake enables cpp-httplib Mbed TLS"
+else
+    fail "CMake enables cpp-httplib Mbed TLS"
 fi
 
 if grep -q 'SergiusTheBest/plog' "$CMAKE" && grep -q '1.1.11' "$CMAKE"; then
@@ -79,6 +85,52 @@ else
     fail "CPack Debian architecture is arm64 for aarch64/arm64 targets"
 fi
 
+if grep -Eq '(^|[[:space:]])crypt($|[[:space:]])' "$CMAKE"; then
+    fail "CMake does not link libcrypt (missing in aarch64 cross sysroot)"
+else
+    pass "CMake does not link libcrypt (missing in aarch64 cross sysroot)"
+fi
+
+if grep -q 'Mbed-TLS/mbedtls' "$CMAKE" && grep -q 'mbedtls-3.6.7' "$CMAKE"; then
+    pass "CMake FetchContent pins Mbed TLS 3.6.7"
+else
+    fail "CMake FetchContent pins Mbed TLS 3.6.7"
+fi
+
+if grep -q 'a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6' "$CMAKE"; then
+    pass "CMake pins Mbed TLS archive SHA256"
+else
+    fail "CMake pins Mbed TLS archive SHA256"
+fi
+
+if grep -q 'nlohmann/json' "$CMAKE" && grep -q 'v3.11.3' "$CMAKE"; then
+    pass "CMake FetchContent pins nlohmann/json v3.11.3"
+else
+    fail "CMake FetchContent pins nlohmann/json v3.11.3"
+fi
+
+if grep -q 'd6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d' "$CMAKE"; then
+    pass "CMake pins nlohmann/json archive SHA256"
+else
+    fail "CMake pins nlohmann/json archive SHA256"
+fi
+
+if grep -q 'ensure_config_dir' "$POSTINST" \
+        && grep -q '/etc/doggy' "$POSTINST"; then
+    pass "postinst creates /etc/doggy for the JSON config"
+else
+    fail "postinst creates /etc/doggy for the JSON config"
+fi
+
+cfg_call_line=$(grep -n 'ensure_config_dir' "$POSTINST" | tail -1 | cut -d: -f1)
+reload_line=$(grep -n 'reload_and_start' "$POSTINST" | tail -1 | cut -d: -f1)
+if [ -n "$cfg_call_line" ] && [ -n "$reload_line" ] \
+        && [ "$cfg_call_line" -lt "$reload_line" ]; then
+    pass "postinst creates the config directory before starting doggy.service"
+else
+    fail "postinst creates the config directory before starting doggy.service"
+fi
+
 if [ -f "$UNIT" ] && grep -q '^LogsDirectory=doggy$' "$UNIT"; then
     pass "unit LogsDirectory is doggy"
 else
@@ -127,6 +179,25 @@ else
     fail "CMake installs doggy.service to /etc/systemd/system"
 fi
 
+if grep -q '50-shaloms-doggy.rules' "$CMAKE" \
+        && grep -q 'share/polkit-1/rules.d' "$CMAKE"; then
+    pass "CMake installs the doggy polkit rule"
+else
+    fail "CMake installs the doggy polkit rule"
+fi
+
+POLKIT="$ROOT/packaging/50-shaloms-doggy.rules"
+if [ -f "$POLKIT" ] \
+        && grep -q 'subject.user !== "doggy"' "$POLKIT" \
+        && grep -q 'doggy.service' "$POLKIT" \
+        && grep -q 'restart' "$POLKIT" \
+        && grep -q 'login1.power-off' "$POLKIT" \
+        && grep -q 'login1.reboot' "$POLKIT"; then
+    pass "polkit rule is scoped to doggy restart/reboot/poweroff"
+else
+    fail "polkit rule is scoped to doggy restart/reboot/poweroff"
+fi
+
 # ── unit file ────────────────────────────────────────────────────────────────
 if [ -f "$UNIT" ]; then
     pass "doggy.service exists"
@@ -138,6 +209,24 @@ if [ -f "$UNIT" ] && grep -q '^User=doggy$' "$UNIT"; then
     pass "unit runs as User=doggy"
 else
     fail "unit runs as User=doggy"
+fi
+
+if [ -f "$UNIT" ] && grep -q '^NoNewPrivileges=yes$' "$UNIT"; then
+    pass "unit keeps NoNewPrivileges=yes"
+else
+    fail "unit keeps NoNewPrivileges=yes"
+fi
+
+if [ -f "$UNIT" ] && grep -q '^AmbientCapabilities=CAP_NET_BIND_SERVICE$' "$UNIT"; then
+    pass "unit AmbientCapabilities is CAP_NET_BIND_SERVICE"
+else
+    fail "unit AmbientCapabilities is CAP_NET_BIND_SERVICE"
+fi
+
+if [ -f "$UNIT" ] && grep -q '^CapabilityBoundingSet=CAP_NET_BIND_SERVICE$' "$UNIT"; then
+    pass "unit CapabilityBoundingSet is CAP_NET_BIND_SERVICE"
+else
+    fail "unit CapabilityBoundingSet is CAP_NET_BIND_SERVICE"
 fi
 
 if [ -f "$UNIT" ] && grep -q '^ExecStart=/usr/bin/doggy$' "$UNIT"; then
@@ -270,6 +359,7 @@ run_script() {
     DOGGY_REBOOT_PKGS="$TMPDIR/run/reboot-required.pkgs" \
     DOGGY_MODULES_LOAD_DIR="$TMPDIR/modules-load" \
     DOGGY_LOG_DIR="$TMPDIR/var-log-doggy" \
+    DOGGY_CONFIG_DIR="$TMPDIR/etc-doggy" \
     PATH="$MOCK_BIN:$PATH" \
         "$script" "$@"
 }
@@ -306,6 +396,26 @@ if [ -d "$TMPDIR/var-log-doggy" ]; then
     pass "postinst creates the doggy log directory"
 else
     fail "postinst creates the doggy log directory"
+fi
+
+if [ -d "$TMPDIR/etc-doggy" ]; then
+    pass "postinst creates the doggy config directory"
+else
+    fail "postinst creates the doggy config directory"
+fi
+
+if grep -q 'chown doggy:doggy' "$MOCK_LOG/commands" \
+        && grep -q "$TMPDIR/etc-doggy" "$MOCK_LOG/commands"; then
+    pass "postinst chowns the config directory to doggy"
+else
+    fail "postinst chowns the config directory to doggy"
+fi
+
+cfg_mode=$(stat -c '%a' "$TMPDIR/etc-doggy" 2>/dev/null || true)
+if [ "$cfg_mode" = "755" ]; then
+    pass "postinst sets config directory mode 0755"
+else
+    fail "postinst sets config directory mode 0755"
 fi
 
 : >"$MOCK_LOG/commands"

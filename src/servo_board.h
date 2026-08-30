@@ -17,6 +17,7 @@ private:
 
 public:
     ServoBoard();
+    ServoBoard(int bus, uint8_t address);
     ~ServoBoard();
 
     bool isOpen() const;

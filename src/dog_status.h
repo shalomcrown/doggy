@@ -51,11 +51,21 @@ public:
 
 // ================================================================================
 
+struct ServoSnapshot {
+    int id;
+    std::string name;
+    double angle;
+    int pwm;
+};
+
+// ================================================================================
+
 class DogStatus {
 public:
     std::vector<DogError> errors;
     ImuReading imu;
     BatteryReading battery;
+    std::vector<ServoSnapshot> servos;
 };
 
 #endif

@@ -3,11 +3,14 @@
 
 #include "dog_status.h"
 
+#include <cstdint>
+
 class Imu
 {
 
 public:
     Imu();
+    Imu(int bus, uint8_t address);
     int bus_fd;
 
     Vec3 gyroOffset {};

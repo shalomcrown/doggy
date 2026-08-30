@@ -34,9 +34,14 @@ constexpr uint8_t OUTDRV             = 0x04;
 
 // ================================================================================
 
-ServoBoard::ServoBoard() : bus_fd(-1) {
+ServoBoard::ServoBoard() : ServoBoard(1, 0x40) {
+}
+
+// ================================================================================
+
+ServoBoard::ServoBoard(int bus, uint8_t address) : bus_fd(-1) {
     try {
-        bus_fd = openBus("/dev/i2c-1", 0x40);
+        bus_fd = openBus(i2c_device_path(bus), address);
         writeRegisterByte(bus_fd, MODE2, OUTDRV);
         usleep(5'000);
         writeRegisterByte(bus_fd, MODE1, ALLCALL);
