@@ -1,10 +1,11 @@
 #ifndef WEB_JSON_H
 #define WEB_JSON_H
 
-#include "dog_api.h"
+#include "robot_api.h"
 
 #include <nlohmann/json.hpp>
 
+#include <cmath>
 #include <string>
 
 // ================================================================================
@@ -53,6 +54,45 @@ inline nlohmann::json vec3_to_json(const Vec3 &v) {
 
 // ================================================================================
 
+inline const char *robot_type_json(RobotType type) {
+    switch (type) {
+        case RobotType::dog: return "DOG";
+        case RobotType::rover: return "ROVER";
+    }
+
+    return "DOG";
+}
+
+// ================================================================================
+
+inline const char *motor_direction_json(MotorDirection direction) {
+    switch (direction) {
+        case MotorDirection::forward: return "forward";
+        case MotorDirection::reverse: return "reverse";
+    }
+
+    return "forward";
+}
+
+// ================================================================================
+
+inline nlohmann::json motors_to_json_value(const std::vector<MotorSnapshot> &items) {
+    nlohmann::json list = nlohmann::json::array();
+    for (const MotorSnapshot &item : items) {
+        list.push_back({
+            {"id", item.id},
+            {"name", item.name},
+            {"pwm", item.pwm},
+            {"enabled", item.enabled},
+            {"direction", motor_direction_json(item.direction)}
+        });
+    }
+
+    return {{"items", std::move(list)}};
+}
+
+// ================================================================================
+
 inline std::string status_to_json(const DogStatus &status, const std::string &version) {
     nlohmann::json errors = nlohmann::json::array();
     for (const DogError &err : status.errors) {
@@ -63,6 +103,7 @@ inline std::string status_to_json(const DogStatus &status, const std::string &ve
     }
 
     nlohmann::json body = {
+        {"type", robot_type_json(status.type)},
         {"version", version},
         {"errors", std::move(errors)},
         {"imu",
@@ -72,9 +113,15 @@ inline std::string status_to_json(const DogStatus &status, const std::string &ve
           {"gyro", vec3_to_json(status.imu.gyro)}}},
         {"battery",
          {{"ok", status.battery.ok},
-          {"voltage_v", status.battery.voltage_v}}},
-        {"servos", servos_to_json_value(status.servos)}
+          {"voltage_v", status.battery.voltage_v}}}
     };
+    if (status.type == RobotType::dog) {
+        body["servos"] = servos_to_json_value(status.servos);
+    } else {
+        body["speed"] = status.speed;
+        body["turn"] = status.turn;
+        body["motors"] = motors_to_json_value(status.motors);
+    }
     return body.dump();
 }
 
@@ -156,6 +203,40 @@ inline bool parse_pin_post(const std::string &body, std::string &pin, std::strin
     }
 
     return true;
+}
+
+// ================================================================================
+
+inline bool parse_config_pin(const std::string &body, std::string &pin) {
+    const nlohmann::json json = nlohmann::json::parse(body, nullptr, false);
+    if (json.is_discarded() || json.is_object() == false) {
+        return false;
+    }
+
+    if (json.contains("pin")) {
+        if (json["pin"].is_string() == false) {
+            return false;
+        }
+        pin = json["pin"].get<std::string>();
+    } else {
+        pin.clear();
+    }
+    return true;
+}
+
+// ================================================================================
+
+inline bool parse_drive_post(const std::string &body, double &speed, double &turn) {
+    const nlohmann::json json = nlohmann::json::parse(body, nullptr, false);
+    if (json.is_discarded() || json.is_object() == false
+            || json.contains("speed") == false || json["speed"].is_number() == false
+            || json.contains("turn") == false || json["turn"].is_number() == false) {
+        return false;
+    }
+
+    speed = json["speed"].get<double>();
+    turn = json["turn"].get<double>();
+    return std::isfinite(speed) && std::isfinite(turn);
 }
 
 // ================================================================================

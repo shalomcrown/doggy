@@ -85,6 +85,67 @@ static int parse_channel(const nlohmann::json &value, const char *field) {
 
 // ================================================================================
 
+static RobotType parse_robot_type(const nlohmann::json &value) {
+    if (value.is_string() == false) {
+        throw ConfigError("config robot.type must be a string");
+    }
+
+    const std::string type = value.get<std::string>();
+    if (type == "DOG") {
+        return RobotType::dog;
+    }
+    if (type == "ROVER") {
+        return RobotType::rover;
+    }
+
+    throw ConfigError("config robot.type must be DOG or ROVER");
+}
+
+// ================================================================================
+
+static MotorDirection parse_motor_direction(const nlohmann::json &value,
+                                            const char *field) {
+    if (value.is_string() == false) {
+        throw ConfigError(std::string("config motors.") + field
+                          + ".direction must be a string");
+    }
+
+    const std::string direction = value.get<std::string>();
+    if (direction == "forward") {
+        return MotorDirection::forward;
+    }
+    if (direction == "reverse") {
+        return MotorDirection::reverse;
+    }
+
+    throw ConfigError(std::string("config motors.") + field
+                      + ".direction must be forward or reverse");
+}
+
+// ================================================================================
+
+static void apply_motor(MotorConfig &motor, const nlohmann::json &obj, const char *field) {
+    if (obj.is_object() == false) {
+        throw ConfigError(std::string("config motors.") + field + " must be an object");
+    }
+
+    if (obj.contains("channel")) {
+        motor.channel = parse_channel(obj["channel"], field);
+    }
+    if (obj.contains("enabled")) {
+        if (obj["enabled"].is_boolean() == false) {
+            throw ConfigError(std::string("config motors.") + field
+                              + ".enabled must be boolean");
+        }
+        motor.enabled = obj["enabled"].get<bool>();
+    }
+    if (obj.contains("direction")) {
+        motor.direction = parse_motor_direction(obj["direction"], field);
+    }
+}
+
+// ================================================================================
+
 static void apply_i2c_device(I2cDeviceConfig &device, const nlohmann::json &obj, const char *field) {
     if (obj.is_object() == false) {
         throw ConfigError(std::string("config i2c.") + field + " must be an object");
@@ -101,9 +162,71 @@ static void apply_i2c_device(I2cDeviceConfig &device, const nlohmann::json &obj,
 
 // ================================================================================
 
+static int parse_frequency_hz(const nlohmann::json &value) {
+    if (value.is_number_integer() == false) {
+        throw ConfigError("config lora.frequency_hz must be an integer");
+    }
+
+    const int hz = value.get<int>();
+    if (hz != 0 && (hz < 150000000 || hz > 960000000)) {
+        throw ConfigError("config lora.frequency_hz out of range");
+    }
+
+    return hz;
+}
+
+// ================================================================================
+
+static void apply_lora(LoraConfig &lora, const nlohmann::json &obj) {
+    if (obj.is_object() == false) {
+        throw ConfigError("config lora must be an object");
+    }
+
+    if (obj.contains("enabled")) {
+        if (obj["enabled"].is_boolean() == false) {
+            throw ConfigError("config lora.enabled must be boolean");
+        }
+        lora.enabled = obj["enabled"].get<bool>();
+    }
+    if (obj.contains("device")) {
+        if (obj["device"].is_string() == false) {
+            throw ConfigError("config lora.device must be a string");
+        }
+        lora.device = obj["device"].get<std::string>();
+        if (lora.device.find('\n') != std::string::npos
+                || lora.device.find('\r') != std::string::npos) {
+            throw ConfigError("config lora.device must not contain a newline");
+        }
+    }
+    if (obj.contains("country")) {
+        if (obj["country"].is_string() == false) {
+            throw ConfigError("config lora.country must be a string");
+        }
+        lora.country = obj["country"].get<std::string>();
+        if (lora.country.size() > 8) {
+            throw ConfigError("config lora.country is too long");
+        }
+    }
+    if (obj.contains("frequency_hz")) {
+        lora.frequency_hz = parse_frequency_hz(obj["frequency_hz"]);
+    }
+}
+
+// ================================================================================
+
 static void apply_json(Config &config, const nlohmann::json &root) {
     if (root.is_object() == false) {
         throw ConfigError("config root must be a JSON object");
+    }
+
+    if (root.contains("robot")) {
+        const auto &robot = root["robot"];
+        if (robot.is_object() == false) {
+            throw ConfigError("config robot must be an object");
+        }
+        if (robot.contains("type")) {
+            config.robot.type = parse_robot_type(robot["type"]);
+        }
     }
 
     if (root.contains("i2c")) {
@@ -152,6 +275,29 @@ static void apply_json(Config &config, const nlohmann::json &root) {
         set_ch("head_neck", config.servos.head_neck);
     }
 
+    if (root.contains("motors")) {
+        const auto &motors = root["motors"];
+        if (motors.is_object() == false) {
+            throw ConfigError("config motors must be an object");
+        }
+        if (motors.contains("front_left")) {
+            apply_motor(config.motors.front_left, motors["front_left"], "front_left");
+        }
+        if (motors.contains("front_right")) {
+            apply_motor(config.motors.front_right, motors["front_right"], "front_right");
+        }
+        if (motors.contains("rear_left")) {
+            apply_motor(config.motors.rear_left, motors["rear_left"], "rear_left");
+        }
+        if (motors.contains("rear_right")) {
+            apply_motor(config.motors.rear_right, motors["rear_right"], "rear_right");
+        }
+    }
+
+    if (root.contains("lora")) {
+        apply_lora(config.lora, root["lora"]);
+    }
+
     if (root.contains("system")) {
         const auto &system = root["system"];
         if (system.is_object() == false) {
@@ -179,8 +325,41 @@ static nlohmann::json i2c_device_json(const I2cDeviceConfig &device) {
 
 // ================================================================================
 
+static const char *robot_type_json(RobotType type) {
+    switch (type) {
+        case RobotType::dog: return "DOG";
+        case RobotType::rover: return "ROVER";
+    }
+
+    return "DOG";
+}
+
+// ================================================================================
+
+static const char *motor_direction_json(MotorDirection direction) {
+    switch (direction) {
+        case MotorDirection::forward: return "forward";
+        case MotorDirection::reverse: return "reverse";
+    }
+
+    return "forward";
+}
+
+// ================================================================================
+
+static nlohmann::json motor_json(const MotorConfig &motor) {
+    return {
+        {"channel", motor.channel},
+        {"enabled", motor.enabled},
+        {"direction", motor_direction_json(motor.direction)}
+    };
+}
+
+// ================================================================================
+
 static nlohmann::json to_json(const Config &config) {
     nlohmann::json root = {
+        {"robot", {{"type", robot_type_json(config.robot.type)}}},
         {"i2c",
          {{"servo_board", i2c_device_json(config.i2c.servo_board)},
           {"imu", i2c_device_json(config.i2c.imu)},
@@ -198,7 +377,17 @@ static nlohmann::json to_json(const Config &config) {
           {"rear_right_waist", config.servos.rear_right_waist},
           {"rear_right_hip", config.servos.rear_right_hip},
           {"rear_right_knee", config.servos.rear_right_knee},
-          {"head_neck", config.servos.head_neck}}}
+          {"head_neck", config.servos.head_neck}}},
+        {"motors",
+         {{"front_left", motor_json(config.motors.front_left)},
+          {"front_right", motor_json(config.motors.front_right)},
+          {"rear_left", motor_json(config.motors.rear_left)},
+          {"rear_right", motor_json(config.motors.rear_right)}}},
+        {"lora",
+         {{"enabled", config.lora.enabled},
+          {"device", config.lora.device},
+          {"country", config.lora.country},
+          {"frequency_hz", config.lora.frequency_hz}}}
     };
     if (config.system.pin_hash.empty() == false) {
         root["system"] = {{"pin_hash", config.system.pin_hash}};
@@ -230,6 +419,21 @@ Config Config::from_json_string(const std::string &text) {
     }
 
     Config config;
+    apply_json(config, root);
+    return config;
+}
+
+// ================================================================================
+
+Config Config::overlay_json_string(const Config &base, const std::string &text) {
+    nlohmann::json root;
+    try {
+        root = nlohmann::json::parse(text);
+    } catch (const nlohmann::json::exception &ex) {
+        throw ConfigError(std::string("invalid config JSON: ") + ex.what());
+    }
+
+    Config config = base;
     apply_json(config, root);
     return config;
 }

@@ -24,6 +24,16 @@ static void expect(bool cond, const char *name) {
 
 int main() {
     Config defaults;
+    expect(defaults.robot.type == RobotType::dog, "missing robot type defaults to DOG");
+    expect(defaults.motors.front_left.channel == 0, "default front_left motor channel is 0");
+    expect(defaults.motors.front_right.channel == 1, "default front_right motor channel is 1");
+    expect(defaults.motors.rear_left.channel == 2, "default rear_left motor channel is 2");
+    expect(defaults.motors.rear_right.channel == 3, "default rear_right motor channel is 3");
+    expect(defaults.motors.front_left.enabled, "motors default enabled");
+    expect(defaults.motors.front_left.direction == MotorDirection::forward,
+           "motors default forward");
+    expect(defaults.lora.enabled == false, "lora defaults disabled");
+    expect(defaults.lora.frequency_hz == 0, "lora frequency defaults unset");
     expect(defaults.servos.front_right_waist == 11, "default front_right_waist is 11");
     expect(defaults.servos.front_right_hip == 12, "default front_right_hip is 12");
     expect(defaults.servos.front_right_knee == 13, "default front_right_knee is 13");
@@ -50,13 +60,40 @@ int main() {
            "to_json_string writes hex servo_board address");
     expect(dumped.find("\"front_right_waist\":11") != std::string::npos,
            "to_json_string writes default channels");
+    expect(dumped.find("\"type\":\"DOG\"") != std::string::npos,
+           "to_json_string writes DOG type");
+    expect(dumped.find("\"front_left\"") != std::string::npos,
+           "to_json_string writes motor configuration");
+    expect(dumped.find("\"lora\"") != std::string::npos,
+           "to_json_string writes lora configuration");
 
     const Config from_text = Config::from_json_string(
-            R"({"servos":{"head_neck":14},"i2c":{"imu":{"address":"0x69"}}})");
+            R"({"robot":{"type":"ROVER"},"motors":{"front_left":{"channel":4,"enabled":false,"direction":"reverse"}},"lora":{"enabled":true,"country":"IL","frequency_hz":433000000},"servos":{"head_neck":14},"i2c":{"imu":{"address":"0x69"}}})");
+    expect(from_text.robot.type == RobotType::rover, "from_json_string reads ROVER");
+    expect(from_text.motors.front_left.channel == 4, "from_json_string reads motor channel");
+    expect(from_text.motors.front_left.enabled == false, "from_json_string reads motor enabled");
+    expect(from_text.motors.front_left.direction == MotorDirection::reverse,
+           "from_json_string reads reverse direction");
     expect(from_text.servos.head_neck == 14, "from_json_string overlays head_neck");
     expect(from_text.servos.front_right_waist == 11,
            "from_json_string keeps default waist");
     expect(from_text.i2c.imu.address == 0x69, "from_json_string overlays imu address");
+    expect(from_text.lora.enabled, "from_json_string reads lora.enabled");
+    expect(from_text.lora.country == "IL", "from_json_string reads lora.country");
+    expect(from_text.lora.frequency_hz == 433000000,
+           "from_json_string reads lora.frequency_hz");
+
+    Config rover_base;
+    rover_base.robot.type = RobotType::rover;
+    rover_base.motors.front_left.channel = 7;
+    const Config overlaid_rover = Config::overlay_json_string(
+            rover_base, R"({"motors":{"front_right":{"channel":8}}})");
+    expect(overlaid_rover.robot.type == RobotType::rover,
+           "overlay without type keeps ROVER");
+    expect(overlaid_rover.motors.front_left.channel == 7,
+           "overlay keeps existing motor channel");
+    expect(overlaid_rover.motors.front_right.channel == 8,
+           "overlay updates named motor channel");
 
     bool from_text_threw = false;
     try {
@@ -66,6 +103,23 @@ int main() {
     }
 
     expect(from_text_threw, "from_json_string invalid JSON throws ConfigError");
+
+    bool bad_type_threw = false;
+    try {
+        Config::from_json_string(R"({"robot":{"type":"BOAT"}})");
+    } catch (const ConfigError &) {
+        bad_type_threw = true;
+    }
+    expect(bad_type_threw, "unknown robot type throws ConfigError");
+
+    bool bad_direction_threw = false;
+    try {
+        Config::from_json_string(
+                R"({"motors":{"front_left":{"direction":"sideways"}}})");
+    } catch (const ConfigError &) {
+        bad_direction_threw = true;
+    }
+    expect(bad_direction_threw, "unknown motor direction throws ConfigError");
 
     unsigned char empty_digest[32] = {};
     static const unsigned char kEmptySha256[32] = {
@@ -91,6 +145,12 @@ int main() {
            "public JSON reports pin_set");
     expect(public_json.find("pin_hash") == std::string::npos,
            "public JSON omits pin_hash");
+    expect(public_json.find("\"type\":\"DOG\"") != std::string::npos,
+           "public JSON includes robot type");
+    expect(public_json.find("\"lora\"") != std::string::npos,
+           "public JSON includes lora");
+    expect(public_json.find("\"pin\"") == std::string::npos,
+           "public JSON omits plaintext pin");
     expect(with_pin.to_json_string().find("pin_hash") != std::string::npos,
            "file JSON keeps pin_hash");
 

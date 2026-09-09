@@ -12,7 +12,9 @@
 # First-class hosts: Debian/Raspberry Pi OS Bookworm and Trixie, Ubuntu 24.04.
 # Other distros continue best-effort (warn, skip unavailable packages, do not abort).
 #
-# There is no Windows target. The only runtime target is Raspberry Pi aarch64.
+# There is no Windows target for firmware. The only robot runtime is Raspberry Pi
+# aarch64. golang-go is required to build the doggy-lora sidecar (and to
+# cross-compile it with GOARCH=arm64).
 #
 # Usage:
 #   ./install-prereqs.sh [options]
@@ -141,10 +143,10 @@ detect_os() {
     fi
 }
 native_packages() {
-    printf '%s' "ca-certificates cmake ninja-build g++ build-essential pkg-config git i2c-tools qtcreator zssh lrzsz vim"
+    printf '%s' "ca-certificates cmake ninja-build g++ build-essential pkg-config git golang-go i2c-tools qtcreator zssh lrzsz vim"
 }
 cross_packages() {
-    printf '%s' "ca-certificates cmake ninja-build pkg-config git gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"
+    printf '%s' "ca-certificates cmake ninja-build pkg-config git golang-go gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"
 }
 print_plan() {
     printf 'os_id=%s\n' "$OS_ID"
@@ -240,7 +242,7 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "native" ]; then
     step "apt-get install (build tools, I2C tools, Qt Creator and editors)"
     # shellcheck disable=SC2046
     apt_install_best_effort $(native_packages)
-    verify_commands cmake ninja g++ pkg-config git
+    verify_commands cmake ninja g++ pkg-config git go
     echo
 fi
 # ═════════════════════════════════════════════════════════════════════════════
@@ -254,7 +256,7 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "cross" ]; then
     step "apt-get install (aarch64 cross toolchain)"
     # shellcheck disable=SC2046
     apt_install_best_effort $(cross_packages)
-    verify_commands cmake ninja aarch64-linux-gnu-gcc aarch64-linux-gnu-g++
+    verify_commands cmake ninja aarch64-linux-gnu-gcc aarch64-linux-gnu-g++ go
     echo
 fi
 # ═════════════════════════════════════════════════════════════════════════════

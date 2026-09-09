@@ -1,6 +1,7 @@
 #include "dog_api.h"
 #include "doggy_log.h"
 #include "doggy_version.h"
+#include "rover_api.h"
 #include "tls_cert.h"
 #include "web_server.h"
 
@@ -27,6 +28,10 @@ public:
     Config config;
     bool busy = false;
     bool write_fail = false;
+
+    RobotType robotType() const override {
+        return RobotType::dog;
+    }
 
     std::vector<ServoSnapshot> listServos() override {
         return items;
@@ -83,13 +88,21 @@ public:
         return config;
     }
 
-    CommandResult replaceConfig(const Config &next) override {
+    CommandResult replaceConfig(const Config &next, const std::string &pin) override {
         if (busy) {
             return CommandResult::busy;
         }
 
         if (write_fail) {
             return CommandResult::failed;
+        }
+
+        const bool type_changed = next.robot.type != config.robot.type;
+        if (type_changed) {
+            const CommandResult authorized = requestSystemAction(SystemAction::restart, pin);
+            if (authorized != CommandResult::ok) {
+                return authorized;
+            }
         }
 
         const SystemConfig kept_pin = config.system;
@@ -154,6 +167,69 @@ public:
     bool action_pending = false;
     bool lockout = false;
     int pin_failures = 0;
+};
+
+// ================================================================================
+
+class FakeRover : public RoverApi {
+public:
+    Config config;
+    std::vector<MotorSnapshot> motors{
+        {0, "front-left", 0, true, MotorDirection::forward},
+        {1, "front-right", 0, true, MotorDirection::forward},
+        {2, "rear-left", 0, true, MotorDirection::forward},
+        {3, "rear-right", 0, true, MotorDirection::forward}
+    };
+    double speed = 0.0;
+    double turn = 0.0;
+
+    FakeRover() {
+        config.robot.type = RobotType::rover;
+    }
+
+    RobotType robotType() const override {
+        return RobotType::rover;
+    }
+
+    std::vector<MotorSnapshot> listMotors() override {
+        return motors;
+    }
+
+    CommandResult setDrive(double next_speed, double next_turn) override {
+        if (next_speed < -1.0 || next_speed > 1.0
+                || next_turn < -1.0 || next_turn > 1.0) {
+            return CommandResult::bad_drive;
+        }
+        speed = next_speed;
+        turn = next_turn;
+        return CommandResult::ok;
+    }
+
+    DogStatus getStatus() const override {
+        DogStatus result;
+        result.type = RobotType::rover;
+        result.speed = speed;
+        result.turn = turn;
+        result.motors = motors;
+        return result;
+    }
+
+    Config getConfig() const override {
+        return config;
+    }
+
+    CommandResult replaceConfig(const Config &next, const std::string &) override {
+        config = next;
+        return CommandResult::ok;
+    }
+
+    CommandResult requestSystemAction(SystemAction, const std::string &) override {
+        return CommandResult::ok;
+    }
+
+    CommandResult setSystemPin(const std::string &, const std::string &) override {
+        return CommandResult::ok;
+    }
 };
 
 // ================================================================================
@@ -284,6 +360,17 @@ int main() {
            "page can set the system PIN");
     expect(page && page->body.find("SHUTDOWN") != std::string::npos,
            "page requires typing SHUTDOWN");
+    expect(page && page->body.find("id=\"robot-type\"") != std::string::npos,
+           "dog page can change robot type");
+    expect(page && page->body.find("id=\"config-pin\"") != std::string::npos,
+           "dog page has a PIN field for type change");
+    expect(page && page->body.find("[\"lora\"") != std::string::npos,
+           "dog page can edit lora settings");
+    expect(page && page->body.find("Refresh the page") != std::string::npos,
+           "page warns to refresh after a type change");
+    expect(page && page->body.find("position: fixed") != std::string::npos
+                   && page->body.find("#status:empty") != std::string::npos,
+           "dog page pins the status line so Save feedback stays visible");
 
     auto healthy = cli.Get("/api/status");
     expect(healthy && healthy->status == 200, "GET /api/status is 200");
@@ -300,6 +387,8 @@ int main() {
     expect(healthy && healthy->body.find(std::string("\"version\":\"") + DOGGY_VERSION + "\"")
                    != std::string::npos,
            "GET /api/status includes stamped version");
+    expect(healthy && healthy->body.find("\"type\":\"DOG\"") != std::string::npos,
+           "dog status includes DOG type");
     expect(healthy && healthy->body.find("\"servos\"") != std::string::npos,
            "GET /api/status includes servos");
     expect(healthy && healthy->body.find("\"angle\":null") != std::string::npos,
@@ -381,6 +470,8 @@ int main() {
            "GET /api/config has hex servo_board address");
     expect(cfg && cfg->body.find("\"front_right_waist\":11") != std::string::npos,
            "GET /api/config has default front_right_waist");
+    expect(cfg && cfg->body.find("\"lora\"") != std::string::npos,
+           "GET /api/config includes lora");
 
     auto put = cli.Put("/api/config",
                        R"({"servos":{"front_right_waist":1}})",
@@ -394,6 +485,11 @@ int main() {
            "GET /api/config reports pin_set false");
     expect(cfg && cfg->body.find("pin_hash") == std::string::npos,
            "GET /api/config omits pin_hash");
+
+    auto typeWithoutPin = cli.Put(
+            "/api/config", R"({"robot":{"type":"ROVER"}})", "application/json");
+    expect(typeWithoutPin && typeWithoutPin->status == 403,
+           "type change without configured PIN is 403");
 
     auto unsetAct = cli.Post("/api/system",
                              R"({"action":"restart","pin":"1234"})",
@@ -411,6 +507,24 @@ int main() {
            "set PIN reports pin_set true");
     expect(setPin && setPin->body.find("pin_hash") == std::string::npos,
            "set PIN response omits pin_hash");
+
+    auto typeWrongPin = cli.Put(
+            "/api/config",
+            R"({"robot":{"type":"ROVER"},"pin":"0000"})",
+            "application/json");
+    expect(typeWrongPin && typeWrongPin->status == 403,
+           "type change with wrong PIN is 403");
+
+    auto typeChanged = cli.Put(
+            "/api/config",
+            R"({"robot":{"type":"ROVER"},"pin":"1234"})",
+            "application/json");
+    expect(typeChanged && typeChanged->status == 202,
+           "type change with PIN is 202");
+    expect(typeChanged && typeChanged->body.find("pin_hash") == std::string::npos,
+           "type change response omits PIN hash");
+    dog.action_pending = false;
+    dog.config.robot.type = RobotType::dog;
 
     auto badCurrent = cli.Post("/api/system/pin",
                                R"({"pin":"5678","current_pin":"0000"})",
@@ -488,6 +602,47 @@ int main() {
 
     server.stop();
 
+    const std::filesystem::path rover_index =
+            std::filesystem::path(index).parent_path() / "rover.html";
+    FakeRover rover;
+    WebServer rover_server(rover, rover_index.string(), "127.0.0.1", 0);
+    expect(rover_server.start(), "rover server starts");
+    httplib::Client rover_cli("127.0.0.1", rover_server.port());
+    auto rover_page = get_retry(rover_cli, "/");
+    expect(rover_page && rover_page->body.find("id=\"steering\"") != std::string::npos,
+           "rover page has steering slider");
+    expect(rover_page && rover_page->body.find("id=\"speed\"") != std::string::npos,
+           "rover page has speed slider");
+    expect(rover_page && rover_page->body.find("id=\"robot-type\"") != std::string::npos,
+           "rover page can change robot type");
+    expect(rover_page && rover_page->body.find("id=\"config-pin\"") != std::string::npos,
+           "rover page has a PIN field for type change");
+    expect(rover_page && rover_page->body.find("Refresh the page") != std::string::npos,
+           "rover page warns to refresh after a type change");
+    expect(rover_page && rover_page->body.find("position: fixed") != std::string::npos
+                   && rover_page->body.find("#status:empty") != std::string::npos,
+           "rover page pins the status line so Save feedback stays visible");
+    auto rover_status = rover_cli.Get("/api/status");
+    expect(rover_status && rover_status->body.find("\"type\":\"ROVER\"") != std::string::npos,
+           "rover status includes ROVER type");
+    expect(rover_status && rover_status->body.find("\"motors\"") != std::string::npos,
+           "rover status includes motors");
+    expect(rover_status && rover_status->body.find("\"servos\"") == std::string::npos,
+           "rover status omits servos");
+    auto drive = rover_cli.Post(
+            "/api/drive", R"({"speed":0.5,"turn":-0.25})", "application/json");
+    expect(drive && drive->status == 200, "valid rover drive is 200");
+    expect(drive && drive->body.find("\"speed\":0.5") != std::string::npos,
+           "drive response reports speed");
+    auto bad_drive = rover_cli.Post(
+            "/api/drive", R"({"speed":2,"turn":0})", "application/json");
+    expect(bad_drive && bad_drive->status == 400, "out-of-range rover drive is 400");
+    auto rover_home = rover_cli.Post("/api/home", "", "text/plain");
+    expect(rover_home && rover_home->status == 404, "home on rover is 404");
+    auto rover_servos = rover_cli.Get("/api/servos");
+    expect(rover_servos && rover_servos->status == 404, "servos on rover is 404");
+    rover_server.stop();
+
     std::ifstream log_in(doggy_log_path(log_dir.string()));
     const std::string log_text{
             std::istreambuf_iterator<char>(log_in),
@@ -496,6 +651,12 @@ int main() {
            "API GET /api/servos is logged");
     expect(log_text.find("GET /api/config 200") != std::string::npos,
            "API GET /api/config is logged");
+    expect(log_text.find("PUT /api/config 202 type=ROVER type_changed=true")
+                   != std::string::npos,
+           "type change is logged without a PIN");
+    expect(log_text.find("\"pin\":\"1234\"") == std::string::npos
+                   && log_text.find("pin=1234") == std::string::npos,
+           "log does not contain the PIN");
     expect(log_text.find("GET /api/status 200") == std::string::npos,
            "successful GET /api/status is not logged");
     expect(log_text.find("POST /api/servos/99 404") != std::string::npos,

@@ -9,7 +9,6 @@
     table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
     th, td { border: 1px solid #ccc; padding: 0.4rem 0.6rem; text-align: left; }
     input[type="range"] { width: 12rem; }
-    .servo-off { margin-left: 0.5rem; }
     /* Fixed: Save and the power buttons sit far below the fold. */
     #status {
       position: fixed;
@@ -24,17 +23,28 @@
     }
     #status:empty { display: none; }
     #errors { color: #8b0000; white-space: pre-wrap; }
-    #imu, #battery, #config, #power { margin-top: 1rem; }
+    #imu, #battery, #config, #power, #drive { margin-top: 1rem; }
     #config input { width: 6rem; }
     #power button { margin-right: 0.5rem; }
     .pin-field { display: block; margin: 0.4rem 0; }
+    .drive-field { display: block; margin: 0.6rem 0; }
   </style>
 </head>
 <body>
   <h1 id="page-title">Doggy</h1>
   <p id="errors" role="alert"></p>
-  <button type="button" id="home">Home</button>
   <p id="status" role="status"></p>
+  <section id="drive" aria-labelledby="drive-heading">
+    <h2 id="drive-heading">Drive</h2>
+    <label class="drive-field" for="steering">Steering
+      <input type="range" id="steering" min="-1" max="1" step="0.01" value="0" aria-label="Steering">
+      <span id="steering-value">0.000</span>
+    </label>
+    <label class="drive-field" for="speed">Speed
+      <input type="range" id="speed" min="-1" max="1" step="0.01" value="0" aria-label="Speed">
+      <span id="speed-value">0.000</span>
+    </label>
+  </section>
   <section id="imu" aria-labelledby="imu-heading">
     <h2 id="imu-heading">IMU</h2>
     <p id="imu-ok">IMU: unknown</p>
@@ -75,15 +85,15 @@
       <tr>
         <th scope="col">Name</th>
         <th scope="col">PWM</th>
-        <th scope="col">Angle</th>
-        <th scope="col">Control</th>
+        <th scope="col">Enabled</th>
+        <th scope="col">Direction</th>
       </tr>
     </thead>
-    <tbody id="servos"></tbody>
+    <tbody id="motors"></tbody>
   </table>
   <section id="config" aria-labelledby="config-heading">
     <h2 id="config-heading">Configuration</h2>
-    <p id="config-note">I2C bus and address changes apply after restart. Servo channel changes apply immediately. Changing robot type requires the system PIN and restarts the service — refresh the page afterwards.</p>
+    <p id="config-note">I2C bus and address changes apply after restart. Motor channel, enable, and direction changes apply immediately. Changing robot type requires the system PIN and restarts the service — refresh the page afterwards.</p>
     <label class="pin-field" for="robot-type">Robot type
       <select id="robot-type" aria-label="Robot type">
         <option value="DOG">DOG</option>
@@ -137,7 +147,7 @@
 
     const statusEl = document.getElementById("status");
     const errorsEl = document.getElementById("errors");
-    const bodyEl = document.getElementById("servos");
+    const bodyEl = document.getElementById("motors");
     const imuOkEl = document.getElementById("imu-ok");
     const imuTempEl = document.getElementById("imu-temp");
     const imuAxEl = document.getElementById("imu-ax");
@@ -158,19 +168,24 @@
     const pinCurrentEl = document.getElementById("pin-current");
     const pinNewEl = document.getElementById("pin-new");
     const systemPinEl = document.getElementById("system-pin");
+    const steeringEl = document.getElementById("steering");
+    const speedEl = document.getElementById("speed");
+    const steeringValueEl = document.getElementById("steering-value");
+    const speedValueEl = document.getElementById("speed-value");
     let statusPollBusy = false;
     let shownVersion = "";
-    let draggingId = null;
+    let draggingDrive = false;
     let configDraft = null;
-    let loadedRobotType = "DOG";
+    let loadedRobotType = "ROVER";
     let configBusy = false;
+    let driveTimer = null;
 
     function setStatus(text) {
       statusEl.textContent = text;
     }
 
     function formatNum(n) {
-      if (typeof n !== "number" || Number.isFinite(n) === false) {
+      if (typeof n !== "number" || Number.isFinite(n) == false) {
         return "—";
       }
 
@@ -222,18 +237,6 @@
       batteryVEl.textContent = formatNum(battery.voltage_v);
     }
 
-    function knownAngle(angle) {
-      return typeof angle === "number" && Number.isFinite(angle);
-    }
-
-    function formatAngle(angle) {
-      if (knownAngle(angle) === false) {
-        return "—";
-      }
-
-      return String(angle);
-    }
-
     function applyVersion(version) {
       if (typeof version !== "string" || version.length === 0) {
         return;
@@ -249,7 +252,46 @@
       document.title = label;
     }
 
-    async function loadDogStatus() {
+    function applyMotors(items) {
+      if (items === undefined) {
+        return;
+      }
+
+      if (bodyEl.children.length === 0) {
+        bodyEl.replaceChildren();
+        for (const motor of items) {
+          const tr = document.createElement("tr");
+          tr.dataset.motorId = String(motor.id);
+          const nameTd = document.createElement("td");
+          nameTd.textContent = motor.name;
+          const pwmTd = document.createElement("td");
+          pwmTd.className = "motor-pwm";
+          pwmTd.textContent = String(motor.pwm);
+          const enabledTd = document.createElement("td");
+          enabledTd.className = "motor-enabled";
+          enabledTd.textContent = motor.enabled ? "on" : "off";
+          const dirTd = document.createElement("td");
+          dirTd.className = "motor-direction";
+          dirTd.textContent = motor.direction || "";
+          tr.append(nameTd, pwmTd, enabledTd, dirTd);
+          bodyEl.appendChild(tr);
+        }
+        return;
+      }
+
+      for (const motor of items) {
+        const tr = bodyEl.querySelector('[data-motor-id="' + motor.id + '"]');
+        if (tr === null) {
+          continue;
+        }
+
+        tr.querySelector(".motor-pwm").textContent = String(motor.pwm);
+        tr.querySelector(".motor-enabled").textContent = motor.enabled ? "on" : "off";
+        tr.querySelector(".motor-direction").textContent = motor.direction || "";
+      }
+    }
+
+    async function loadRoverStatus() {
       if (statusPollBusy) {
         return;
       }
@@ -257,7 +299,7 @@
       statusPollBusy = true;
       try {
         const res = await fetch("/api/status");
-        if (res.ok === false) {
+        if (res.ok == false) {
           applyErrors([{ message: "Failed to load status" }]);
           return;
         }
@@ -267,12 +309,15 @@
         applyErrors(data.errors || []);
         applyImu(data.imu);
         applyBattery(data.battery);
-        const items = data.servos && data.servos.items;
-        if (items) {
-          if (bodyEl.children.length === 0) {
-            applyItems(items);
-          } else {
-            applyServoReadings(items);
+        applyMotors(data.motors && data.motors.items);
+        if (draggingDrive == false) {
+          if (typeof data.turn === "number") {
+            steeringEl.value = String(data.turn);
+            steeringValueEl.textContent = formatNum(data.turn);
+          }
+          if (typeof data.speed === "number") {
+            speedEl.value = String(data.speed);
+            speedValueEl.textContent = formatNum(data.speed);
           }
         }
       } catch (err) {
@@ -282,134 +327,50 @@
       }
     }
 
-    function applyItems(items) {
-      bodyEl.replaceChildren();
-      for (const servo of items) {
-        const tr = document.createElement("tr");
-        tr.dataset.servoId = String(servo.id);
-
-        const nameTd = document.createElement("td");
-        nameTd.textContent = servo.name;
-
-        const pwmTd = document.createElement("td");
-        pwmTd.className = "servo-pwm";
-        pwmTd.textContent = String(servo.pwm);
-
-        const angleTd = document.createElement("td");
-        angleTd.className = "servo-angle";
-        angleTd.textContent = formatAngle(servo.angle);
-
-        const controlTd = document.createElement("td");
-        const slider = document.createElement("input");
-        slider.type = "range";
-        slider.min = "0";
-        slider.max = "180";
-        slider.step = "1";
-        slider.value = knownAngle(servo.angle) ? String(servo.angle) : "90";
-        slider.id = "servo-" + servo.id;
-        slider.className = "servo-slider";
-        slider.setAttribute("aria-label", servo.name + " angle");
-        let idleTimer = null;
-        slider.addEventListener("pointerdown", () => {
-          draggingId = servo.id;
-        });
-        slider.addEventListener("pointerup", () => {
-          draggingId = null;
-        });
-        slider.addEventListener("input", () => {
-          draggingId = servo.id;
-          angleTd.textContent = slider.value;
-          if (idleTimer !== null) {
-            clearTimeout(idleTimer);
-          }
-          idleTimer = setTimeout(() => {
-            sendAngle(servo.id, Number(slider.value));
-          }, IDLE_MS);
-        });
-        controlTd.appendChild(slider);
-
-        const offBtn = document.createElement("button");
-        offBtn.type = "button";
-        offBtn.className = "servo-off";
-        offBtn.textContent = "Off";
-        offBtn.setAttribute("aria-label", servo.name + " off");
-        offBtn.addEventListener("click", () => {
-          sendOff(servo.id);
-        });
-        controlTd.appendChild(offBtn);
-
-        tr.append(nameTd, pwmTd, angleTd, controlTd);
-        bodyEl.appendChild(tr);
-      }
-    }
-
-    function applyServoReadings(items) {
-      for (const servo of items) {
-        const tr = bodyEl.querySelector('[data-servo-id="' + servo.id + '"]');
-        if (tr === null) {
-          continue;
-        }
-
-        const slider = tr.querySelector(".servo-slider");
-        if (draggingId === servo.id || document.activeElement === slider) {
-          continue;
-        }
-
-        tr.querySelector(".servo-pwm").textContent = String(servo.pwm);
-        tr.querySelector(".servo-angle").textContent = formatAngle(servo.angle);
-        if (knownAngle(servo.angle)) {
-          slider.value = String(servo.angle);
-        }
-      }
-    }
-
-    async function loadServos() {
-      const res = await fetch("/api/servos");
-      if (res.ok === false) {
-        setStatus("Failed to load servos");
-        return;
-      }
-      const data = await res.json();
-      applyItems(data.items || []);
-    }
-
-    async function sendAngle(id, angle) {
-      const res = await fetch("/api/servos/" + id, {
+    async function sendDrive() {
+      const speed = Number(speedEl.value);
+      const turn = Number(steeringEl.value);
+      const res = await fetch("/api/drive", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ angle: angle })
+        body: JSON.stringify({ speed: speed, turn: turn })
       });
       if (res.status === 409) {
         setStatus("Busy — try again");
         return;
       }
-      if (res.ok === false) {
-        setStatus("Move failed");
+      if (res.ok == false) {
+        setStatus("Drive failed");
         return;
       }
       setStatus("");
-      const data = await res.json();
-      applyItems(data.items || []);
     }
 
-    async function sendOff(id) {
-      const res = await fetch("/api/servos/" + id, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: false })
-      });
-      if (res.status === 409) {
-        setStatus("Busy — try again");
-        return;
+    function queueDrive() {
+      steeringValueEl.textContent = formatNum(Number(steeringEl.value));
+      speedValueEl.textContent = formatNum(Number(speedEl.value));
+      if (driveTimer !== null) {
+        clearTimeout(driveTimer);
       }
-      if (res.ok === false) {
-        setStatus("Off failed");
-        return;
-      }
-      setStatus("");
-      const data = await res.json();
-      applyItems(data.items || []);
+      driveTimer = setTimeout(() => {
+        sendDrive();
+      }, IDLE_MS);
     }
+
+    steeringEl.addEventListener("pointerdown", () => {
+      draggingDrive = true;
+    });
+    speedEl.addEventListener("pointerdown", () => {
+      draggingDrive = true;
+    });
+    steeringEl.addEventListener("pointerup", () => {
+      draggingDrive = false;
+    });
+    speedEl.addEventListener("pointerup", () => {
+      draggingDrive = false;
+    });
+    steeringEl.addEventListener("input", queueDrive);
+    speedEl.addEventListener("input", queueDrive);
 
     function displayName(key) {
       const spaced = String(key).replaceAll("_", " ");
@@ -427,6 +388,9 @@
 
       let cur = configDraft;
       for (let i = 0; i < path.length - 1; i += 1) {
+        if (cur[path[i]] === undefined || cur[path[i]] === null) {
+          cur[path[i]] = {};
+        }
         cur = cur[path[i]];
       }
 
@@ -443,6 +407,12 @@
         input.value = String(value);
         input.addEventListener("input", () => {
           setDraftValue(path, Number(input.value));
+        });
+      } else if (kind === "bool") {
+        input.type = "checkbox";
+        input.checked = value === true;
+        input.addEventListener("change", () => {
+          setDraftValue(path, input.checked);
         });
       } else {
         input.type = "text";
@@ -477,9 +447,9 @@
       }
 
       if (config.robot === undefined || config.robot === null) {
-        configDraft.robot = { type: "DOG" };
+        configDraft.robot = { type: "ROVER" };
       }
-      loadedRobotType = configDraft.robot.type || "DOG";
+      loadedRobotType = configDraft.robot.type || "ROVER";
       robotTypeEl.value = loadedRobotType;
 
       const i2c = config.i2c || {};
@@ -504,49 +474,25 @@
         configBodyEl.appendChild(tr);
       });
 
-      const lora = config.lora || {};
-      const loraTr = document.createElement("tr");
-      const loraClass = document.createElement("th");
-      loraClass.scope = "rowgroup";
-      loraClass.rowSpan = 2;
-      loraClass.textContent = displayName("lora");
-      loraTr.appendChild(loraClass);
-      const loraGroup = document.createElement("td");
-      loraTr.appendChild(loraGroup);
-      appendPair(loraTr, ["lora", "enabled"], lora.enabled, "bool");
-      appendPair(loraTr, ["lora", "device"], lora.device || "", "text");
-      appendPair(loraTr, ["lora", "country"], lora.country || "", "text");
-      configBodyEl.appendChild(loraTr);
-      const loraTr2 = document.createElement("tr");
-      const loraGroup2 = document.createElement("td");
-      loraTr2.appendChild(loraGroup2);
-      appendPair(loraTr2, ["lora", "frequency_hz"], lora.frequency_hz || 0, "int");
-      appendEmptyPairs(loraTr2, 2);
-      configBodyEl.appendChild(loraTr2);
-
-      const servos = config.servos || {};
-      const servoKeys = Object.keys(servos);
-      const servoRows = [];
-      for (let i = 0; i < servoKeys.length; i += 3) {
-        servoRows.push(servoKeys.slice(i, i + 3));
-      }
-
-      servoRows.forEach((keys, index) => {
+      const motors = config.motors || {};
+      const motorKeys = Object.keys(motors);
+      motorKeys.forEach((key, index) => {
+        const motor = motors[key] || {};
         const tr = document.createElement("tr");
         if (index === 0) {
           const classTd = document.createElement("th");
           classTd.scope = "rowgroup";
-          classTd.rowSpan = servoRows.length;
-          classTd.textContent = displayName("servos");
+          classTd.rowSpan = motorKeys.length;
+          classTd.textContent = displayName("motors");
           tr.appendChild(classTd);
         }
 
         const groupTd = document.createElement("td");
+        groupTd.textContent = displayName(key);
         tr.appendChild(groupTd);
-        keys.forEach((key) => {
-          appendPair(tr, ["servos", key], servos[key], "int");
-        });
-        appendEmptyPairs(tr, 3 - keys.length);
+        appendPair(tr, ["motors", key, "channel"], motor.channel, "int");
+        appendPair(tr, ["motors", key, "enabled"], motor.enabled, "bool");
+        appendPair(tr, ["motors", key, "direction"], motor.direction, "text");
         configBodyEl.appendChild(tr);
       });
     }
@@ -560,7 +506,7 @@
       configRefreshEl.disabled = true;
       try {
         const res = await fetch("/api/config");
-        if (res.ok === false) {
+        if (res.ok == false) {
           setStatus("Failed to load configuration");
           return;
         }
@@ -617,7 +563,7 @@
           return;
         }
 
-        if (res.ok === false && res.status !== 202) {
+        if (res.ok == false && res.status !== 202) {
           setStatus("Save failed");
           return;
         }
@@ -631,7 +577,6 @@
         }
 
         setStatus("Saved");
-        await loadServos();
       } catch (err) {
         setStatus("Save failed");
       } finally {
@@ -639,21 +584,6 @@
         configBusy = false;
       }
     }
-
-    document.getElementById("home").addEventListener("click", async () => {
-      const res = await fetch("/api/home", { method: "POST" });
-      if (res.status === 409) {
-        setStatus("Busy — try again");
-        return;
-      }
-      if (res.ok === false) {
-        setStatus("Homing failed");
-        return;
-      }
-      setStatus("Homed");
-      const data = await res.json();
-      applyItems(data.items || []);
-    });
 
     configRefreshEl.addEventListener("click", () => {
       loadConfig();
@@ -693,7 +623,7 @@
         return;
       }
 
-      if (res.ok === false) {
+      if (res.ok == false) {
         setStatus("Failed to set PIN");
         return;
       }
@@ -712,7 +642,7 @@
           setStatus("Shutdown cancelled");
           return;
         }
-      } else if (window.confirm("Run " + action + " now?") === false) {
+      } else if (window.confirm("Run " + action + " now?") == false) {
         return;
       }
 
@@ -743,7 +673,7 @@
         return;
       }
 
-      if (res.ok === false && res.status !== 202) {
+      if (res.ok == false && res.status !== 202) {
         setStatus("Power action failed");
         return;
       }
@@ -770,10 +700,9 @@
       sendSystemAction("shutdown");
     });
 
-    loadServos();
     loadConfig();
-    loadDogStatus();
-    setInterval(loadDogStatus, POLL_MS);
+    loadRoverStatus();
+    setInterval(loadRoverStatus, POLL_MS);
   </script>
 </body>
 </html>

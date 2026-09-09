@@ -7,6 +7,16 @@
 
 inline constexpr const char *kDefaultConfigPath = "/etc/doggy/doggy.json";
 
+enum class RobotType {
+    dog,
+    rover
+};
+
+enum class MotorDirection {
+    forward,
+    reverse
+};
+
 // ================================================================================
 
 class ConfigError : public std::runtime_error {
@@ -52,6 +62,42 @@ public:
 
 // ================================================================================
 
+class MotorConfig {
+public:
+    int channel = 0;
+    bool enabled = true;
+    MotorDirection direction = MotorDirection::forward;
+};
+
+// ================================================================================
+
+class MotorChannelsConfig {
+public:
+    MotorConfig front_left{0, true, MotorDirection::forward};
+    MotorConfig front_right{1, true, MotorDirection::forward};
+    MotorConfig rear_left{2, true, MotorDirection::forward};
+    MotorConfig rear_right{3, true, MotorDirection::forward};
+};
+
+// ================================================================================
+
+class LoraConfig {
+public:
+    bool enabled = false;
+    std::string device;
+    std::string country;
+    int frequency_hz = 0;
+};
+
+// ================================================================================
+
+class RobotConfig {
+public:
+    RobotType type = RobotType::dog;
+};
+
+// ================================================================================
+
 class SystemConfig {
 public:
     std::string pin_hash;
@@ -63,8 +109,11 @@ public:
 
 class Config {
 public:
+    RobotConfig robot;
     I2cConfig i2c;
     ServoChannelsConfig servos;
+    MotorChannelsConfig motors;
+    LoraConfig lora;
     SystemConfig system;
 
     static constexpr int kPinMinLength = 4;
@@ -73,6 +122,7 @@ public:
     static std::string default_path();
     static Config load_file(const std::string &path);
     static Config from_json_string(const std::string &text);
+    static Config overlay_json_string(const Config &base, const std::string &text);
     static void save_file(const Config &config, const std::string &path);
     static Config load_or_create(const std::string &path, std::string *create_error = nullptr);
     static bool pin_length_ok(const std::string &pin);

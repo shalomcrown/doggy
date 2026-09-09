@@ -137,6 +137,12 @@ else
     fail "unit LogsDirectory is doggy"
 fi
 
+if [ -f "$UNIT" ] && grep -q '^LogsDirectoryMode=0755$' "$UNIT"; then
+    pass "unit log directory is world-traversable"
+else
+    fail "unit log directory is world-traversable"
+fi
+
 restart_line=$(grep -n 'reload_and_start' "$POSTINST" | tail -1 | cut -d: -f1)
 i2c_call_line=$(grep -n 'enable_i2c_boot_config' "$POSTINST" | tail -1 | cut -d: -f1)
 if [ -n "$restart_line" ] && [ -n "$i2c_call_line" ] \

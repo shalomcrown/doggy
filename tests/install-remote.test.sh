@@ -69,16 +69,34 @@ else
     fail "dry-run prints scp of the .deb"
 fi
 
+if grep -q 'ControlPath=' "$TMPDIR/dry"; then
+    pass "dry-run uses SSH ControlPath multiplexing"
+else
+    fail "dry-run uses SSH ControlPath multiplexing"
+fi
+
+if grep -q 'ControlMaster=yes' "$TMPDIR/dry" && grep -q -- '-fN' "$TMPDIR/dry"; then
+    pass "dry-run opens an SSH master before copy"
+else
+    fail "dry-run opens an SSH master before copy"
+fi
+
 if grep -q 'apt-get install' "$TMPDIR/dry" && grep -q '/tmp/ok.deb' "$TMPDIR/dry"; then
     pass "dry-run prints apt-get install of /tmp/<deb>"
 else
     fail "dry-run prints apt-get install of /tmp/<deb>"
 fi
 
-if grep -Eq 'ssh[[:space:]]+-t[[:space:]]+pi@robot' "$TMPDIR/dry"; then
+if grep -q -- '-t' "$TMPDIR/dry" && grep -q 'pi@robot' "$TMPDIR/dry"; then
     pass "dry-run prints ssh -t so sudo can prompt"
 else
     fail "dry-run prints ssh -t so sudo can prompt"
+fi
+
+if grep -q -- '-O exit' "$TMPDIR/dry"; then
+    pass "dry-run closes the SSH master"
+else
+    fail "dry-run closes the SSH master"
 fi
 
 # ── newest .deb under DOGGY_DEB_ROOT ─────────────────────────────────────────

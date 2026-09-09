@@ -70,6 +70,12 @@ bool gzip_file(const fs::path &src, const fs::path &dst) {
         return false;
     }
 
+    fs::permissions(
+            dst,
+            fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read
+                    | fs::perms::others_read,
+            fs::perm_options::replace,
+            rename_ec);
     return true;
 }
 
@@ -200,7 +206,8 @@ private:
         std::error_code ec;
         fs::permissions(
                 path,
-                fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read,
+                fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read
+                        | fs::perms::others_read,
                 fs::perm_options::replace,
                 ec);
     }
@@ -299,6 +306,12 @@ bool init_doggy_log(const DoggyLogOptions &options) {
 
     std::error_code dir_ec;
     fs::create_directories(directory, dir_ec);
+    fs::permissions(
+            directory,
+            fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec
+                    | fs::perms::others_read | fs::perms::others_exec,
+            fs::perm_options::replace,
+            dir_ec);
 
     if (options.roll_on_start) {
         roll_doggy_log_file(directory, options.max_files);

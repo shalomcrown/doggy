@@ -48,17 +48,18 @@ The firmware binary stays running and serves a single page (LAN, no login):
 # unprivileged local: DOGGY_HTTPS_PORT=8443 DOGGY_HTTP_PORT=8080 ./build/native-debug/doggy
 ```
 
-- **Home** runs the homing pose
-- The table lists each named servo (PWM and angle) with a slider and an **Off** button. The slider sends `POST /api/servos/{id}` `{ "angle" }` after **100ms idle**. Off sends `{ "enabled": false }` (PWM 0; angle unknown). The page refreshes PWM/angle from `GET /api/status` every 200 ms without resetting a slider you are dragging.
+- **Home** runs the homing pose (dog only)
+- On a **dog**, the table lists each named servo (PWM and angle) with a slider and an **Off** button. The slider sends `POST /api/servos/{id}` `{ "angle" }` after **100ms idle**. Off sends `{ "enabled": false }` (PWM 0; angle unknown). The page refreshes PWM/angle from `GET /api/status` every 200 ms without resetting a slider you are dragging.
+- On a **rover**, `/` is `rover.html`: steering and speed sliders (0 centered, `[-1, 1]`) send `POST /api/drive` after 100 ms idle. The table shows each motor’s PWM, enable, and direction. Mapping drive values to PWM is not implemented yet.
 - The IMU section shows the last body MPU6050 sample (accel in g, gyro in °/s, temperature in °C).
 - The battery section shows pack voltage from the ADS7830 (channel 0).
 - The title line (`<h1>` and the browser tab) shows `Doggy <version>` from `GET /api/status`.
-- **Configuration** loads `GET /api/config` and saves with `PUT /api/config`. Servo channel changes apply immediately and the servo table rebuilds. I2C bus and address changes are stored and take effect after a restart. Set a **system PIN** here (4–64 characters, hashed in `doggy.json`).
+- **Configuration** loads `GET /api/config` and saves with `PUT /api/config`. Robot type is `DOG` or `ROVER` (missing type in the file is a dog). Changing type requires the system PIN, schedules a service restart, and the page tells you to **refresh** afterwards. Servo or motor channel changes apply immediately. I2C bus and address changes are stored and take effect after a restart. Set a **system PIN** here (4–64 characters, hashed in `doggy.json`).
 - **Power** can restart `doggy.service`, reboot, or shut down the Pi. Each call is `POST /api/system` with the PIN (not the Unix password). Shutdown asks you to type `SHUTDOWN`. Privilege comes from a packaged polkit rule for user `doggy`.
 
-HTTPS: `DOGGY_HTTPS_PORT` (default `443`). HTTP: `DOGGY_HTTP_PORT` (default `80`) only redirects to HTTPS. Unprivileged runs need ports above 1024. TLS files: `DOGGY_TLS_CERT` / `DOGGY_TLS_KEY`, or `tls.crt` / `tls.key` next to the JSON config (generated on first start if missing; browsers warn once on the self-signed cert). HTML: `DOGGY_WEB_ROOT` or `/usr/share/doggy` after the DEB is installed. Config: `DOGGY_CONFIG` or `/etc/doggy/doggy.json` (JSON; servo channels and I2C bus/address for the PCA9685, IMU, and ADS7830). If the file is missing, the process writes compiled defaults there (`postinst` creates `/etc/doggy` owned by `doggy`). A present but invalid file stops startup. `GET /api/config` returns that file shape (hex addresses) plus `system.pin_set` (never the PIN or hash). `PUT /api/config` writes i2c/servos, remaps channels now, and applies I2C on the next process start. `POST /api/system/pin` sets the power PIN. `GET /api/status` lists the stamped `version`, hardware errors, cached IMU and battery readings, and servo PWM/angle (`angle` is `null` when PWM is 0, including at startup). The page shows errors at the top. The firmware main loop samples the IMU and battery ADC every 200 ms independently of the web UI.
+HTTPS: `DOGGY_HTTPS_PORT` (default `443`). HTTP: `DOGGY_HTTP_PORT` (default `80`) only redirects to HTTPS. Unprivileged runs need ports above 1024. TLS files: `DOGGY_TLS_CERT` / `DOGGY_TLS_KEY`, or `tls.crt` / `tls.key` next to the JSON config (generated on first start if missing; browsers warn once on the self-signed cert). HTML: `DOGGY_WEB_ROOT` or `/usr/share/doggy` after the DEB is installed (`index.html` and `rover.html`). Config: `DOGGY_CONFIG` or `/etc/doggy/doggy.json` (JSON; `robot.type`, servo channels, motor channels/enable/direction, and I2C bus/address for the PCA9685, IMU, and ADS7830). If the file is missing, the process writes compiled defaults there (`postinst` creates `/etc/doggy` owned by `doggy`). A present but invalid file stops startup. `GET /api/config` returns that file shape (hex addresses) plus `system.pin_set` (never the PIN or hash). `PUT /api/config` overlays those fields; a type change also needs `pin` and returns 202 before restart. `POST /api/system/pin` sets the power PIN. `GET /api/status` includes `"type"`, the stamped `version`, hardware errors, cached IMU and battery readings, and either servo PWM/angle (`angle` is `null` when PWM is 0) or rover motors plus last `speed`/`turn`. The page shows errors at the top. The firmware main loop samples the IMU and battery ADC every 200 ms independently of the web UI.
 
-Logs go to `/var/log/doggy/doggy.log` (override with `DOGGY_LOG_DIR`). The file is rolled on every start and when it exceeds the size cap; 10 files are kept and rolled copies are named `doggy-YYYY-MM-DD-HHMM.log.gz`. `/api/...` requests are logged except successful `GET /api/status` (the UI polls it at 5 Hz). HTTP failures (4xx/5xx) and hardware errors are logged at error severity. The packaged unit sets `LogsDirectory=doggy` so the directory is owned by user `doggy`.
+Logs go to `/var/log/doggy/doggy.log` (override with `DOGGY_LOG_DIR`). The file is rolled on every start and when it exceeds the size cap; 10 files are kept and rolled copies are named `doggy-YYYY-MM-DD-HHMM.log.gz`. The log directory is `0755` and log files are world-readable (`0644`). `/api/...` requests are logged except successful `GET /api/status` (the UI polls it at 5 Hz). Config saves log the resulting robot type and whether it changed; they never log the PIN. HTTP failures (4xx/5xx) and hardware errors are logged at error severity. The packaged unit sets `LogsDirectory=doggy` so the directory is owned by user `doggy`.
 
 ## Package and install on a remote Pi
 
@@ -76,7 +77,7 @@ cmake --preset native-release
 cmake --build --preset native-release --target package
 ```
 
-The script copies the `.deb` to `/tmp` over SSH and runs `sudo apt-get install`. The package creates system user `doggy` if needed, enables I2C in `/boot/firmware/config.txt` when missing, and may ask you to reboot. It then enables and **restarts** `doggy.service` (`User=doggy`, I2C via the `i2c` group) before any reboot prompt. An upgrade does not stop the unit in `prerm`, so a failed `postinst` cannot leave the dog down.
+The script copies the `.deb` to `/tmp` over SSH and runs `sudo apt-get install`. Copy and install share one SSH connection (ControlMaster), so the login password is asked once; `sudo` may still ask once if the account is not passwordless. The package creates system user `doggy` if needed, enables I2C in `/boot/firmware/config.txt` when missing, and may ask you to reboot. It then enables and **restarts** `doggy.service` (`User=doggy`, I2C via the `i2c` group) before any reboot prompt. An upgrade does not stop the unit in `prerm`, so a failed `postinst` cannot leave the dog down.
 
 CMake configure fetches cpp-httplib v0.52.0, plog 1.1.11, zlib 1.3.1, nlohmann/json 3.11.3, and Mbed TLS 3.6.7 (needs network once, or set `FETCHCONTENT_SOURCE_DIR_CPP_HTTPLIB` / `FETCHCONTENT_SOURCE_DIR_PLOG` / `FETCHCONTENT_SOURCE_DIR_ZLIB` / `FETCHCONTENT_SOURCE_DIR_JSON` / `FETCHCONTENT_SOURCE_DIR_MBEDTLS`). The system PIN is hashed with Mbed TLS SHA-256; HTTPS uses the same Mbed TLS tree.
 
@@ -88,7 +89,8 @@ After `apt-get install` of `shaloms-doggy` the Pi has:
 
 ```
 /usr/bin/doggy                         firmware (systemd ExecStart)
-/usr/share/doggy/index.html            web UI
+/usr/share/doggy/index.html            dog web UI
+/usr/share/doggy/rover.html             rover web UI
 /etc/systemd/system/doggy.service      unit (User=doggy)
 /etc/doggy/                            created at install (User=doggy, mode 0755)
 /etc/doggy/doggy.json                  written on first start if missing

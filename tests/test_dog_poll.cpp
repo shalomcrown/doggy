@@ -60,6 +60,18 @@ int main() {
     expect(from_disk.servos.front_right_waist == 1,
            "replaceConfig persists the channel to disk");
 
+    Config typed = stored.getConfig();
+    typed.robot.type = RobotType::rover;
+    expect(stored.setSystemPin("1234", "") == CommandResult::ok,
+           "PIN can be set for type change");
+    expect(stored.replaceConfig(typed, "1234") == CommandResult::ok,
+           "type change with PIN succeeds");
+    expect(stored.getConfig().robot.type == RobotType::rover,
+           "type change is stored in memory");
+    const Config typed_disk = Config::load_file(path);
+    expect(typed_disk.robot.type == RobotType::rover,
+           "type change persists DOG to ROVER in the config file");
+
     Dog memory_only;
     Config skipped;
     skipped.servos.front_right_waist = 2;

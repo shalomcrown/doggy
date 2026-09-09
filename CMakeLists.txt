@@ -104,6 +104,8 @@ target_link_libraries(doggy_log PUBLIC plog::plog ${DOGGY_ZLIB})
 
 add_library(doggy_web STATIC
     src/web_server.cpp
+    src/robot_api.cpp
+    src/system_control.cpp
     src/config.cpp
     src/utils.cpp
     src/tls_cert.cpp
@@ -135,6 +137,8 @@ add_executable(doggy
     src/main.cpp
     src/doggy.h
     src/doggy.cpp
+    src/rover.h
+    src/rover.cpp
     src/i2c_interface.cpp
     src/i2c_interface.hpp
     src/servo_board.h
@@ -146,7 +150,6 @@ add_executable(doggy
     src/ads7830.h
     src/ads7830.cpp
     src/system_control.h
-    src/system_control.cpp
 )
 set(DOGGY_VERSION_BASE "1.0.0")
 set(DOGGY_VERSION_HEADER "${CMAKE_BINARY_DIR}/generated/doggy_version.h")
@@ -175,7 +178,7 @@ target_compile_definitions(doggy
 )
 
 install(TARGETS doggy RUNTIME DESTINATION bin)
-install(FILES web/index.html DESTINATION share/doggy)
+install(FILES web/index.html web/rover.html DESTINATION share/doggy)
 install(FILES packaging/doggy.service DESTINATION /etc/systemd/system)
 install(FILES packaging/50-shaloms-doggy.rules DESTINATION share/polkit-1/rules.d)
 
@@ -256,6 +259,7 @@ add_executable(test_dog_poll
     src/i2c_interface.cpp
     src/config.cpp
     src/utils.cpp
+    src/robot_api.cpp
     src/system_control.cpp
 )
 target_include_directories(test_dog_poll PRIVATE "${CMAKE_SOURCE_DIR}/src")

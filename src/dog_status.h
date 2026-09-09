@@ -1,6 +1,8 @@
 #ifndef DOG_STATUS_H
 #define DOG_STATUS_H
 
+#include "config.h"
+
 #include <string>
 #include <vector>
 
@@ -60,12 +62,26 @@ struct ServoSnapshot {
 
 // ================================================================================
 
+struct MotorSnapshot {
+    int id;
+    std::string name;
+    int pwm;
+    bool enabled;
+    MotorDirection direction;
+};
+
+// ================================================================================
+
 class DogStatus {
 public:
+    RobotType type = RobotType::dog;
     std::vector<DogError> errors;
     ImuReading imu;
     BatteryReading battery;
     std::vector<ServoSnapshot> servos;
+    std::vector<MotorSnapshot> motors;
+    double speed = 0.0;
+    double turn = 0.0;
 };
 
 #endif

@@ -73,7 +73,7 @@ else
     fail "plan does not require a sysroot"
 fi
 
-for pkg in cmake ninja-build g++ qtcreator vim git zssh lrzsz i2c-tools; do
+for pkg in cmake ninja-build g++ golang-go qtcreator vim git zssh lrzsz i2c-tools; do
     if grep -E "(^| )${pkg}( |$)" "$TMPDIR/plan-trixie" >/dev/null \
             || grep -q "native_packages=.*${pkg}" "$TMPDIR/plan-trixie"; then
         pass "native plan includes $pkg"
@@ -168,6 +168,12 @@ if grep -q 'g++-aarch64-linux-gnu' "$TMPDIR/plan-cross"; then
     pass "cross plan includes g++-aarch64-linux-gnu"
 else
     fail "cross plan includes g++-aarch64-linux-gnu"
+fi
+
+if grep -q 'golang-go' "$TMPDIR/plan-cross"; then
+    pass "cross plan includes golang-go"
+else
+    fail "cross plan includes golang-go"
 fi
 
 if grep -qi mingw "$TMPDIR/plan-cross"; then

@@ -1,4 +1,6 @@
 #include "web_server.h"
+#include "dog_api.h"
+#include "rover_api.h"
 #include "web_json.h"
 #include "doggy_version.h"
 
@@ -38,6 +40,7 @@ int status_for(CommandResult result) {
         case CommandResult::not_found: return 404;
         case CommandResult::busy: return 409;
         case CommandResult::bad_angle: return 400;
+        case CommandResult::bad_drive: return 400;
         case CommandResult::failed: return 500;
         case CommandResult::pin_unset:
         case CommandResult::pin_invalid: return 403;
@@ -135,7 +138,8 @@ bool host_name_ok(const std::string &name) {
     return true;
 }
 
-void register_api(httplib::Server &server, DogApi &api, const std::string &index_html_path) {
+void register_api(httplib::Server &server, RobotApi &api,
+                  const std::string &index_html_path) {
     server.set_payload_max_length(4096);
     server.Get("/", [&index_html_path](const httplib::Request &, httplib::Response &res) {
         const std::string html = read_file(index_html_path);
@@ -148,10 +152,6 @@ void register_api(httplib::Server &server, DogApi &api, const std::string &index
         res.set_content(html, "text/html; charset=utf-8");
     });
 
-    server.Get("/api/servos", [&api](const httplib::Request &, httplib::Response &res) {
-        res.set_content(servos_to_json(api.listServos()), "application/json");
-    });
-
     server.Get("/api/status", [&api](const httplib::Request &, httplib::Response &res) {
         res.set_content(status_to_json(api.getStatus(), DOGGY_VERSION), "application/json");
     });
@@ -161,28 +161,53 @@ void register_api(httplib::Server &server, DogApi &api, const std::string &index
     });
 
     server.Put("/api/config", [&api](const httplib::Request &req, httplib::Response &res) {
+        std::string pin;
+        if (parse_config_pin(req.body, pin) == false) {
+            res.status = 400;
+            res.set_content(error_json("bad_json"), "application/json");
+            return;
+        }
+
         Config config;
         try {
-            config = Config::from_json_string(req.body);
+            config = Config::overlay_json_string(api.getConfig(), req.body);
         } catch (const ConfigError &) {
             res.status = 400;
             res.set_content(error_json("bad_json"), "application/json");
             return;
         }
 
-        const CommandResult result = api.replaceConfig(config);
+        const bool type_changed = config.robot.type != api.robotType();
+        const CommandResult result = api.replaceConfig(config, pin);
         res.status = status_for(result);
         if (result == CommandResult::ok) {
+            if (type_changed) {
+                res.status = 202;
+            }
             res.set_content(api.getConfig().to_public_json_string(), "application/json");
+            PLOG_INFO << "PUT /api/config " << res.status << " type="
+                      << robot_type_json(api.getConfig().robot.type)
+                      << " type_changed=" << (type_changed ? "true" : "false");
             return;
         }
 
-        if (result == CommandResult::busy) {
-            res.set_content(error_json("busy"), "application/json");
-            return;
+        switch (result) {
+            case CommandResult::busy:
+                res.set_content(error_json("busy"), "application/json");
+                return;
+            case CommandResult::pin_unset:
+                res.set_content(error_json("pin_unset"), "application/json");
+                return;
+            case CommandResult::pin_invalid:
+                res.set_content(error_json("pin_invalid"), "application/json");
+                return;
+            case CommandResult::rate_limited:
+                res.set_content(error_json("rate_limited"), "application/json");
+                return;
+            default:
+                res.set_content(error_json("config_write"), "application/json");
+                return;
         }
-
-        res.set_content(error_json("config_write"), "application/json");
     });
 
     server.Post("/api/system", [&api](const httplib::Request &req, httplib::Response &res) {
@@ -258,19 +283,26 @@ void register_api(httplib::Server &server, DogApi &api, const std::string &index
         res.set_content(error_json("config_write"), "application/json");
     });
 
-    server.Post("/api/home", [&api](const httplib::Request &, httplib::Response &res) {
-        const CommandResult result = api.home();
-        res.status = status_for(result);
-        if (result == CommandResult::ok) {
-            res.set_content(servos_to_json(api.listServos()), "application/json");
-        } else if (result == CommandResult::busy) {
-            res.set_content(error_json("busy"), "application/json");
-        } else {
-            res.set_content(error_json("home_failed"), "application/json");
-        }
-    });
+    DogApi *dog = dynamic_cast<DogApi *>(&api);
+    if (dog != nullptr) {
+        server.Get("/api/servos", [dog](const httplib::Request &, httplib::Response &res) {
+            res.set_content(servos_to_json(dog->listServos()), "application/json");
+        });
 
-    server.Post(R"(/api/servos/(\d+))", [&api](const httplib::Request &req, httplib::Response &res) {
+        server.Post("/api/home", [dog](const httplib::Request &, httplib::Response &res) {
+            const CommandResult result = dog->home();
+            res.status = status_for(result);
+            if (result == CommandResult::ok) {
+                res.set_content(servos_to_json(dog->listServos()), "application/json");
+            } else if (result == CommandResult::busy) {
+                res.set_content(error_json("busy"), "application/json");
+            } else {
+                res.set_content(error_json("home_failed"), "application/json");
+            }
+        });
+
+        server.Post(R"(/api/servos/(\d+))", [dog](const httplib::Request &req,
+                                                  httplib::Response &res) {
         int id = 0;
         try {
             id = std::stoi(req.matches[1]);
@@ -289,11 +321,11 @@ void register_api(httplib::Server &server, DogApi &api, const std::string &index
         }
 
         const CommandResult result = disable
-                ? api.disableServo(id)
-                : api.setServoAngle(id, angle);
+                ? dog->disableServo(id)
+                : dog->setServoAngle(id, angle);
         res.status = status_for(result);
         if (result == CommandResult::ok) {
-            res.set_content(servos_to_json(api.listServos()), "application/json");
+            res.set_content(servos_to_json(dog->listServos()), "application/json");
             return;
         }
 
@@ -308,7 +340,33 @@ void register_api(httplib::Server &server, DogApi &api, const std::string &index
         }
 
         res.set_content(error_json("bad_angle"), "application/json");
-    });
+        });
+    }
+
+    RoverApi *rover = dynamic_cast<RoverApi *>(&api);
+    if (rover != nullptr) {
+        server.Post("/api/drive", [rover](const httplib::Request &req,
+                                          httplib::Response &res) {
+            double speed = 0.0;
+            double turn = 0.0;
+            if (parse_drive_post(req.body, speed, turn) == false) {
+                res.status = 400;
+                res.set_content(error_json("bad_json"), "application/json");
+                return;
+            }
+
+            const CommandResult result = rover->setDrive(speed, turn);
+            res.status = status_for(result);
+            if (result == CommandResult::ok) {
+                res.set_content(status_to_json(rover->getStatus(), DOGGY_VERSION),
+                                "application/json");
+            } else if (result == CommandResult::busy) {
+                res.set_content(error_json("busy"), "application/json");
+            } else {
+                res.set_content(error_json("bad_drive"), "application/json");
+            }
+        });
+    }
 
     server.set_logger([](const httplib::Request &req, const httplib::Response &res) {
         const bool api_path =
@@ -389,7 +447,7 @@ std::string https_redirect_location(const std::string &host_header,
 
 class WebServer::Impl {
 public:
-    DogApi &api;
+    RobotApi &api;
     std::string index_html_path;
     WebListen listen;
     std::unique_ptr<httplib::SSLServer> https;
@@ -397,7 +455,7 @@ public:
     std::thread https_worker;
     std::thread http_worker;
 
-    Impl(DogApi &api, std::string index_html_path, WebListen listen) :
+    Impl(RobotApi &api, std::string index_html_path, WebListen listen) :
         api(api),
         index_html_path(std::move(index_html_path)),
         listen(std::move(listen)) {
@@ -426,7 +484,7 @@ public:
 
 // ================================================================================
 
-WebServer::WebServer(DogApi &api, std::string index_html_path, std::string bind_host,
+WebServer::WebServer(RobotApi &api, std::string index_html_path, std::string bind_host,
                      int port) :
     WebServer(api, std::move(index_html_path),
               WebListen{std::move(bind_host), port, -1, {}, {}}) {
@@ -434,7 +492,7 @@ WebServer::WebServer(DogApi &api, std::string index_html_path, std::string bind_
 
 // ================================================================================
 
-WebServer::WebServer(DogApi &api, std::string index_html_path, WebListen listen) :
+WebServer::WebServer(RobotApi &api, std::string index_html_path, WebListen listen) :
     impl(std::make_unique<Impl>(api, std::move(index_html_path), std::move(listen))) {
 }
 
@@ -549,9 +607,10 @@ int WebServer::plain_port() const {
 
 // ================================================================================
 
-std::string default_index_html_path() {
+std::string default_index_html_path(RobotType type) {
+    const char *file_name = type == RobotType::rover ? "rover.html" : "index.html";
     if (const char *env = std::getenv("DOGGY_WEB_ROOT")) {
-        const fs::path p = fs::path(env) / "index.html";
+        const fs::path p = fs::path(env) / file_name;
         if (fs::is_regular_file(p)) {
             return p.string();
         }
@@ -559,14 +618,14 @@ std::string default_index_html_path() {
 
 #ifdef DOGGY_WEB_SOURCE_DIR
     {
-        const fs::path p = fs::path(DOGGY_WEB_SOURCE_DIR) / "index.html";
+        const fs::path p = fs::path(DOGGY_WEB_SOURCE_DIR) / file_name;
         if (fs::is_regular_file(p)) {
             return p.string();
         }
     }
 
 #endif
-    const fs::path installed = "/usr/share/doggy/index.html";
+    const fs::path installed = fs::path("/usr/share/doggy") / file_name;
     if (fs::is_regular_file(installed)) {
         return installed.string();
     }

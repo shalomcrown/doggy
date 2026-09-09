@@ -106,6 +106,24 @@ case "$REMOTE_NAME" in
     *[!A-Za-z0-9._+-]*|"") die "Unsafe .deb filename: $REMOTE_NAME" ;;
 esac
 REMOTE_PATH="/tmp/$REMOTE_NAME"
+# Reuse one SSH login for scp and sudo (otherwise each command asks again).
+if [ "$DRY_RUN" -eq 1 ]; then
+    CTL="/tmp/doggy-install-control.sock"
+    CTL_DIR=""
+else
+    CTL_DIR="$(mktemp -d "${TMPDIR:-/tmp}/doggy-install.XXXXXX")"
+    CTL="$CTL_DIR/cm.sock"
+    cleanup_ssh() {
+        ssh -o "ControlPath=$CTL" -O exit "$HOST" >/dev/null 2>&1 || true
+        rm -rf "$CTL_DIR"
+    }
+    trap cleanup_ssh EXIT
+fi
+SSH_CTL_OPTS=(
+    -o ControlMaster=auto
+    -o "ControlPath=$CTL"
+    -o ControlPersist=30
+)
 # ── copy + install ────────────────────────────────────────────────────────────
 echo
 info "Host:     $HOST"
@@ -113,10 +131,13 @@ info "Package:  $DEB"
 info "Remote:   $REMOTE_PATH"
 [ "$DRY_RUN" -eq 1 ] && info "Dry-run: no SSH or copy will be made"
 echo
-run scp "$DEB" "$HOST:$REMOTE_PATH"
-# -t: sudo needs a TTY to prompt; key-based SSH no longer provides one.
+# Open the master first so scp and the install share one authentication.
+run ssh "${SSH_CTL_OPTS[@]}" -o ControlMaster=yes -fN "$HOST"
+run scp "${SSH_CTL_OPTS[@]}" "$DEB" "$HOST:$REMOTE_PATH"
+# -t: sudo needs a TTY to prompt; the multiplexed session is not a TTY by itself.
 # Do not set DEBIAN_FRONTEND=noninteractive: postinst may ask to reboot after enabling I2C.
-run ssh -t "$HOST" \
+run ssh "${SSH_CTL_OPTS[@]}" -t "$HOST" \
     "sudo apt-get install -y '$REMOTE_PATH'"
+run ssh "${SSH_CTL_OPTS[@]}" -O exit "$HOST"
 [ "$DRY_RUN" -eq 1 ] || ok "Installed $REMOTE_NAME on $HOST"
 exit 0

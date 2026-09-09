@@ -67,6 +67,8 @@ int main() {
     expect(emptyJson.find("\"ok\":false") != std::string::npos, "empty status imu.ok false");
     expect(emptyJson.find("\"voltage_v\"") != std::string::npos,
            "empty status json has voltage_v");
+    expect(emptyJson.find("\"type\":\"DOG\"") != std::string::npos,
+           "empty status json has DOG type");
     expect(emptyJson.find("\"servos\":{\"items\":[]}") != std::string::npos,
            "empty status json has empty servos items");
 

@@ -1,7 +1,7 @@
 #ifndef WEB_SERVER_H
 #define WEB_SERVER_H
 
-#include "dog_api.h"
+#include "robot_api.h"
 
 #include <memory>
 #include <string>
@@ -21,8 +21,8 @@ public:
 
 class WebServer {
 public:
-    WebServer(DogApi &api, std::string index_html_path, std::string bind_host, int port);
-    WebServer(DogApi &api, std::string index_html_path, WebListen listen);
+    WebServer(RobotApi &api, std::string index_html_path, std::string bind_host, int port);
+    WebServer(RobotApi &api, std::string index_html_path, WebListen listen);
     ~WebServer();
 
     bool start();
@@ -44,6 +44,6 @@ std::string https_redirect_location(const std::string &host_header,
 
 // ================================================================================
 
-std::string default_index_html_path();
+std::string default_index_html_path(RobotType type = RobotType::dog);
 
 #endif

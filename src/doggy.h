@@ -16,9 +16,6 @@
 #include <vector>
 
 inline constexpr int kDoggyLoopPeriodMs = 200;
-inline constexpr int kSystemActionDelayMs = 1000;
-inline constexpr int kPinMaxFailures = 5;
-inline constexpr int kPinLockoutSeconds = 30;
 
 // ================================================================================
 
@@ -80,28 +77,20 @@ public:
     void allToNinety();
     void poll();
 
+    RobotType robotType() const override;
     std::vector<ServoSnapshot> listServos() override;
     CommandResult home() override;
     CommandResult setServoAngle(int id, double angle) override;
     CommandResult disableServo(int id) override;
     DogStatus getStatus() const override;
-    Config getConfig() const override;
-    CommandResult replaceConfig(const Config &config) override;
-    CommandResult requestSystemAction(SystemAction action, const std::string &pin) override;
-    CommandResult setSystemPin(const std::string &pin, const std::string &current_pin) override;
+    CommandResult replaceConfig(const Config &config,
+                                const std::string &pin = {}) override;
     bool homing();
 
     DogStatus status;
 
 private:
-    Config config_;
-    std::string config_path_;
-    std::unique_ptr<SystemControl> system_control_;
     std::vector<Servo *> servos;
-    mutable std::mutex mutex;
-    bool system_action_pending_ = false;
-    int pin_failures_ = 0;
-    std::chrono::steady_clock::time_point pin_lockout_until_{};
 
     Servo *findServo(int id);
     std::vector<ServoSnapshot> snapshotUnlocked() const;

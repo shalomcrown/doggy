@@ -79,6 +79,7 @@ Dog::Dog(const Config &config, std::string config_path) :
 
 Dog::Dog(const Config &config, std::string config_path,
          std::unique_ptr<SystemControl> system_control) :
+    DogApi(config, std::move(config_path), std::move(system_control)),
     board(config.i2c.servo_board.bus, config.i2c.servo_board.address),
     imu(config.i2c.imu.bus, config.i2c.imu.address),
     ads(config.i2c.ads.bus, config.i2c.ads.address),
@@ -100,10 +101,6 @@ Dog::Dog(const Config &config, std::string config_path,
     rearLeft(rearLeftWaist, rearLeftHip, rearLeftKnee),
     rearRight(rearRightWaist, rearRightHip, rearRightKnee),
     head(headNeck),
-    config_(config),
-    config_path_(std::move(config_path)),
-    system_control_(system_control ? std::move(system_control)
-                                  : std::make_unique<NullSystemControl>()),
     servos{
         &frontRightWaist, &frontRightHip, &frontRightKnee,
         &frontLeftWaist, &frontLeftHip, &frontLeftKnee,
@@ -175,14 +172,14 @@ std::vector<ServoSnapshot> Dog::snapshotUnlocked() const {
 // ================================================================================
 
 std::vector<ServoSnapshot> Dog::listServos() {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::lock_guard<std::mutex> lock(mutex_);
     return snapshotUnlocked();
 }
 
 // ================================================================================
 
 CommandResult Dog::home() {
-    std::unique_lock<std::mutex> lock(mutex, std::try_to_lock);
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
     if (lock.owns_lock() == false) {
         return CommandResult::busy;
     }
@@ -213,7 +210,7 @@ CommandResult Dog::setServoAngle(int id, double angle) {
         return CommandResult::bad_angle;
     }
 
-    std::unique_lock<std::mutex> lock(mutex, std::try_to_lock);
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
     if (lock.owns_lock() == false) {
         return CommandResult::busy;
     }
@@ -235,7 +232,7 @@ CommandResult Dog::setServoAngle(int id, double angle) {
 // ================================================================================
 
 CommandResult Dog::disableServo(int id) {
-    std::unique_lock<std::mutex> lock(mutex, std::try_to_lock);
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
     if (lock.owns_lock() == false) {
         return CommandResult::busy;
     }
@@ -256,26 +253,34 @@ CommandResult Dog::disableServo(int id) {
 
 // ================================================================================
 
+RobotType Dog::robotType() const {
+    return RobotType::dog;
+}
+
+// ================================================================================
+
 DogStatus Dog::getStatus() const {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::lock_guard<std::mutex> lock(mutex_);
     DogStatus copy = status;
+    copy.type = RobotType::dog;
     copy.servos = snapshotUnlocked();
     return copy;
 }
 
 // ================================================================================
 
-Config Dog::getConfig() const {
-    std::lock_guard<std::mutex> lock(mutex);
-    return config_;
-}
-
-// ================================================================================
-
-CommandResult Dog::replaceConfig(const Config &config) {
-    std::unique_lock<std::mutex> lock(mutex, std::try_to_lock);
+CommandResult Dog::replaceConfig(const Config &config, const std::string &pin) {
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
     if (lock.owns_lock() == false) {
         return CommandResult::busy;
+    }
+
+    const bool type_changed = config.robot.type != RobotType::dog;
+    if (type_changed) {
+        const CommandResult authorized = authorizePinUnlocked(pin);
+        if (authorized != CommandResult::ok) {
+            return authorized;
+        }
     }
 
     try {
@@ -292,95 +297,19 @@ CommandResult Dog::replaceConfig(const Config &config) {
         rearRightHip.rebindChannel(config.servos.rear_right_hip);
         rearRightKnee.rebindChannel(config.servos.rear_right_knee);
         headNeck.rebindChannel(config.servos.head_neck);
-        const SystemConfig kept_pin = config_.system;
-        config_ = config;
-        config_.system = kept_pin;
-        if (config_path_.empty() == false) {
-            Config::save_file(config_, config_path_);
-        }
     } catch (const std::system_error &ex) {
         status.errors.push_back(DogError{DogErrorCode::i2c, ex.what()});
         return CommandResult::failed;
-    } catch (const ConfigError &) {
-        return CommandResult::failed;
     }
 
-    return CommandResult::ok;
-}
-
-// ================================================================================
-
-CommandResult Dog::setSystemPin(const std::string &pin, const std::string &current_pin) {
-    std::unique_lock<std::mutex> lock(mutex, std::try_to_lock);
-    if (lock.owns_lock() == false) {
-        return CommandResult::busy;
+    const CommandResult saved = saveConfigUnlocked(config);
+    if (saved != CommandResult::ok) {
+        return saved;
+    }
+    if (type_changed) {
+        scheduleSystemActionUnlocked(SystemAction::restart);
     }
 
-    if (Config::pin_length_ok(pin) == false) {
-        return CommandResult::bad_pin;
-    }
-
-    if (config_.system.pin_is_set()) {
-        if (Config::pin_matches(current_pin, config_.system.pin_hash) == false) {
-            return CommandResult::pin_invalid;
-        }
-    }
-
-    try {
-        config_.system.pin_hash = Config::hash_pin(pin);
-        if (config_path_.empty() == false) {
-            Config::save_file(config_, config_path_);
-        }
-    } catch (const ConfigError &) {
-        return CommandResult::failed;
-    }
-
-    pin_failures_ = 0;
-    pin_lockout_until_ = {};
-    return CommandResult::ok;
-}
-
-// ================================================================================
-
-CommandResult Dog::requestSystemAction(SystemAction action, const std::string &pin) {
-    std::unique_lock<std::mutex> lock(mutex, std::try_to_lock);
-    if (lock.owns_lock() == false) {
-        return CommandResult::busy;
-    }
-
-    if (system_action_pending_) {
-        return CommandResult::busy;
-    }
-
-    const auto now = std::chrono::steady_clock::now();
-    if (now < pin_lockout_until_) {
-        return CommandResult::rate_limited;
-    }
-
-    if (config_.system.pin_is_set() == false) {
-        return CommandResult::pin_unset;
-    }
-
-    if (Config::pin_matches(pin, config_.system.pin_hash) == false) {
-        pin_failures_ += 1;
-        if (pin_failures_ >= kPinMaxFailures) {
-            pin_lockout_until_ = now + std::chrono::seconds(kPinLockoutSeconds);
-            pin_failures_ = 0;
-            return CommandResult::rate_limited;
-        }
-
-        return CommandResult::pin_invalid;
-    }
-
-    pin_failures_ = 0;
-    system_action_pending_ = true;
-    SystemControl *control = system_control_.get();
-    std::thread([this, action, control]() {
-        std::this_thread::sleep_for(std::chrono::milliseconds(kSystemActionDelayMs));
-        control->perform(action);
-        std::lock_guard<std::mutex> done(mutex);
-        system_action_pending_ = false;
-    }).detach();
     return CommandResult::ok;
 }
 
@@ -427,7 +356,7 @@ void Dog::pollBatteryUnlocked() {
 // ================================================================================
 
 void Dog::poll() {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::lock_guard<std::mutex> lock(mutex_);
     pollImuUnlocked();
     pollBatteryUnlocked();
 }

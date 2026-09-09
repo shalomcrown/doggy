@@ -95,6 +95,11 @@ int main() {
     expect(first.size() == 1, "roll produces one dated gzip archive");
     expect(first.empty() == false && is_gzip(first[0]),
            "rolled archive is gzip-compressed");
+    {
+        const auto perms = fs::status(first[0]).permissions();
+        expect((perms & fs::perms::others_read) != fs::perms::none,
+               "rolled archive is world-readable");
+    }
     expect(first.empty() == false
                    && first[0].filename().string().find("doggy-") == 0
                    && first[0].filename().string().find(".log.gz") != std::string::npos,
@@ -142,6 +147,15 @@ int main() {
     options.max_files = kDoggyLogMaxFiles;
     options.roll_on_start = true;
     expect(init_doggy_log(options), "init_doggy_log opens the log file");
+    {
+        const auto log_perms = fs::status(start_dir / kDoggyLogFileName).permissions();
+        expect((log_perms & fs::perms::others_read) != fs::perms::none,
+               "current log is world-readable");
+        const auto dir_perms = fs::status(start_dir).permissions();
+        expect((dir_perms & fs::perms::others_read) != fs::perms::none
+                       && (dir_perms & fs::perms::others_exec) != fs::perms::none,
+               "log directory is world-traversable");
+    }
     expect(dated_archives(start_dir).empty() == false, "start rolls the previous log");
     expect(dated_archives(start_dir).empty() == false && is_gzip(dated_archives(start_dir)[0]),
            "start archive is gzip");
