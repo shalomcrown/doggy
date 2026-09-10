@@ -54,7 +54,7 @@ message Vec3 {
 message I2cDevice {
   optional int32 bus = 1;
   optional string address = 2;
-  // Optional explicit backend type: "pca9685" or "legacy". If absent, code will autodetect.
+  // Optional explicit backend type: "pca9685" or "freenove-dog". If absent, code will autodetect.
   optional string type = 3;
 }
 

@@ -59,7 +59,7 @@ ServoBoard::ServoBoard(int bus, uint8_t address, const std::string &backend_type
         }
     };
 
-    auto try_legacy = [&]() -> bool {
+    auto try_freenove_dog = [&]() -> bool {
         try {
             bus_fd = openBus(i2c_device_path(bus), address);
             // initialize similar to previous implementation
@@ -82,13 +82,13 @@ ServoBoard::ServoBoard(int bus, uint8_t address, const std::string &backend_type
     };
 
     if (backend_type.empty()) {
-        // autodetect: prefer PCA9685, fall back to legacy
+        // autodetect: prefer PCA9685, fall back to the Freenove dog board path
         if (try_pca()) return;
-        try_legacy();
+        try_freenove_dog();
     } else if (backend_type == "pca9685") {
         try_pca();
-    } else if (backend_type == "legacy") {
-        try_legacy();
+    } else if (backend_type == "freenove-dog") {
+        try_freenove_dog();
     } else {
         lastErrorMessage = "unknown servo backend type: " + backend_type;
     }

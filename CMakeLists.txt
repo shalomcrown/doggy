@@ -355,6 +355,7 @@ add_test(NAME ads7830 COMMAND test_ads7830)
 add_executable(test_servo_board
     tests/test_servo_board.cpp
     src/servo_board.cpp
+    src/pca9685.cpp
     src/i2c_interface.cpp
 )
 target_include_directories(test_servo_board PRIVATE "${CMAKE_SOURCE_DIR}/src")
@@ -370,6 +371,7 @@ add_executable(test_rover_drive
     src/imu.cpp
     src/ads7830.cpp
     src/servo_board.cpp
+    src/pca9685.cpp
     src/i2c_interface.cpp
     src/config.cpp
     src/utils.cpp
@@ -399,6 +401,7 @@ add_executable(test_dog_poll
     src/ads7830.cpp
     src/servo.cpp
     src/servo_board.cpp
+    src/pca9685.cpp
     src/i2c_interface.cpp
     src/config.cpp
     src/utils.cpp

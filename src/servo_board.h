@@ -13,7 +13,7 @@ class PCA9685;
 class ServoBoard {
 private:
     std::unique_ptr<PCA9685> pca;
-    int bus_fd = -1; // used by legacy board path
+    int bus_fd = -1; // used by the Freenove dog board path
     double frequency = 50.0;
     double maxAngle = 180;
     double minPwmMs = 0.5;
@@ -22,7 +22,7 @@ private:
 
 public:
     ServoBoard();
-    // new constructor accepts optional backend type: "pca9685" or "legacy"; empty -> autodetect
+    // new constructor accepts optional backend type: "pca9685" or "freenove-dog"; empty -> autodetect
     ServoBoard(int bus, uint8_t address, const std::string &backend_type = std::string());
     ~ServoBoard();
 
