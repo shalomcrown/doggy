@@ -5,6 +5,7 @@ case "$1" in
     purge)
         if command -v systemctl >/dev/null 2>&1; then
             systemctl disable doggy.service || true
+            systemctl disable doggy-lora.service || true
             systemctl daemon-reload || true
         fi
         ;;

@@ -157,7 +157,7 @@ void register_api(httplib::Server &server, RobotApi &api,
     });
 
     server.Get("/api/config", [&api](const httplib::Request &, httplib::Response &res) {
-        res.set_content(api.getConfig().to_public_json_string(), "application/json");
+        res.set_content(config_to_public_json(api.getConfig()), "application/json");
     });
 
     server.Put("/api/config", [&api](const httplib::Request &req, httplib::Response &res) {
@@ -170,23 +170,23 @@ void register_api(httplib::Server &server, RobotApi &api,
 
         Config config;
         try {
-            config = Config::overlay_json_string(api.getConfig(), req.body);
+            config = config_overlay_json(api.getConfig(), req.body);
         } catch (const ConfigError &) {
             res.status = 400;
             res.set_content(error_json("bad_json"), "application/json");
             return;
         }
 
-        const bool type_changed = config.robot.type != api.robotType();
+        const bool type_changed = config.robot().type() != api.robotType();
         const CommandResult result = api.replaceConfig(config, pin);
         res.status = status_for(result);
         if (result == CommandResult::ok) {
             if (type_changed) {
                 res.status = 202;
             }
-            res.set_content(api.getConfig().to_public_json_string(), "application/json");
+            res.set_content(config_to_public_json(api.getConfig()), "application/json");
             PLOG_INFO << "PUT /api/config " << res.status << " type="
-                      << robot_type_json(api.getConfig().robot.type)
+                      << robot_type_json(api.getConfig().robot().type())
                       << " type_changed=" << (type_changed ? "true" : "false");
             return;
         }
@@ -261,7 +261,7 @@ void register_api(httplib::Server &server, RobotApi &api,
         const CommandResult result = api.setSystemPin(pin, current_pin);
         res.status = status_for(result);
         if (result == CommandResult::ok) {
-            res.set_content(api.getConfig().to_public_json_string(), "application/json");
+            res.set_content(config_to_public_json(api.getConfig()), "application/json");
             return;
         }
 
@@ -608,7 +608,7 @@ int WebServer::plain_port() const {
 // ================================================================================
 
 std::string default_index_html_path(RobotType type) {
-    const char *file_name = type == RobotType::rover ? "rover.html" : "index.html";
+    const char *file_name = type == doggy::v1::ROVER ? "rover.html" : "index.html";
     if (const char *env = std::getenv("DOGGY_WEB_ROOT")) {
         const fs::path p = fs::path(env) / file_name;
         if (fs::is_regular_file(p)) {

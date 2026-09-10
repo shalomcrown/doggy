@@ -55,10 +55,10 @@ else
     fail "debian/trixie marked known"
 fi
 
-if grep -q 'windows=unsupported' "$TMPDIR/plan-trixie"; then
-    pass "plan declares windows unsupported"
+if grep -q 'windows_firmware=unsupported' "$TMPDIR/plan-trixie"; then
+    pass "plan declares windows firmware unsupported"
 else
-    fail "plan declares windows unsupported"
+    fail "plan declares windows firmware unsupported"
 fi
 
 if grep -q 'devtools=included' "$TMPDIR/plan-trixie"; then
@@ -176,25 +176,41 @@ else
     fail "cross plan includes golang-go"
 fi
 
+if grep -q 'protobuf-compiler' "$TMPDIR/plan-cross"; then
+    pass "cross plan includes protobuf-compiler"
+else
+    fail "cross plan includes protobuf-compiler"
+fi
+
 if grep -qi mingw "$TMPDIR/plan-cross"; then
     fail "cross plan must not mention mingw"
 else
     pass "cross plan must not mention mingw"
 fi
 
-# ── Windows is rejected ──────────────────────────────────────────────────────
+# ── Windows operator prereqs (NSIS; firmware still not a Windows target) ──────
 if OS_RELEASE_FILE="$TMPDIR/trixie" "$SCRIPT" --mode windows --print-plan \
         >"$TMPDIR/plan-windows" 2>&1; then
-    fail "--mode windows must be rejected"
+    pass "--mode windows print-plan exits 0"
 else
-    pass "--mode windows must be rejected"
+    fail "--mode windows print-plan exits 0"
 fi
 
-if grep -qiE 'unknown argument|--mode windows|Invalid --mode' \
-        "$TMPDIR/plan-windows"; then
-    pass "--mode windows reports an error"
+if grep -q 'windows_packages=.*nsis-common' "$TMPDIR/plan-windows" \
+        && grep -q 'windows_packages=.*nsis' "$TMPDIR/plan-windows" \
+        && grep -q 'windows_firmware=unsupported' "$TMPDIR/plan-windows" \
+        && ! grep -qi mingw "$TMPDIR/plan-windows"; then
+    pass "--mode windows plans nsis and nsis-common without mingw"
 else
-    fail "--mode windows reports an error"
+    fail "--mode windows plans nsis and nsis-common without mingw"
+fi
+
+if grep -q 'verify_nsis_extras' "$SCRIPT" \
+        && grep -q 'MUI2.nsh' "$SCRIPT" \
+        && grep -q 'nsExec.dll' "$SCRIPT"; then
+    pass "windows mode verifies NSIS stubs/plugins (nsis-common extra files)"
+else
+    fail "windows mode verifies NSIS stubs/plugins (nsis-common extra files)"
 fi
 
 # ── Auto mode from host arch ─────────────────────────────────────────────────

@@ -1,0 +1,12 @@
+[Unit]
+Description=doggy LoRa operator (localhost UI)
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/doggy-lora --mode=operator --listen=127.0.0.1:8765 --web-root=/usr/share/doggy --config-file=/var/lib/doggy-lora/lora.json
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

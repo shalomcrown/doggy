@@ -1,0 +1,288 @@
+syntax = "proto3";
+
+package doggy.v1;
+
+option go_package = "doggy-lora/internal/pb";
+
+// Domain models (single source of truth). HTTP uses ProtoJSON; LoRa uses binary.
+
+// ================================================================================
+
+enum RobotType {
+  DOG = 0;
+  ROVER = 1;
+}
+
+// ================================================================================
+
+enum MotorDirection {
+  forward = 0;
+  reverse = 1;
+}
+
+// ================================================================================
+
+enum LoraBand {
+  HF = 0;
+  LF = 1;
+}
+
+// ================================================================================
+
+enum ErrorCode {
+  i2c = 0;
+}
+
+// ================================================================================
+
+enum SystemAction {
+  restart = 0;
+  reboot = 1;
+  shutdown = 2;
+}
+
+// ================================================================================
+
+message Vec3 {
+  optional double x = 1;
+  optional double y = 2;
+  optional double z = 3;
+}
+
+// ================================================================================
+
+message I2cDevice {
+  optional int32 bus = 1;
+  optional string address = 2;
+}
+
+// ================================================================================
+
+message I2cConfig {
+  optional I2cDevice servo_board = 1;
+  optional I2cDevice imu = 2;
+  optional I2cDevice ads = 3;
+}
+
+// ================================================================================
+
+message ServoChannels {
+  optional int32 front_right_waist = 1;
+  optional int32 front_right_hip = 2;
+  optional int32 front_right_knee = 3;
+  optional int32 front_left_waist = 4;
+  optional int32 front_left_hip = 5;
+  optional int32 front_left_knee = 6;
+  optional int32 rear_left_waist = 7;
+  optional int32 rear_left_hip = 8;
+  optional int32 rear_left_knee = 9;
+  optional int32 rear_right_waist = 10;
+  optional int32 rear_right_hip = 11;
+  optional int32 rear_right_knee = 12;
+  optional int32 head_neck = 13;
+}
+
+// ================================================================================
+
+message Motor {
+  optional int32 channel = 1;
+  optional bool enabled = 2;
+  optional MotorDirection direction = 3;
+}
+
+// ================================================================================
+
+message Motors {
+  optional Motor front_left = 1;
+  optional Motor front_right = 2;
+  optional Motor rear_left = 3;
+  optional Motor rear_right = 4;
+}
+
+// ================================================================================
+
+message Lora {
+  optional bool enabled = 1;
+  optional string device = 2;
+  optional int32 baud = 3;
+  optional LoraBand band = 4;
+  optional int32 txch = 5;
+  optional int32 rxch = 6;
+  optional string air_key = 7;
+  optional bool air_key_set = 8;
+}
+
+// ================================================================================
+
+message Robot {
+  optional RobotType type = 1;
+}
+
+// ================================================================================
+
+message System {
+  optional string pin_hash = 1;
+  optional bool pin_set = 2;
+}
+
+// ================================================================================
+
+message Config {
+  optional Robot robot = 1;
+  optional I2cConfig i2c = 2;
+  optional ServoChannels servos = 3;
+  optional Motors motors = 4;
+  optional Lora lora = 5;
+  optional System system = 6;
+  optional string pin = 7;
+}
+
+// ================================================================================
+
+message Error {
+  optional ErrorCode code = 1;
+  optional string message = 2;
+}
+
+// ================================================================================
+
+message Imu {
+  optional bool ok = 1;
+  optional double temperature_c = 2;
+  optional Vec3 accel = 3;
+  optional Vec3 gyro = 4;
+}
+
+// ================================================================================
+
+message Battery {
+  optional bool ok = 1;
+  optional double voltage_v = 2;
+}
+
+// ================================================================================
+
+message ServoSnapshot {
+  optional int32 id = 1;
+  optional string name = 2;
+  optional int32 pwm = 3;
+  optional double angle = 4;
+}
+
+// ================================================================================
+
+message MotorSnapshot {
+  optional int32 id = 1;
+  optional string name = 2;
+  optional int32 pwm = 3;
+  optional bool enabled = 4;
+  optional MotorDirection direction = 5;
+}
+
+// ================================================================================
+
+message ServoList {
+  repeated ServoSnapshot items = 1;
+}
+
+// ================================================================================
+
+message MotorList {
+  repeated MotorSnapshot items = 1;
+}
+
+// ================================================================================
+
+message Status {
+  optional RobotType type = 1;
+  optional string version = 2;
+  repeated Error errors = 3;
+  optional Imu imu = 4;
+  optional Battery battery = 5;
+  optional ServoList servos = 6;
+  optional double speed = 7;
+  optional double turn = 8;
+  optional MotorList motors = 9;
+}
+
+// ================================================================================
+
+message Drive {
+  optional double speed = 1;
+  optional double turn = 2;
+}
+
+// ================================================================================
+
+message ServoCommand {
+  optional double angle = 1;
+  optional bool enabled = 2;
+}
+
+// ================================================================================
+
+message SystemCommand {
+  optional SystemAction action = 1;
+  optional string pin = 2;
+}
+
+// ================================================================================
+
+message PinCommand {
+  optional string pin = 1;
+  optional string current_pin = 2;
+}
+
+// ================================================================================
+
+message SystemAccepted {
+  optional bool accepted = 1;
+  optional SystemAction action = 2;
+}
+
+// ================================================================================
+
+message ApiError {
+  optional string error = 1;
+}
+
+// ================================================================================
+
+message Empty {}
+
+// ================================================================================
+
+message AirRequest {
+  oneof op {
+    Empty get_status = 1;
+    Empty get_config = 2;
+    Config put_config = 3;
+    Empty get_servos = 4;
+    ServoAir set_servo = 5;
+    Empty home = 6;
+    Drive drive = 7;
+    SystemCommand system = 8;
+    PinCommand set_pin = 9;
+  }
+}
+
+// ================================================================================
+
+message ServoAir {
+  optional int32 id = 1;
+  optional ServoCommand command = 2;
+}
+
+// ================================================================================
+
+message AirResponse {
+  optional int32 status = 1;
+  optional string content_type = 2;
+  oneof payload {
+    Status status_body = 10;
+    Config config = 11;
+    ServoList servos = 12;
+    SystemAccepted system_accepted = 13;
+    ApiError error = 14;
+  }
+}

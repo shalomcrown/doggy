@@ -1,279 +1,136 @@
 #ifndef WEB_JSON_H
 #define WEB_JSON_H
 
+#include "config.h"
 #include "robot_api.h"
-
-#include <nlohmann/json.hpp>
 
 #include <cmath>
 #include <string>
+#include <vector>
 
 // ================================================================================
 
-inline nlohmann::json servos_to_json_value(const std::vector<ServoSnapshot> &items) {
-    nlohmann::json list = nlohmann::json::array();
-    for (const ServoSnapshot &item : items) {
-        nlohmann::json row = {
-            {"id", item.id},
-            {"name", item.name},
-            {"pwm", item.pwm}
-        };
-        if (item.pwm == 0) {
-            row["angle"] = nullptr;
-        } else {
-            row["angle"] = item.angle;
-        }
-
-        list.push_back(std::move(row));
+inline std::string status_to_json(DogStatus status, const char *version) {
+    status.set_version(version);
+    if (status.has_type() == false) {
+        status.set_type(doggy::v1::DOG);
     }
-
-    return {{"items", std::move(list)}};
+    if (status.has_imu() == false) {
+        status.mutable_imu()->set_ok(false);
+    }
+    if (status.has_battery() == false) {
+        status.mutable_battery()->set_ok(false);
+    }
+    if (status.type() == doggy::v1::ROVER) {
+        status.clear_servos();
+    } else {
+        status.mutable_servos();
+    }
+    return proto_to_json(status);
 }
 
 // ================================================================================
 
 inline std::string servos_to_json(const std::vector<ServoSnapshot> &items) {
-    return servos_to_json_value(items).dump();
-}
-
-// ================================================================================
-
-inline const char *dog_error_code_json(DogErrorCode code) {
-    switch (code) {
-        case DogErrorCode::i2c: return "i2c";
+    doggy::v1::ServoList list;
+    for (const ServoSnapshot &item : items) {
+        *list.add_items() = item;
     }
-
-    return "unknown";
-}
-
-// ================================================================================
-
-inline nlohmann::json vec3_to_json(const Vec3 &v) {
-    return {{"x", v.x}, {"y", v.y}, {"z", v.z}};
+    return proto_to_json(list);
 }
 
 // ================================================================================
 
 inline const char *robot_type_json(RobotType type) {
     switch (type) {
-        case RobotType::dog: return "DOG";
-        case RobotType::rover: return "ROVER";
+        case doggy::v1::ROVER: return "ROVER";
+        case doggy::v1::DOG:
+        default: return "DOG";
     }
-
-    return "DOG";
-}
-
-// ================================================================================
-
-inline const char *motor_direction_json(MotorDirection direction) {
-    switch (direction) {
-        case MotorDirection::forward: return "forward";
-        case MotorDirection::reverse: return "reverse";
-    }
-
-    return "forward";
-}
-
-// ================================================================================
-
-inline nlohmann::json motors_to_json_value(const std::vector<MotorSnapshot> &items) {
-    nlohmann::json list = nlohmann::json::array();
-    for (const MotorSnapshot &item : items) {
-        list.push_back({
-            {"id", item.id},
-            {"name", item.name},
-            {"pwm", item.pwm},
-            {"enabled", item.enabled},
-            {"direction", motor_direction_json(item.direction)}
-        });
-    }
-
-    return {{"items", std::move(list)}};
-}
-
-// ================================================================================
-
-inline std::string status_to_json(const DogStatus &status, const std::string &version) {
-    nlohmann::json errors = nlohmann::json::array();
-    for (const DogError &err : status.errors) {
-        errors.push_back({
-            {"code", dog_error_code_json(err.code)},
-            {"message", err.message}
-        });
-    }
-
-    nlohmann::json body = {
-        {"type", robot_type_json(status.type)},
-        {"version", version},
-        {"errors", std::move(errors)},
-        {"imu",
-         {{"ok", status.imu.ok},
-          {"temperature_c", status.imu.temperature_c},
-          {"accel", vec3_to_json(status.imu.accel)},
-          {"gyro", vec3_to_json(status.imu.gyro)}}},
-        {"battery",
-         {{"ok", status.battery.ok},
-          {"voltage_v", status.battery.voltage_v}}}
-    };
-    if (status.type == RobotType::dog) {
-        body["servos"] = servos_to_json_value(status.servos);
-    } else {
-        body["speed"] = status.speed;
-        body["turn"] = status.turn;
-        body["motors"] = motors_to_json_value(status.motors);
-    }
-    return body.dump();
 }
 
 // ================================================================================
 
 inline bool parse_servo_post(const std::string &body, bool &disable, double &angle) {
-    const nlohmann::json json = nlohmann::json::parse(body, nullptr, false);
-    if (json.is_discarded() || json.is_object() == false) {
+    doggy::v1::ServoCommand cmd;
+    if (proto_from_json(body, cmd) == false) {
         return false;
     }
-
-    if (json.contains("enabled") && json["enabled"].is_boolean()
-            && json["enabled"].get<bool>() == false) {
+    if (cmd.has_enabled() && cmd.enabled() == false) {
         disable = true;
         return true;
     }
-
-    if (json.contains("angle") && json["angle"].is_number()) {
+    if (cmd.has_angle()) {
         disable = false;
-        angle = json["angle"].get<double>();
+        angle = cmd.angle();
         return true;
     }
-
     return false;
 }
 
 // ================================================================================
 
 inline bool parse_system_post(const std::string &body, SystemAction &action, std::string &pin) {
-    const nlohmann::json json = nlohmann::json::parse(body, nullptr, false);
-    if (json.is_discarded() || json.is_object() == false) {
+    doggy::v1::SystemCommand cmd;
+    if (proto_from_json(body, cmd) == false) {
         return false;
     }
-
-    if (json.contains("pin") == false || json["pin"].is_string() == false) {
+    if (cmd.pin().empty() || cmd.has_action() == false) {
         return false;
     }
-
-    if (json.contains("action") == false || json["action"].is_string() == false) {
-        return false;
-    }
-
-    const std::string name = json["action"].get<std::string>();
-    if (name == "restart") {
-        action = SystemAction::restart;
-    } else if (name == "reboot") {
-        action = SystemAction::reboot;
-    } else if (name == "shutdown") {
-        action = SystemAction::shutdown;
-    } else {
-        return false;
-    }
-
-    pin = json["pin"].get<std::string>();
+    action = static_cast<SystemAction>(cmd.action());
+    pin = cmd.pin();
     return true;
 }
 
 // ================================================================================
 
 inline bool parse_pin_post(const std::string &body, std::string &pin, std::string &current_pin) {
-    const nlohmann::json json = nlohmann::json::parse(body, nullptr, false);
-    if (json.is_discarded() || json.is_object() == false) {
+    doggy::v1::PinCommand cmd;
+    if (proto_from_json(body, cmd) == false) {
         return false;
     }
-
-    if (json.contains("pin") == false || json["pin"].is_string() == false) {
+    if (cmd.pin().empty()) {
         return false;
     }
-
-    pin = json["pin"].get<std::string>();
-    if (json.contains("current_pin")) {
-        if (json["current_pin"].is_string() == false) {
-            return false;
-        }
-
-        current_pin = json["current_pin"].get<std::string>();
-    } else {
-        current_pin.clear();
-    }
-
+    pin = cmd.pin();
+    current_pin = cmd.current_pin();
     return true;
 }
 
 // ================================================================================
 
 inline bool parse_config_pin(const std::string &body, std::string &pin) {
-    const nlohmann::json json = nlohmann::json::parse(body, nullptr, false);
-    if (json.is_discarded() || json.is_object() == false) {
+    Config cmd;
+    if (proto_from_json(body, cmd) == false) {
         return false;
     }
-
-    if (json.contains("pin")) {
-        if (json["pin"].is_string() == false) {
-            return false;
-        }
-        pin = json["pin"].get<std::string>();
-    } else {
-        pin.clear();
-    }
+    pin = cmd.pin();
     return true;
 }
 
 // ================================================================================
 
 inline bool parse_drive_post(const std::string &body, double &speed, double &turn) {
-    const nlohmann::json json = nlohmann::json::parse(body, nullptr, false);
-    if (json.is_discarded() || json.is_object() == false
-            || json.contains("speed") == false || json["speed"].is_number() == false
-            || json.contains("turn") == false || json["turn"].is_number() == false) {
+    doggy::v1::Drive drive;
+    if (proto_from_json(body, drive) == false) {
         return false;
     }
-
-    speed = json["speed"].get<double>();
-    turn = json["turn"].get<double>();
+    if (drive.has_speed() == false || drive.has_turn() == false) {
+        return false;
+    }
+    speed = drive.speed();
+    turn = drive.turn();
     return std::isfinite(speed) && std::isfinite(turn);
 }
 
 // ================================================================================
 
-inline const char *system_action_json(SystemAction action) {
-    switch (action) {
-        case SystemAction::restart: return "restart";
-        case SystemAction::reboot: return "reboot";
-        case SystemAction::shutdown: return "shutdown";
-    }
-
-    return "unknown";
-}
-
-// ================================================================================
-
 inline std::string system_accepted_json(SystemAction action) {
-    return nlohmann::json{
-        {"accepted", true},
-        {"action", system_action_json(action)}
-    }.dump();
-}
-
-// ================================================================================
-
-inline bool parse_angle_json(const std::string &body, double &angle) {
-    const nlohmann::json json = nlohmann::json::parse(body, nullptr, false);
-    if (json.is_discarded() || json.is_object() == false) {
-        return false;
-    }
-
-    if (json.contains("angle") == false || json["angle"].is_number() == false) {
-        return false;
-    }
-
-    angle = json["angle"].get<double>();
-    return true;
+    doggy::v1::SystemAccepted accepted;
+    accepted.set_accepted(true);
+    accepted.set_action(static_cast<doggy::v1::SystemAction>(action));
+    return proto_to_json(accepted);
 }
 
 #endif

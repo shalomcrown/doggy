@@ -178,6 +178,7 @@
     let configDraft = null;
     let loadedRobotType = "ROVER";
     let configBusy = false;
+    let loraAirKeyDraft = "";
     let driveTimer = null;
 
     function setStatus(text) {
@@ -400,10 +401,60 @@
     function makeValueInput(path, value, kind) {
       const input = document.createElement("input");
       input.setAttribute("aria-label", path.map(displayName).join(" "));
+      if (kind === "lora-band") {
+        const select = document.createElement("select");
+        select.setAttribute("aria-label", path.map(displayName).join(" "));
+        [["HF", "HF (850–930 MHz)"], ["LF", "LF (410–490 MHz)"]].forEach((opt) => {
+          const option = document.createElement("option");
+          option.value = opt[0];
+          option.textContent = opt[1];
+          select.appendChild(option);
+        });
+        select.value = value === "LF" ? "LF" : "HF";
+        select.addEventListener("change", () => {
+          setDraftValue(path, select.value);
+        });
+        return select;
+      }
+      if (kind === "lora-baud") {
+        const select = document.createElement("select");
+        select.setAttribute("aria-label", path.map(displayName).join(" "));
+        [9600, 19200, 38400, 57600, 115200].forEach((rate) => {
+          const option = document.createElement("option");
+          option.value = String(rate);
+          option.textContent = String(rate);
+          select.appendChild(option);
+        });
+        select.value = String(value === undefined || value === 0 ? 115200 : value);
+        select.addEventListener("change", () => {
+          setDraftValue(path, Number(select.value));
+        });
+        return select;
+      }
+      if (kind === "lora-air-key") {
+        input.type = "password";
+        input.autocomplete = "new-password";
+        input.minLength = 8;
+        input.maxLength = 128;
+        input.placeholder = "passphrase; blank keeps current";
+        input.addEventListener("input", () => {
+          loraAirKeyDraft = input.value;
+        });
+        return input;
+      }
+      if (kind === "readonly") {
+        input.type = "text";
+        input.value = String(value);
+        input.readOnly = true;
+        return input;
+      }
       if (kind === "int") {
         input.type = "number";
         input.step = "1";
         input.min = "0";
+        if (path[path.length - 1] === "txch" || path[path.length - 1] === "rxch") {
+          input.max = "80";
+        }
         input.value = String(value);
         input.addEventListener("input", () => {
           setDraftValue(path, Number(input.value));
@@ -495,6 +546,34 @@
         appendPair(tr, ["motors", key, "direction"], motor.direction, "text");
         configBodyEl.appendChild(tr);
       });
+
+      const lora = config.lora || {};
+      const loraTr = document.createElement("tr");
+      const loraClass = document.createElement("th");
+      loraClass.scope = "rowgroup";
+      loraClass.rowSpan = 3;
+      loraClass.textContent = displayName("lora");
+      loraTr.appendChild(loraClass);
+      const loraGroup = document.createElement("td");
+      loraTr.appendChild(loraGroup);
+      appendPair(loraTr, ["lora", "enabled"], lora.enabled, "bool");
+      appendPair(loraTr, ["lora", "device"], lora.device || "", "text");
+      appendPair(loraTr, ["lora", "baud"], lora.baud === undefined ? 115200 : lora.baud, "lora-baud");
+      configBodyEl.appendChild(loraTr);
+      const loraTr2 = document.createElement("tr");
+      const loraGroup2 = document.createElement("td");
+      loraTr2.appendChild(loraGroup2);
+      appendPair(loraTr2, ["lora", "band"], lora.band || "HF", "lora-band");
+      appendPair(loraTr2, ["lora", "txch"], lora.txch === undefined ? 18 : lora.txch, "int");
+      appendPair(loraTr2, ["lora", "rxch"], lora.rxch === undefined ? 18 : lora.rxch, "int");
+      configBodyEl.appendChild(loraTr2);
+      const loraTr3 = document.createElement("tr");
+      const loraGroup3 = document.createElement("td");
+      loraTr3.appendChild(loraGroup3);
+      appendPair(loraTr3, ["lora", "air_key_set"], lora.air_key_set ? "set" : "not set", "readonly");
+      appendPair(loraTr3, ["lora", "air_key"], "", "lora-air-key");
+      appendEmptyPairs(loraTr3, 1);
+      configBodyEl.appendChild(loraTr3);
     }
 
     async function loadConfig() {
@@ -542,6 +621,9 @@
         if (typeChanged) {
           payload.pin = configPinEl.value;
         }
+        if (loraAirKeyDraft) {
+          payload.lora = Object.assign({}, payload.lora || {}, { air_key: loraAirKeyDraft });
+        }
 
         const res = await fetch("/api/config", {
           method: "PUT",
@@ -569,6 +651,7 @@
         }
 
         const data = await res.json();
+        loraAirKeyDraft = "";
         renderConfig(data);
         applyPinState(data.system);
         if (res.status === 202 || typeChanged) {

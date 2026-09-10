@@ -59,7 +59,7 @@ int main() {
     std::string create_error;
     Config config;
     try {
-        config = Config::load_or_create(Config::default_path(), &create_error);
+        config = config_load_or_create(config_default_path(), &create_error);
     } catch (const ConfigError &ex) {
         std::cerr << ex.what() << std::endl;
         return 1;
@@ -69,13 +69,13 @@ int main() {
         PLOG_ERROR << create_error;
     }
 
-    const std::string index = default_index_html_path(config.robot.type);
+    const std::string index = default_index_html_path(config.robot().type());
     if (index.empty()) {
         std::cerr << "robot web page not found (set DOGGY_WEB_ROOT)" << std::endl;
         return 1;
     }
 
-    const fs::path tls_dir = fs::path(Config::default_path()).parent_path();
+    const fs::path tls_dir = fs::path(config_default_path()).parent_path();
     const std::string cert_path = path_from_env_or("DOGGY_TLS_CERT", tls_dir / "tls.crt");
     const std::string key_path = path_from_env_or("DOGGY_TLS_KEY", tls_dir / "tls.key");
     std::string tls_error;
@@ -87,20 +87,20 @@ int main() {
     std::unique_ptr<RobotApi> robot;
     Dog *dog = nullptr;
     Rover *rover = nullptr;
-    if (config.robot.type == RobotType::rover) {
+    if (config.robot().type() == doggy::v1::ROVER) {
         auto instance = std::make_unique<Rover>(
-                config, Config::default_path(), std::make_unique<SystemdControl>());
+                config, config_default_path(), std::make_unique<SystemdControl>());
         rover = instance.get();
         robot = std::move(instance);
     } else {
         auto instance = std::make_unique<Dog>(
-                config, Config::default_path(), std::make_unique<SystemdControl>());
+                config, config_default_path(), std::make_unique<SystemdControl>());
         dog = instance.get();
         robot = std::move(instance);
     }
 
-    for (const DogError &err : robot->getStatus().errors) {
-        PLOG_ERROR << "hardware i2c: " << err.message;
+    for (const std::string &message : status_error_messages(robot->getStatus())) {
+        PLOG_ERROR << "hardware i2c: " << message;
     }
 
     WebListen listen;

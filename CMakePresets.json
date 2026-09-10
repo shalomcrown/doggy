@@ -33,6 +33,28 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
+    },
+    {
+      "name": "operator-linux-amd64",
+      "displayName": "Ubuntu LoRa operator DEB (amd64)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/operator-linux-amd64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "DOGGY_OPERATOR_PACKAGE": "ON",
+        "DOGGY_OPERATOR_OS": "linux"
+      }
+    },
+    {
+      "name": "operator-windows-amd64",
+      "displayName": "Windows LoRa operator NSIS (amd64, from Linux)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/operator-windows-amd64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "DOGGY_OPERATOR_PACKAGE": "ON",
+        "DOGGY_OPERATOR_OS": "windows"
+      }
     }
   ],
   "buildPresets": [
@@ -47,6 +69,14 @@
     {
       "name": "ubuntu-aarch64-cross",
       "configurePreset": "ubuntu-aarch64-cross"
+    },
+    {
+      "name": "operator-linux-amd64",
+      "configurePreset": "operator-linux-amd64"
+    },
+    {
+      "name": "operator-windows-amd64",
+      "configurePreset": "operator-windows-amd64"
     }
   ],
   "testPresets": [

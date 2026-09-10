@@ -10,6 +10,10 @@ std::string to_hex(const unsigned char *data, std::size_t length);
 
 // ================================================================================
 
+bool is_hex_digits(const std::string &text);
+
+// ================================================================================
+
 bool hashes_equal(const char *left, const char *right);
 
 #endif

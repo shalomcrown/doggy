@@ -1,0 +1,17 @@
+[Unit]
+Description=doggy LoRa USB helper (robot sidecar)
+After=network-online.target doggy.service
+Wants=network-online.target doggy.service
+
+[Service]
+Type=simple
+User=doggy
+Group=doggy
+SupplementaryGroups=dialout
+ExecStart=/usr/bin/doggy-lora --mode=robot
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

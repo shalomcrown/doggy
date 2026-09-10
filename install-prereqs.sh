@@ -14,13 +14,15 @@
 #
 # There is no Windows target for firmware. The only robot runtime is Raspberry Pi
 # aarch64. golang-go is required to build the doggy-lora sidecar (and to
-# cross-compile it with GOARCH=arm64).
+# cross-compile it with GOARCH=arm64). Laptop operator clients are x86_64:
+# Ubuntu DEB and Windows NSIS (`--mode windows` installs nsis and
+# nsis-common stubs/plugins; no MinGW).
 #
 # Usage:
 #   ./install-prereqs.sh [options]
 #
 # Options:
-#   --mode <native|cross|all>   Which prereqs to install (default: auto from arch)
+#   --mode <native|cross|windows|all>   Which prereqs to install (default: auto from arch)
 #   --print-plan                Print detected distro and package plan, then exit
 #   --dry-run                   Print what would be done, do not execute
 #   -h, --help                  Show this help
@@ -99,7 +101,7 @@ if [ -z "$MODE" ]; then
     fi
     MODE_SOURCE="auto"
 fi
-case "$MODE" in native|cross|all) ;; *) die "Invalid --mode '$MODE' (try --help)"; esac
+case "$MODE" in native|cross|windows|all) ;; *) die "Invalid --mode '$MODE' (try --help)"; esac
 export DEBIAN_FRONTEND=noninteractive
 os_release_val() {
     local key="$1"
@@ -146,7 +148,10 @@ native_packages() {
     printf '%s' "ca-certificates cmake ninja-build g++ build-essential pkg-config git golang-go i2c-tools qtcreator zssh lrzsz vim"
 }
 cross_packages() {
-    printf '%s' "ca-certificates cmake ninja-build pkg-config git golang-go gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"
+    printf '%s' "ca-certificates cmake ninja-build pkg-config git golang-go protobuf-compiler gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"
+}
+windows_packages() {
+    printf '%s' "ca-certificates cmake ninja-build pkg-config git golang-go protobuf-compiler nsis nsis-common"
 }
 print_plan() {
     printf 'os_id=%s\n' "$OS_ID"
@@ -158,11 +163,13 @@ print_plan() {
     printf 'mode=%s\n' "$MODE"
     printf 'mode_source=%s\n' "$MODE_SOURCE"
     printf 'target=raspberry-pi-aarch64\n'
-    printf 'windows=unsupported\n'
+    printf 'windows_firmware=unsupported\n'
+    printf 'windows_operator=nsis\n'
     printf 'devtools=included\n'
     printf 'sysroot=not-required\n'
     printf 'native_packages=%s\n' "$(native_packages)"
     printf 'cross_packages=%s\n' "$(cross_packages)"
+    printf 'windows_packages=%s\n' "$(windows_packages)"
     if [ "$OS_KNOWN" -eq 0 ]; then
         printf 'warning=untested distro; continuing best-effort\n'
     fi
@@ -216,6 +223,21 @@ verify_commands() {
         fi
     done
 }
+# CPack NSIS needs stubs/plugins (MUI2, nsExec). Debian splits those into
+# nsis-common; they are not in the nsis compiler package.
+verify_nsis_extras() {
+    local f
+    for f in \
+        /usr/share/nsis/Include/MUI2.nsh \
+        /usr/share/nsis/Plugins/x86-unicode/nsExec.dll
+    do
+        if [ -f "$f" ]; then
+            ok "$f"
+        else
+            fail "NSIS extra file missing: $f (install nsis-common)"
+        fi
+    done
+}
 # ── distro detection / plan ───────────────────────────────────────────────────
 detect_os
 if [ "$PRINT_PLAN" -eq 1 ]; then
@@ -228,7 +250,8 @@ info "Mode:                  $MODE ($MODE_SOURCE)"
 info "Distro:                ${OS_PRETTY:-${OS_ID:-unknown}} (${OS_CODENAME:-n/a})"
 info "Host arch:             $HOST_MACHINE"
 info "Target:                Raspberry Pi aarch64"
-info "Windows:               unsupported"
+info "Windows firmware:      unsupported"
+info "Windows operator:      NSIS (./build-operator.sh windows)"
 [ "$DRY_RUN" -eq 1 ] && info "Dry-run: no changes will be made"
 echo
 # ═════════════════════════════════════════════════════════════════════════════
@@ -256,7 +279,19 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "cross" ]; then
     step "apt-get install (aarch64 cross toolchain)"
     # shellcheck disable=SC2046
     apt_install_best_effort $(cross_packages)
-    verify_commands cmake ninja aarch64-linux-gnu-gcc aarch64-linux-gnu-g++ go
+    verify_commands cmake ninja aarch64-linux-gnu-gcc aarch64-linux-gnu-g++ go protoc
+    echo
+fi
+# ═════════════════════════════════════════════════════════════════════════════
+# WINDOWS OPERATOR (NSIS on Linux host; Go GOOS=windows, no MinGW)
+# ═════════════════════════════════════════════════════════════════════════════
+if [ "$MODE" = "windows" ]; then
+    info "────── Windows operator packaging prerequisites ──────"
+    step "apt-get install (NSIS compiler + nsis-common stubs/plugins + Go)"
+    # shellcheck disable=SC2046
+    apt_install_best_effort $(windows_packages)
+    verify_commands cmake ninja go protoc makensis
+    verify_nsis_extras
     echo
 fi
 # ═════════════════════════════════════════════════════════════════════════════
@@ -268,8 +303,11 @@ if [ "$MISSING_COUNT" -eq 0 ]; then
         && printf ' %b(%d warning(s))%b' "$C_YELLOW" "$WARN_COUNT" "$C_RESET"
     printf '\n'
     echo
-    info "Then package with:"
+    info "Then package firmware with:"
     printf '  ./build.sh\n'
+    info "Laptop operator clients (amd64):"
+    printf '  ./install-prereqs.sh --mode windows   # once, for NSIS\n'
+    printf '  ./build-operator.sh                   # Ubuntu DEB + Windows NSIS\n'
     exit 0
 fi
 printf '%b%d prerequisite(s) still missing after installation attempts.%b\n' \

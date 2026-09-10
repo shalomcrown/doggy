@@ -29,6 +29,8 @@ int main() {
     expect(hashes_equal("ab", "abc") == false, "hashes_equal different lengths");
     expect(hashes_equal(nullptr, "abc") == false, "hashes_equal null left");
     expect(hashes_equal("abc", nullptr) == false, "hashes_equal null right");
+    expect(is_hex_digits("AaFf09"), "is_hex_digits accepts hex");
+    expect(is_hex_digits("zz") == false, "is_hex_digits rejects other letters");
 
     if (failures != 0) {
         return 1;

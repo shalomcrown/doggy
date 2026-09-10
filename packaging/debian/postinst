@@ -16,6 +16,12 @@ ensure_i2c_group() {
     fi
 }
 
+ensure_dialout_group() {
+    if getent group dialout >/dev/null 2>&1; then
+        usermod -aG dialout doggy
+    fi
+}
+
 i2c_dtparam_enabled() {
     grep -Eq '^[[:space:]]*dtparam=i2c(_arm)?=on' "$1"
 }
@@ -132,12 +138,20 @@ reload_and_start() {
     if command -v systemctl >/dev/null 2>&1; then
         systemctl daemon-reload
         systemctl enable doggy.service
+        systemctl enable doggy-lora.service
         if systemctl restart doggy.service; then
             :
         else
             echo "warning: systemctl restart doggy.service failed" >&2
             systemctl start doggy.service \
                 || echo "warning: systemctl start doggy.service failed" >&2
+        fi
+        if systemctl restart doggy-lora.service; then
+            :
+        else
+            echo "warning: systemctl restart doggy-lora.service failed" >&2
+            systemctl start doggy-lora.service \
+                || echo "warning: systemctl start doggy-lora.service failed" >&2
         fi
     fi
 }
@@ -146,6 +160,7 @@ case "$1" in
     configure)
         ensure_user
         ensure_i2c_group
+        ensure_dialout_group
         ensure_log_dir
         ensure_config_dir
         reload_and_start

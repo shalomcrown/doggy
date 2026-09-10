@@ -12,6 +12,7 @@ trap 'rm -rf "$TMPDIR"' EXIT
 
 CMAKE="$ROOT/CMakeLists.txt"
 UNIT="$ROOT/packaging/doggy.service"
+LORA_UNIT="$ROOT/packaging/doggy-lora.service"
 POSTINST="$ROOT/packaging/debian/postinst"
 PRERM="$ROOT/packaging/debian/prerm"
 POSTRM="$ROOT/packaging/debian/postrm"
@@ -241,6 +242,18 @@ else
     fail "unit ExecStart is /usr/bin/doggy"
 fi
 
+if [ -f "$LORA_UNIT" ] && grep -q '^ExecStart=/usr/bin/doggy-lora --mode=robot$' "$LORA_UNIT"; then
+    pass "lora unit ExecStart is doggy-lora robot mode"
+else
+    fail "lora unit ExecStart is doggy-lora robot mode"
+fi
+
+if grep -q 'doggy-lora.service' "$CMAKE" && grep -q 'lora.html' "$CMAKE"; then
+    pass "CMake installs doggy-lora unit and lora.html"
+else
+    fail "CMake installs doggy-lora unit and lora.html"
+fi
+
 if [ -f "$UNIT" ] && grep -q '^SupplementaryGroups=i2c$' "$UNIT"; then
     pass "unit SupplementaryGroups includes i2c"
 else
@@ -316,6 +329,11 @@ if [ "$1" = group ] && [ "$2" = i2c ]; then
     fi
 
     echo "i2c:x:998:"
+    exit 0
+fi
+
+if [ "$1" = group ] && [ "$2" = dialout ]; then
+    echo "dialout:x:20:"
     exit 0
 fi
 
@@ -398,6 +416,18 @@ else
     fail "postinst enables and starts doggy.service"
 fi
 
+if grep -q 'systemctl enable doggy-lora.service' "$MOCK_LOG/commands"; then
+    pass "postinst enables doggy-lora.service"
+else
+    fail "postinst enables doggy-lora.service"
+fi
+
+if grep -q -- '-aG dialout' "$MOCK_LOG/commands"; then
+    pass "postinst adds doggy to dialout when the group exists"
+else
+    fail "postinst adds doggy to dialout when the group exists"
+fi
+
 if [ -d "$TMPDIR/var-log-doggy" ]; then
     pass "postinst creates the doggy log directory"
 else
@@ -439,8 +469,8 @@ fi
 : >"$MOCK_LOG/commands"
 touch "$MOCK_STATE/no_i2c"
 if [ -x "$POSTINST" ] && run_script "$POSTINST" configure; then
-    if grep -q usermod "$MOCK_LOG/commands"; then
-        fail "postinst skips usermod when i2c group is missing"
+    if grep -q -- '-aG i2c' "$MOCK_LOG/commands"; then
+        fail "postinst skips i2c usermod when i2c group is missing"
     else
         pass "postinst skips usermod when i2c group is missing"
     fi
@@ -509,7 +539,8 @@ fi
 rm -f "$MOCK_STATE/no_i2c"
 : >"$MOCK_LOG/commands"
 if [ -x "$PRERM" ] && run_script "$PRERM" remove; then
-    if grep -q 'systemctl stop doggy.service' "$MOCK_LOG/commands"; then
+    if grep -q 'systemctl stop doggy.service' "$MOCK_LOG/commands" \
+            && grep -q 'systemctl stop doggy-lora.service' "$MOCK_LOG/commands"; then
         pass "prerm stop doggy.service on remove"
     else
         fail "prerm stop doggy.service on remove"
@@ -534,7 +565,8 @@ if [ -x "$POSTRM" ] && run_script "$POSTRM" purge; then
     if grep -q 'systemctl disable doggy.service' "$MOCK_LOG/commands" \
             && grep -q userdel "$MOCK_LOG/commands"; then
         fail "postrm purge disables the unit and does not userdel"
-    elif grep -q 'systemctl disable doggy.service' "$MOCK_LOG/commands"; then
+    elif grep -q 'systemctl disable doggy.service' "$MOCK_LOG/commands" \
+            && grep -q 'systemctl disable doggy-lora.service' "$MOCK_LOG/commands"; then
         pass "postrm purge disables the unit and does not userdel"
     else
         fail "postrm purge disables the unit and does not userdel"

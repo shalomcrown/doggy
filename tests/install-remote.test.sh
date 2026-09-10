@@ -47,6 +47,52 @@ else
     fail "missing .deb mentions ./build.sh"
 fi
 
+# ── explicit operator deb is rejected ───────────────────────────────────────
+printf 'fake' >"$TMPDIR/shaloms-doggy-lora-operator_1.0.0_amd64.deb"
+if "$SCRIPT" --dry-run pi@robot \
+        "$TMPDIR/shaloms-doggy-lora-operator_1.0.0_amd64.deb" \
+        >"$TMPDIR/op-explicit" 2>&1; then
+    fail "explicit operator .deb is rejected"
+else
+    pass "explicit operator .deb is rejected"
+fi
+
+# ── newest firmware .deb under DOGGY_DEB_ROOT ──────────────────────────────
+mkdir -p "$TMPDIR/pkgs"
+printf 'old' >"$TMPDIR/pkgs/shaloms-doggy_1.0.0-old_arm64.deb"
+printf 'new' >"$TMPDIR/pkgs/shaloms-doggy_1.0.0-new_arm64.deb"
+printf 'op'  >"$TMPDIR/pkgs/shaloms-doggy-lora-operator_9.0.0_amd64.deb"
+touch -d '2020-01-01 00:00:00' "$TMPDIR/pkgs/shaloms-doggy_1.0.0-old_arm64.deb"
+touch -d '2026-08-22 00:00:00' "$TMPDIR/pkgs/shaloms-doggy_1.0.0-new_arm64.deb"
+touch -d '2026-09-10 00:00:00' "$TMPDIR/pkgs/shaloms-doggy-lora-operator_9.0.0_amd64.deb"
+
+if DOGGY_DEB_ROOT="$TMPDIR/pkgs" "$SCRIPT" --dry-run user@pi \
+        >"$TMPDIR/newest" 2>&1; then
+    pass "dry-run with auto-detected firmware .deb exits 0"
+else
+    fail "dry-run with auto-detected firmware .deb exits 0"
+fi
+
+if grep -q 'lora-operator' "$TMPDIR/newest"; then
+    fail "auto-detect ignores operator .deb even if newer"
+elif grep -q 'shaloms-doggy_1.0.0-new_arm64.deb' "$TMPDIR/newest" \
+        && grep -q 'shaloms-doggy_1.0.0-old_arm64.deb' "$TMPDIR/newest"; then
+    fail "auto-detect uses only the newest firmware .deb"
+elif grep -q 'shaloms-doggy_1.0.0-new_arm64.deb' "$TMPDIR/newest"; then
+    pass "auto-detect uses only the newest firmware .deb"
+else
+    fail "auto-detect uses only the newest firmware .deb"
+fi
+
+mkdir -p "$TMPDIR/operator-only"
+printf 'op' >"$TMPDIR/operator-only/shaloms-doggy-lora-operator_1.0.0_amd64.deb"
+if DOGGY_DEB_ROOT="$TMPDIR/operator-only" "$SCRIPT" --dry-run user@pi \
+        >"$TMPDIR/op-only" 2>&1; then
+    fail "operator-only build dir exits non-zero"
+else
+    pass "operator-only build dir exits non-zero"
+fi
+
 # ── host starting with dash ──────────────────────────────────────────────────
 printf 'fake' >"$TMPDIR/ok.deb"
 if "$SCRIPT" --dry-run -- '-oProxyCommand=x' "$TMPDIR/ok.deb" \
@@ -97,28 +143,6 @@ if grep -q -- '-O exit' "$TMPDIR/dry"; then
     pass "dry-run closes the SSH master"
 else
     fail "dry-run closes the SSH master"
-fi
-
-# ── newest .deb under DOGGY_DEB_ROOT ─────────────────────────────────────────
-mkdir -p "$TMPDIR/pkgs"
-printf 'old' >"$TMPDIR/pkgs/old.deb"
-printf 'new' >"$TMPDIR/pkgs/new.deb"
-touch -d '2020-01-01 00:00:00' "$TMPDIR/pkgs/old.deb"
-touch -d '2026-08-22 00:00:00' "$TMPDIR/pkgs/new.deb"
-
-if DOGGY_DEB_ROOT="$TMPDIR/pkgs" "$SCRIPT" --dry-run user@pi \
-        >"$TMPDIR/newest" 2>&1; then
-    pass "dry-run with auto-detected .deb exits 0"
-else
-    fail "dry-run with auto-detected .deb exits 0"
-fi
-
-if grep -q 'new.deb' "$TMPDIR/newest" && grep -q 'old.deb' "$TMPDIR/newest"; then
-    fail "auto-detect uses only the newest .deb"
-elif grep -q 'new.deb' "$TMPDIR/newest"; then
-    pass "auto-detect uses only the newest .deb"
-else
-    fail "auto-detect uses only the newest .deb"
 fi
 
 # ── no live transport in dry-run ─────────────────────────────────────────────

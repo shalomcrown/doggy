@@ -17,6 +17,19 @@ std::string to_hex(const unsigned char *data, std::size_t length) {
 
 // ================================================================================
 
+bool is_hex_digits(const std::string &text) {
+    for (const unsigned char c : text) {
+        const bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
+                || (c >= 'A' && c <= 'F');
+        if (ok == false) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// ================================================================================
+
 bool hashes_equal(const char *left, const char *right) {
     if (left == nullptr || right == nullptr) {
         return false;

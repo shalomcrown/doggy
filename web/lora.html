@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Doggy LoRa setup</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 1.5rem; padding-bottom: 3rem; }
+    .field { display: block; margin: 0.6rem 0; }
+    #status {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+      margin: 0; padding: 0.6rem 1.5rem; background: #1b1b1b; color: #fff;
+    }
+    #status:empty { display: none; }
+  </style>
+</head>
+<body>
+  <h1>LoRa setup</h1>
+  <p>Waveshare USB-TO-LoRa-xF: set the USB serial device (Linux <code>/dev/ttyUSB0</code>, Windows <code>COM3</code>) and host baud (module default 115200; USB-CDC often ignores baud). Choose HF (850–930 MHz) or LF (410–490 MHz). TXCH and RXCH are 0–80. AT uses TXCH/RXCH, not BAND/REGION. Dog and rover pages on this host proxy <code>/api/*</code> over LoRa (AES-256-GCM). <code>/api/lora</code> stays local.</p>
+  <p><a href="/dog">Dog page</a> · <a href="/rover">Rover page</a></p>
+  <p id="status" role="status"></p>
+  <label class="field">Enabled
+    <input type="checkbox" id="enabled">
+  </label>
+  <label class="field">Serial device
+    <input type="text" id="device" placeholder="/dev/ttyUSB0 or COM3">
+  </label>
+  <label class="field">Baud
+    <select id="baud">
+      <option value="9600">9600</option>
+      <option value="19200">19200</option>
+      <option value="38400">38400</option>
+      <option value="57600">57600</option>
+      <option value="115200" selected>115200</option>
+    </select>
+  </label>
+  <label class="field">Dongle
+    <select id="band">
+      <option value="HF">HF (850–930 MHz)</option>
+      <option value="LF">LF (410–490 MHz)</option>
+    </select>
+  </label>
+  <label class="field">TXCH
+    <input type="number" id="txch" min="0" max="80" step="1" value="18">
+  </label>
+  <label class="field">RXCH
+    <input type="number" id="rxch" min="0" max="80" step="1" value="18">
+  </label>
+  <label class="field">Air passphrase (8–128 bytes, AES-256)
+    <input type="password" id="air-key" autocomplete="new-password" minlength="8" maxlength="128"
+           aria-describedby="air-key-state" placeholder="leave blank to keep">
+  </label>
+  <p id="air-key-state" aria-live="polite"></p>
+  <p>TX frequency: <span id="tx-mhz">868</span> MHz · RX frequency: <span id="rx-mhz">868</span> MHz</p>
+  <button type="button" id="save">Save</button>
+  <script>
+    const statusEl = document.getElementById("status");
+    function setStatus(text) { statusEl.textContent = text; }
+
+    function freqMHz(band, ch) {
+      const n = Number(ch);
+      if (Number.isFinite(n) === false || n < 0 || n > 80) {
+        return "—";
+      }
+      if (band === "LF") {
+        return String(410 + n);
+      }
+      return String(850 + n);
+    }
+
+    function refreshFreq() {
+      const band = document.getElementById("band").value;
+      document.getElementById("tx-mhz").textContent =
+              freqMHz(band, document.getElementById("txch").value);
+      document.getElementById("rx-mhz").textContent =
+              freqMHz(band, document.getElementById("rxch").value);
+    }
+
+    async function load() {
+      const res = await fetch("/api/lora");
+      if (res.ok === false) {
+        setStatus("Failed to load");
+        return;
+      }
+      const data = await res.json();
+      const lora = data.lora || {};
+      document.getElementById("enabled").checked = !!lora.enabled;
+      document.getElementById("device").value = lora.device || "";
+      document.getElementById("baud").value = String(lora.baud === undefined || lora.baud === 0 ? 115200 : lora.baud);
+      document.getElementById("band").value = lora.band === "LF" ? "LF" : "HF";
+      document.getElementById("txch").value = String(lora.txch === undefined ? 18 : lora.txch);
+      document.getElementById("rxch").value = String(lora.rxch === undefined ? 18 : lora.rxch);
+      document.getElementById("air-key").value = "";
+      document.getElementById("air-key-state").textContent =
+              lora.air_key_set ? "Air passphrase is set." : "Air passphrase is not set. Both ends need the same passphrase.";
+      refreshFreq();
+      setStatus("");
+    }
+
+    document.getElementById("band").addEventListener("change", () => {
+      const band = document.getElementById("band").value;
+      const tx = Number(document.getElementById("txch").value);
+      const rx = Number(document.getElementById("rxch").value);
+      if (band === "LF" && tx === 18 && rx === 18) {
+        document.getElementById("txch").value = "23";
+        document.getElementById("rxch").value = "23";
+      }
+      if (band === "HF" && tx === 23 && rx === 23) {
+        document.getElementById("txch").value = "18";
+        document.getElementById("rxch").value = "18";
+      }
+      refreshFreq();
+    });
+    document.getElementById("txch").addEventListener("input", refreshFreq);
+    document.getElementById("rxch").addEventListener("input", refreshFreq);
+
+    document.getElementById("save").addEventListener("click", async () => {
+      setStatus("Saving…");
+      const body = {
+        lora: {
+          enabled: document.getElementById("enabled").checked,
+          device: document.getElementById("device").value,
+          baud: Number(document.getElementById("baud").value),
+          band: document.getElementById("band").value,
+          txch: Number(document.getElementById("txch").value),
+          rxch: Number(document.getElementById("rxch").value)
+        }
+      };
+      const airKey = document.getElementById("air-key").value;
+      if (airKey) {
+        body.lora.air_key = airKey;
+      }
+      const res = await fetch("/api/lora", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      if (res.ok === false) {
+        setStatus("Save failed");
+        return;
+      }
+      const data = await res.json();
+      document.getElementById("air-key").value = "";
+      document.getElementById("air-key-state").textContent =
+              data.lora && data.lora.air_key_set ? "Air passphrase is set." : "Air passphrase is not set.";
+      setStatus("Saved. AT will apply on the next monitor pass.");
+    });
+    load();
+  </script>
+</body>
+</html>

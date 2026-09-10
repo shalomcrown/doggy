@@ -20,17 +20,37 @@
 
 // ================================================================================
 
+static ServoSnapshot make_servo(int id, const char *name) {
+    ServoSnapshot item;
+    item.set_id(id);
+    item.set_name(name);
+    item.set_pwm(0);
+    return item;
+}
+
+// ================================================================================
+
+static MotorSnapshot make_motor(int id, const char *name) {
+    MotorSnapshot item;
+    item.set_id(id);
+    item.set_name(name);
+    item.set_pwm(0);
+    item.set_enabled(true);
+    item.set_direction(doggy::v1::forward);
+    return item;
+}
+
+// ================================================================================
+
 class FakeDog : public DogApi {
 public:
-    std::vector<ServoSnapshot> items{
-        {11, "front-right-waist", 0.0, 0}
-    };
-    Config config;
+    std::vector<ServoSnapshot> items{make_servo(11, "front-right-waist")};
+    Config config = default_config();
     bool busy = false;
     bool write_fail = false;
 
     RobotType robotType() const override {
-        return RobotType::dog;
+        return doggy::v1::DOG;
     }
 
     std::vector<ServoSnapshot> listServos() override {
@@ -42,8 +62,8 @@ public:
             return CommandResult::busy;
         }
 
-        items[0].angle = 135.0;
-        items[0].pwm = 400;
+        items[0].set_angle(135.0);
+        items[0].set_pwm(400);
         return CommandResult::ok;
     }
 
@@ -56,12 +76,12 @@ public:
             return CommandResult::bad_angle;
         }
 
-        if (id != items[0].id) {
+        if (id != items[0].id()) {
             return CommandResult::not_found;
         }
 
-        items[0].angle = angle;
-        items[0].pwm = 200;
+        items[0].set_angle(angle);
+        items[0].set_pwm(200);
         return CommandResult::ok;
     }
 
@@ -70,17 +90,21 @@ public:
             return CommandResult::busy;
         }
 
-        if (id != items[0].id) {
+        if (id != items[0].id()) {
             return CommandResult::not_found;
         }
 
-        items[0].pwm = 0;
+        items[0].set_pwm(0);
+        items[0].clear_angle();
         return CommandResult::ok;
     }
 
     DogStatus getStatus() const override {
         DogStatus copy = status;
-        copy.servos = items;
+        copy.mutable_servos()->clear_items();
+        for (const ServoSnapshot &item : items) {
+            *copy.mutable_servos()->add_items() = item;
+        }
         return copy;
     }
 
@@ -97,7 +121,7 @@ public:
             return CommandResult::failed;
         }
 
-        const bool type_changed = next.robot.type != config.robot.type;
+        const bool type_changed = next.robot().type() != config.robot().type();
         if (type_changed) {
             const CommandResult authorized = requestSystemAction(SystemAction::restart, pin);
             if (authorized != CommandResult::ok) {
@@ -105,10 +129,10 @@ public:
             }
         }
 
-        const SystemConfig kept_pin = config.system;
+        const doggy::v1::System kept_pin = config.system();
         config = next;
-        config.system = kept_pin;
-        items[0].id = next.servos.front_right_waist;
+        *config.mutable_system() = kept_pin;
+        items[0].set_id(next.servos().front_right_waist());
         return CommandResult::ok;
     }
 
@@ -125,11 +149,11 @@ public:
             return CommandResult::rate_limited;
         }
 
-        if (config.system.pin_is_set() == false) {
+        if (pin_is_set(config) == false) {
             return CommandResult::pin_unset;
         }
 
-        if (Config::pin_matches(pin, config.system.pin_hash) == false) {
+        if (pin_matches(pin, config.system().pin_hash()) == false) {
             pin_failures += 1;
             if (pin_failures >= 5) {
                 lockout = true;
@@ -149,16 +173,16 @@ public:
             return CommandResult::busy;
         }
 
-        if (Config::pin_length_ok(pin) == false) {
+        if (pin_length_ok(pin) == false) {
             return CommandResult::bad_pin;
         }
 
-        if (config.system.pin_is_set()
-                && Config::pin_matches(current_pin, config.system.pin_hash) == false) {
+        if (pin_is_set(config)
+                && pin_matches(current_pin, config.system().pin_hash()) == false) {
             return CommandResult::pin_invalid;
         }
 
-        config.system.pin_hash = Config::hash_pin(pin);
+        config.mutable_system()->set_pin_hash(hash_pin(pin));
         return CommandResult::ok;
     }
 
@@ -173,22 +197,22 @@ public:
 
 class FakeRover : public RoverApi {
 public:
-    Config config;
+    Config config = default_config();
     std::vector<MotorSnapshot> motors{
-        {0, "front-left", 0, true, MotorDirection::forward},
-        {1, "front-right", 0, true, MotorDirection::forward},
-        {2, "rear-left", 0, true, MotorDirection::forward},
-        {3, "rear-right", 0, true, MotorDirection::forward}
+        make_motor(0, "front-left"),
+        make_motor(1, "front-right"),
+        make_motor(2, "rear-left"),
+        make_motor(3, "rear-right")
     };
     double speed = 0.0;
     double turn = 0.0;
 
     FakeRover() {
-        config.robot.type = RobotType::rover;
+        config.mutable_robot()->set_type(doggy::v1::ROVER);
     }
 
     RobotType robotType() const override {
-        return RobotType::rover;
+        return doggy::v1::ROVER;
     }
 
     std::vector<MotorSnapshot> listMotors() override {
@@ -207,10 +231,12 @@ public:
 
     DogStatus getStatus() const override {
         DogStatus result;
-        result.type = RobotType::rover;
-        result.speed = speed;
-        result.turn = turn;
-        result.motors = motors;
+        result.set_type(doggy::v1::ROVER);
+        result.set_speed(speed);
+        result.set_turn(turn);
+        for (const MotorSnapshot &item : motors) {
+            *result.mutable_motors()->add_items() = item;
+        }
         return result;
     }
 
@@ -366,6 +392,12 @@ int main() {
            "dog page has a PIN field for type change");
     expect(page && page->body.find("[\"lora\"") != std::string::npos,
            "dog page can edit lora settings");
+    expect(page && page->body.find("lora-band") != std::string::npos,
+           "dog page uses HF/LF dongle select for lora.band");
+    expect(page && page->body.find("lora-baud") != std::string::npos,
+           "dog page can set lora serial baud");
+    expect(page && page->body.find("lora-air-key") != std::string::npos,
+           "dog page can set lora air_key");
     expect(page && page->body.find("Refresh the page") != std::string::npos,
            "page warns to refresh after a type change");
     expect(page && page->body.find("position: fixed") != std::string::npos
@@ -374,16 +406,12 @@ int main() {
 
     auto healthy = cli.Get("/api/status");
     expect(healthy && healthy->status == 200, "GET /api/status is 200");
-    expect(healthy && healthy->body.find("\"errors\":[]") != std::string::npos,
-           "GET /api/status empty errors");
     expect(healthy && healthy->body.find("\"imu\"") != std::string::npos,
            "GET /api/status includes imu");
     expect(healthy && healthy->body.find("\"battery\"") != std::string::npos,
            "GET /api/status includes battery");
     expect(healthy && healthy->body.find("\"ok\":false") != std::string::npos,
            "GET /api/status imu.ok is false by default");
-    expect(healthy && healthy->body.find("\"voltage_v\"") != std::string::npos,
-           "GET /api/status includes voltage_v");
     expect(healthy && healthy->body.find(std::string("\"version\":\"") + DOGGY_VERSION + "\"")
                    != std::string::npos,
            "GET /api/status includes stamped version");
@@ -391,13 +419,17 @@ int main() {
            "dog status includes DOG type");
     expect(healthy && healthy->body.find("\"servos\"") != std::string::npos,
            "GET /api/status includes servos");
-    expect(healthy && healthy->body.find("\"angle\":null") != std::string::npos,
-           "GET /api/status angle is null when pwm is 0");
+    expect(healthy && healthy->body.find("\"angle\"") == std::string::npos,
+           "GET /api/status omits angle when pwm is 0");
 
-    dog.status.imu.ok = true;
-    dog.status.imu.temperature_c = 37.5;
-    dog.status.imu.accel = {0.1, 0.2, 0.3};
-    dog.status.imu.gyro = {1.0, 2.0, 3.0};
+    dog.status.mutable_imu()->set_ok(true);
+    dog.status.mutable_imu()->set_temperature_c(37.5);
+    dog.status.mutable_imu()->mutable_accel()->set_x(0.1);
+    dog.status.mutable_imu()->mutable_accel()->set_y(0.2);
+    dog.status.mutable_imu()->mutable_accel()->set_z(0.3);
+    dog.status.mutable_imu()->mutable_gyro()->set_x(1.0);
+    dog.status.mutable_imu()->mutable_gyro()->set_y(2.0);
+    dog.status.mutable_imu()->mutable_gyro()->set_z(3.0);
     auto imuOk = cli.Get("/api/status");
     expect(imuOk && imuOk->body.find("\"ok\":true") != std::string::npos,
            "GET /api/status imu.ok true");
@@ -406,13 +438,15 @@ int main() {
     expect(imuOk && imuOk->body.find("\"x\":0.1") != std::string::npos,
            "GET /api/status accel x");
 
-    dog.status.battery.ok = true;
-    dog.status.battery.voltage_v = 7.4;
+    dog.status.mutable_battery()->set_ok(true);
+    dog.status.mutable_battery()->set_voltage_v(7.4);
     auto batteryOk = cli.Get("/api/status");
     expect(batteryOk && batteryOk->body.find("\"voltage_v\":7.4") != std::string::npos,
            "GET /api/status battery voltage");
 
-    dog.status.errors.push_back(DogError{DogErrorCode::i2c, "Could not open i2c bus.: No such file or directory"});
+    doggy::v1::Error *status_err = dog.status.add_errors();
+    status_err->set_code(doggy::v1::i2c);
+    status_err->set_message("Could not open i2c bus.: No such file or directory");
     auto unhealthy = cli.Get("/api/status");
     expect(unhealthy && unhealthy->body.find("\"code\":\"i2c\"") != std::string::npos,
            "GET /api/status reports i2c code");
@@ -425,8 +459,8 @@ int main() {
            "GET /api/servos has items");
     expect(list && list->body.find("front-right-waist") != std::string::npos,
            "GET /api/servos has servo name");
-    expect(list && list->body.find("\"angle\":null") != std::string::npos,
-           "GET /api/servos angle is null when pwm is 0");
+    expect(list && list->body.find("\"angle\"") == std::string::npos,
+           "GET /api/servos omits angle when pwm is 0");
 
     auto moved = cli.Post("/api/servos/11", "{\"angle\":45}", "application/json");
     expect(moved && moved->status == 200, "POST /api/servos/11 is 200");
@@ -441,8 +475,8 @@ int main() {
     expect(off && off->status == 200, "POST enabled false is 200");
     expect(off && off->body.find("\"pwm\":0") != std::string::npos,
            "POST enabled false sets pwm 0");
-    expect(off && off->body.find("\"angle\":null") != std::string::npos,
-           "POST enabled false sets angle null");
+    expect(off && off->body.find("\"angle\"") == std::string::npos,
+           "POST enabled false omits angle");
 
     auto enableOnly = cli.Post("/api/servos/11", "{\"enabled\":true}", "application/json");
     expect(enableOnly && enableOnly->status == 400, "POST enabled true without angle is 400");
@@ -472,6 +506,10 @@ int main() {
            "GET /api/config has default front_right_waist");
     expect(cfg && cfg->body.find("\"lora\"") != std::string::npos,
            "GET /api/config includes lora");
+    expect(cfg && cfg->body.find("air_key_set") != std::string::npos,
+           "GET /api/config reports air_key_set");
+    expect(cfg && cfg->body.find("\"air_key\"") == std::string::npos,
+           "GET /api/config omits air_key");
 
     auto put = cli.Put("/api/config",
                        R"({"servos":{"front_right_waist":1}})",
@@ -524,7 +562,7 @@ int main() {
     expect(typeChanged && typeChanged->body.find("pin_hash") == std::string::npos,
            "type change response omits PIN hash");
     dog.action_pending = false;
-    dog.config.robot.type = RobotType::dog;
+    dog.config.mutable_robot()->set_type(doggy::v1::DOG);
 
     auto badCurrent = cli.Post("/api/system/pin",
                                R"({"pin":"5678","current_pin":"0000"})",
@@ -617,6 +655,14 @@ int main() {
            "rover page can change robot type");
     expect(rover_page && rover_page->body.find("id=\"config-pin\"") != std::string::npos,
            "rover page has a PIN field for type change");
+    expect(rover_page && rover_page->body.find("[\"lora\"") != std::string::npos,
+           "rover page can edit lora settings");
+    expect(rover_page && rover_page->body.find("lora-band") != std::string::npos,
+           "rover page uses HF/LF dongle select for lora.band");
+    expect(rover_page && rover_page->body.find("lora-baud") != std::string::npos,
+           "rover page can set lora serial baud");
+    expect(rover_page && rover_page->body.find("lora-air-key") != std::string::npos,
+           "rover page can set lora air_key");
     expect(rover_page && rover_page->body.find("Refresh the page") != std::string::npos,
            "rover page warns to refresh after a type change");
     expect(rover_page && rover_page->body.find("position: fixed") != std::string::npos

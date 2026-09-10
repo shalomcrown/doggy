@@ -18,6 +18,22 @@ static std::string i2c_open_failed(const char *name, int bus, uint8_t address) {
 
 // ================================================================================
 
+static void add_i2c_error(DogStatus &status, const std::string &message) {
+    doggy::v1::Error *err = status.add_errors();
+    err->set_code(doggy::v1::i2c);
+    err->set_message(message);
+}
+
+// ================================================================================
+
+static void copy_vec3(doggy::v1::Vec3 *out, const Vec3 &in) {
+    out->set_x(in.x);
+    out->set_y(in.y);
+    out->set_z(in.z);
+}
+
+// ================================================================================
+
 Leg::Leg(Servo &waist, Servo &hip, Servo &knee) :
     waist(waist), hip(hip), knee(knee) {
 }
@@ -61,7 +77,7 @@ void Leg::allToNinety() {
 
 // ================================================================================
 
-Dog::Dog() : Dog(Config{}, {}) {
+Dog::Dog() : Dog(default_config(), {}) {
 }
 
 // ================================================================================
@@ -80,22 +96,22 @@ Dog::Dog(const Config &config, std::string config_path) :
 Dog::Dog(const Config &config, std::string config_path,
          std::unique_ptr<SystemControl> system_control) :
     DogApi(config, std::move(config_path), std::move(system_control)),
-    board(config.i2c.servo_board.bus, config.i2c.servo_board.address),
-    imu(config.i2c.imu.bus, config.i2c.imu.address),
-    ads(config.i2c.ads.bus, config.i2c.ads.address),
-    frontRightWaist(board, config.servos.front_right_waist, "front-right-waist"),
-    frontRightHip(board, config.servos.front_right_hip, "front-right-hip"),
-    frontRightKnee(board, config.servos.front_right_knee, "front-right-knee"),
-    frontLeftWaist(board, config.servos.front_left_waist, "front-left-waist"),
-    frontLeftHip(board, config.servos.front_left_hip, "front-left-hip"),
-    frontLeftKnee(board, config.servos.front_left_knee, "front-left-knee"),
-    rearLeftWaist(board, config.servos.rear_left_waist, "rear-left-waist"),
-    rearLeftHip(board, config.servos.rear_left_hip, "rear-left-hip"),
-    rearLeftKnee(board, config.servos.rear_left_knee, "rear-left-knee"),
-    rearRightWaist(board, config.servos.rear_right_waist, "rear-right-waist"),
-    rearRightHip(board, config.servos.rear_right_hip, "rear-right-hip"),
-    rearRightKnee(board, config.servos.rear_right_knee, "rear-right-knee"),
-    headNeck(board, config.servos.head_neck, "head-neck"),
+    board(config.i2c().servo_board().bus(), i2c_address_byte(config.i2c().servo_board())),
+    imu(config.i2c().imu().bus(), i2c_address_byte(config.i2c().imu())),
+    ads(config.i2c().ads().bus(), i2c_address_byte(config.i2c().ads())),
+    frontRightWaist(board, config.servos().front_right_waist(), "front-right-waist"),
+    frontRightHip(board, config.servos().front_right_hip(), "front-right-hip"),
+    frontRightKnee(board, config.servos().front_right_knee(), "front-right-knee"),
+    frontLeftWaist(board, config.servos().front_left_waist(), "front-left-waist"),
+    frontLeftHip(board, config.servos().front_left_hip(), "front-left-hip"),
+    frontLeftKnee(board, config.servos().front_left_knee(), "front-left-knee"),
+    rearLeftWaist(board, config.servos().rear_left_waist(), "rear-left-waist"),
+    rearLeftHip(board, config.servos().rear_left_hip(), "rear-left-hip"),
+    rearLeftKnee(board, config.servos().rear_left_knee(), "rear-left-knee"),
+    rearRightWaist(board, config.servos().rear_right_waist(), "rear-right-waist"),
+    rearRightHip(board, config.servos().rear_right_hip(), "rear-right-hip"),
+    rearRightKnee(board, config.servos().rear_right_knee(), "rear-right-knee"),
+    headNeck(board, config.servos().head_neck(), "head-neck"),
     frontRight(frontRightWaist, frontRightHip, frontRightKnee),
     frontLeft(frontLeftWaist, frontLeftHip, frontLeftKnee),
     rearLeft(rearLeftWaist, rearLeftHip, rearLeftKnee),
@@ -109,24 +125,17 @@ Dog::Dog(const Config &config, std::string config_path,
         &headNeck
     } {
     if (board.isOpen() == false) {
-        status.errors.push_back(DogError{
-            DogErrorCode::i2c,
-            board.lastError()
-        });
+        add_i2c_error(status, board.lastError());
     }
 
     if (imu.isOpen() == false) {
-        status.errors.push_back(DogError{
-            DogErrorCode::i2c,
-            i2c_open_failed("IMU", config.i2c.imu.bus, config.i2c.imu.address)
-        });
+        add_i2c_error(status, i2c_open_failed("IMU", config.i2c().imu().bus(),
+                i2c_address_byte(config.i2c().imu())));
     }
 
     if (ads.isOpen() == false) {
-        status.errors.push_back(DogError{
-            DogErrorCode::i2c,
-            i2c_open_failed("ADC", config.i2c.ads.bus, config.i2c.ads.address)
-        });
+        add_i2c_error(status, i2c_open_failed("ADC", config.i2c().ads().bus(),
+                i2c_address_byte(config.i2c().ads())));
     }
 }
 
@@ -158,12 +167,14 @@ std::vector<ServoSnapshot> Dog::snapshotUnlocked() const {
     std::vector<ServoSnapshot> items;
     items.reserve(servos.size());
     for (const Servo *servo : servos) {
-        items.push_back(ServoSnapshot{
-            servo->id(),
-            servo->name(),
-            servo->angle(),
-            servo->pwm()
-        });
+        ServoSnapshot item;
+        item.set_id(servo->id());
+        item.set_name(servo->name());
+        item.set_pwm(servo->pwm());
+        if (servo->pwm() != 0) {
+            item.set_angle(servo->angle());
+        }
+        items.push_back(std::move(item));
     }
 
     return items;
@@ -191,7 +202,7 @@ CommandResult Dog::home() {
         rearLeft.setKnee(135);
         rearRight.setKnee(135);
     } catch (const std::system_error &ex) {
-        status.errors.push_back(DogError{DogErrorCode::i2c, ex.what()});
+        add_i2c_error(status, ex.what());
     }
 
     return CommandResult::ok;
@@ -223,7 +234,7 @@ CommandResult Dog::setServoAngle(int id, double angle) {
     try {
         servo->setAngle(angle);
     } catch (const std::system_error &ex) {
-        status.errors.push_back(DogError{DogErrorCode::i2c, ex.what()});
+        add_i2c_error(status, ex.what());
     }
 
     return CommandResult::ok;
@@ -245,7 +256,7 @@ CommandResult Dog::disableServo(int id) {
     try {
         servo->off();
     } catch (const std::system_error &ex) {
-        status.errors.push_back(DogError{DogErrorCode::i2c, ex.what()});
+        add_i2c_error(status, ex.what());
     }
 
     return CommandResult::ok;
@@ -254,7 +265,7 @@ CommandResult Dog::disableServo(int id) {
 // ================================================================================
 
 RobotType Dog::robotType() const {
-    return RobotType::dog;
+    return doggy::v1::DOG;
 }
 
 // ================================================================================
@@ -262,8 +273,14 @@ RobotType Dog::robotType() const {
 DogStatus Dog::getStatus() const {
     std::lock_guard<std::mutex> lock(mutex_);
     DogStatus copy = status;
-    copy.type = RobotType::dog;
-    copy.servos = snapshotUnlocked();
+    copy.set_type(doggy::v1::DOG);
+    copy.mutable_servos()->clear_items();
+    for (const ServoSnapshot &item : snapshotUnlocked()) {
+        *copy.mutable_servos()->add_items() = item;
+    }
+    copy.clear_motors();
+    copy.clear_speed();
+    copy.clear_turn();
     return copy;
 }
 
@@ -275,7 +292,7 @@ CommandResult Dog::replaceConfig(const Config &config, const std::string &pin) {
         return CommandResult::busy;
     }
 
-    const bool type_changed = config.robot.type != RobotType::dog;
+    const bool type_changed = config.robot().type() != doggy::v1::DOG;
     if (type_changed) {
         const CommandResult authorized = authorizePinUnlocked(pin);
         if (authorized != CommandResult::ok) {
@@ -284,21 +301,21 @@ CommandResult Dog::replaceConfig(const Config &config, const std::string &pin) {
     }
 
     try {
-        frontRightWaist.rebindChannel(config.servos.front_right_waist);
-        frontRightHip.rebindChannel(config.servos.front_right_hip);
-        frontRightKnee.rebindChannel(config.servos.front_right_knee);
-        frontLeftWaist.rebindChannel(config.servos.front_left_waist);
-        frontLeftHip.rebindChannel(config.servos.front_left_hip);
-        frontLeftKnee.rebindChannel(config.servos.front_left_knee);
-        rearLeftWaist.rebindChannel(config.servos.rear_left_waist);
-        rearLeftHip.rebindChannel(config.servos.rear_left_hip);
-        rearLeftKnee.rebindChannel(config.servos.rear_left_knee);
-        rearRightWaist.rebindChannel(config.servos.rear_right_waist);
-        rearRightHip.rebindChannel(config.servos.rear_right_hip);
-        rearRightKnee.rebindChannel(config.servos.rear_right_knee);
-        headNeck.rebindChannel(config.servos.head_neck);
+        frontRightWaist.rebindChannel(config.servos().front_right_waist());
+        frontRightHip.rebindChannel(config.servos().front_right_hip());
+        frontRightKnee.rebindChannel(config.servos().front_right_knee());
+        frontLeftWaist.rebindChannel(config.servos().front_left_waist());
+        frontLeftHip.rebindChannel(config.servos().front_left_hip());
+        frontLeftKnee.rebindChannel(config.servos().front_left_knee());
+        rearLeftWaist.rebindChannel(config.servos().rear_left_waist());
+        rearLeftHip.rebindChannel(config.servos().rear_left_hip());
+        rearLeftKnee.rebindChannel(config.servos().rear_left_knee());
+        rearRightWaist.rebindChannel(config.servos().rear_right_waist());
+        rearRightHip.rebindChannel(config.servos().rear_right_hip());
+        rearRightKnee.rebindChannel(config.servos().rear_right_knee());
+        headNeck.rebindChannel(config.servos().head_neck());
     } catch (const std::system_error &ex) {
-        status.errors.push_back(DogError{DogErrorCode::i2c, ex.what()});
+        add_i2c_error(status, ex.what());
         return CommandResult::failed;
     }
 
@@ -316,41 +333,35 @@ CommandResult Dog::replaceConfig(const Config &config, const std::string &pin) {
 // ================================================================================
 
 void Dog::pollImuUnlocked() {
-    ImuReading reading;
-    reading.ok = imu.isOpen();
-    if (reading.ok == false) {
-        status.imu = reading;
+    doggy::v1::Imu *reading = status.mutable_imu();
+    reading->set_ok(imu.isOpen());
+    if (reading->ok() == false) {
         return;
     }
 
     try {
-        reading.accel = imu.readAccelerometer();
-        reading.gyro = imu.readGyro();
-        reading.temperature_c = imu.readTemperature();
+        copy_vec3(reading->mutable_accel(), imu.readAccelerometer());
+        copy_vec3(reading->mutable_gyro(), imu.readGyro());
+        reading->set_temperature_c(imu.readTemperature());
     } catch (const std::system_error &) {
-        reading.ok = false;
+        reading->set_ok(false);
     }
-
-    status.imu = reading;
 }
 
 // ================================================================================
 
 void Dog::pollBatteryUnlocked() {
-    BatteryReading reading;
-    reading.ok = ads.isOpen();
-    if (reading.ok == false) {
-        status.battery = reading;
+    doggy::v1::Battery *reading = status.mutable_battery();
+    reading->set_ok(ads.isOpen());
+    if (reading->ok() == false) {
         return;
     }
 
     try {
-        reading.voltage_v = ads.readBatteryVoltage();
+        reading->set_voltage_v(ads.readBatteryVoltage());
     } catch (const std::system_error &) {
-        reading.ok = false;
+        reading->set_ok(false);
     }
-
-    status.battery = reading;
 }
 
 // ================================================================================

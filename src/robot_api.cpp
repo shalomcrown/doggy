@@ -7,7 +7,7 @@
 
 // ================================================================================
 
-RobotApi::RobotApi() : RobotApi(Config{}, {}, std::make_unique<NullSystemControl>()) {
+RobotApi::RobotApi() : RobotApi(default_config(), {}, std::make_unique<NullSystemControl>()) {
 }
 
 // ================================================================================
@@ -39,11 +39,11 @@ CommandResult RobotApi::authorizePinUnlocked(const std::string &pin) {
         return CommandResult::rate_limited;
     }
 
-    if (config_.system.pin_is_set() == false) {
+    if (pin_is_set(config_) == false) {
         return CommandResult::pin_unset;
     }
 
-    if (Config::pin_matches(pin, config_.system.pin_hash) == false) {
+    if (pin_matches(pin, config_.system().pin_hash()) == false) {
         pin_failures_ += 1;
         if (pin_failures_ >= kPinMaxFailures) {
             pin_lockout_until_ = now + std::chrono::seconds(kPinLockoutSeconds);
@@ -61,12 +61,12 @@ CommandResult RobotApi::authorizePinUnlocked(const std::string &pin) {
 // ================================================================================
 
 CommandResult RobotApi::saveConfigUnlocked(const Config &config) {
-    const SystemConfig kept_pin = config_.system;
+    const doggy::v1::System kept_pin = config_.system();
     Config next = config;
-    next.system = kept_pin;
+    *next.mutable_system() = kept_pin;
     try {
         if (config_path_.empty() == false) {
-            Config::save_file(next, config_path_);
+            config_save_file(next, config_path_);
         }
     } catch (const ConfigError &) {
         return CommandResult::failed;
@@ -115,20 +115,20 @@ CommandResult RobotApi::setSystemPin(const std::string &pin,
         return CommandResult::busy;
     }
 
-    if (Config::pin_length_ok(pin) == false) {
+    if (pin_length_ok(pin) == false) {
         return CommandResult::bad_pin;
     }
 
-    if (config_.system.pin_is_set()
-            && Config::pin_matches(current_pin, config_.system.pin_hash) == false) {
+    if (pin_is_set(config_)
+            && pin_matches(current_pin, config_.system().pin_hash()) == false) {
         return CommandResult::pin_invalid;
     }
 
     try {
         Config next = config_;
-        next.system.pin_hash = Config::hash_pin(pin);
+        next.mutable_system()->set_pin_hash(hash_pin(pin));
         if (config_path_.empty() == false) {
-            Config::save_file(next, config_path_);
+            config_save_file(next, config_path_);
         }
         config_ = std::move(next);
     } catch (const ConfigError &) {

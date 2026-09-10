@@ -7,8 +7,10 @@
 # Usage:
 #   ./install.sh [options] <user@host> [path/to.deb]
 #
-# If the .deb path is omitted, the newest *.deb under build/ is used
-# (override search root with DOGGY_DEB_ROOT).
+# If the .deb path is omitted, the newest firmware package
+# (shaloms-doggy_*.deb) under build/ is used. Laptop operator debs
+# (shaloms-doggy-lora-operator) are ignored. Override the search root
+# with DOGGY_DEB_ROOT.
 #
 # Options:
 #   --dry-run     Print scp/ssh commands, do not execute
@@ -79,6 +81,11 @@ case "$HOST" in
     *@*@*) die "Invalid host: $HOST" ;;
 esac
 # ── resolve .deb ──────────────────────────────────────────────────────────────
+# Firmware CPack names: shaloms-doggy_<version>_<arch>.deb
+# Operator debs (shaloms-doggy-lora-operator_*.deb) are not selected.
+
+# ================================================================================
+
 find_newest_deb() {
     local f newest=""
     [ -d "$DEB_ROOT" ] || return 1
@@ -88,13 +95,13 @@ find_newest_deb() {
         elif [ "$f" -nt "$newest" ]; then
             newest="$f"
         fi
-    done < <(find "$DEB_ROOT" -type f -name '*.deb' 2>/dev/null)
+    done < <(find "$DEB_ROOT" -type f -name 'shaloms-doggy_*.deb' 2>/dev/null)
     [ -n "$newest" ] || return 1
     printf '%s' "$newest"
 }
 if [ -z "$DEB" ]; then
     DEB="$(find_newest_deb)" || die \
-        "No .deb found under $DEB_ROOT. Build one with: ./build.sh"
+        "No firmware .deb (shaloms-doggy_*.deb) found under $DEB_ROOT. Build one with: ./build.sh"
 fi
 [ -f "$DEB" ] || die "Debian package is not a file: $DEB"
 case "$DEB" in
@@ -102,6 +109,9 @@ case "$DEB" in
     *) die "File is not a .deb: $DEB" ;;
 esac
 REMOTE_NAME="$(basename -- "$DEB")"
+case "$REMOTE_NAME" in
+    *lora-operator*) die "Refusing operator package $REMOTE_NAME; ./install.sh is for the Pi firmware (shaloms-doggy)" ;;
+esac
 case "$REMOTE_NAME" in
     *[!A-Za-z0-9._+-]*|"") die "Unsafe .deb filename: $REMOTE_NAME" ;;
 esac

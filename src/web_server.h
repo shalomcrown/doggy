@@ -44,6 +44,6 @@ std::string https_redirect_location(const std::string &host_header,
 
 // ================================================================================
 
-std::string default_index_html_path(RobotType type = RobotType::dog);
+std::string default_index_html_path(RobotType type = doggy::v1::DOG);
 
 #endif

@@ -1,14 +1,15 @@
 #include "config.h"
 #include "utils.h"
 
+#include <google/protobuf/util/json_util.h>
 #include <mbedtls/sha256.h>
-#include <nlohmann/json.hpp>
 
 #include <cstdint>
 #include <cstdlib>
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 
@@ -23,21 +24,7 @@ static std::string hex_address(uint8_t address) {
 
 // ================================================================================
 
-static uint8_t parse_address(const nlohmann::json &value, const char *field) {
-    if (value.is_number_integer()) {
-        const int n = value.get<int>();
-        if (n < 0 || n > 0x7F) {
-            throw ConfigError(std::string("config ") + field + " address out of range");
-        }
-
-        return static_cast<uint8_t>(n);
-    }
-
-    if (value.is_string() == false) {
-        throw ConfigError(std::string("config ") + field + " address must be a hex string or integer");
-    }
-
-    const std::string text = value.get<std::string>();
+static uint8_t parse_address_text(const std::string &text, const char *field) {
     std::size_t consumed = 0;
     int n = 0;
     try {
@@ -45,423 +32,233 @@ static uint8_t parse_address(const nlohmann::json &value, const char *field) {
     } catch (const std::exception &) {
         throw ConfigError(std::string("config ") + field + " address is not a number");
     }
-
     if (consumed != text.size() || n < 0 || n > 0x7F) {
         throw ConfigError(std::string("config ") + field + " address out of range");
     }
-
     return static_cast<uint8_t>(n);
 }
 
 // ================================================================================
 
-static int parse_bus(const nlohmann::json &value, const char *field) {
-    if (value.is_number_integer() == false) {
-        throw ConfigError(std::string("config ") + field + " bus must be an integer");
+static void validate_i2c_device(const doggy::v1::I2cDevice &device, const char *name) {
+    if (device.bus() < 0 || device.bus() > 255) {
+        throw ConfigError(std::string("config ") + name + " bus out of range");
     }
-
-    const int bus = value.get<int>();
-    if (bus < 0 || bus > 255) {
-        throw ConfigError(std::string("config ") + field + " bus out of range");
+    if (device.address().empty() == false) {
+        parse_address_text(device.address(), name);
     }
-
-    return bus;
 }
 
 // ================================================================================
 
-static int parse_channel(const nlohmann::json &value, const char *field) {
-    if (value.is_number_integer() == false) {
-        throw ConfigError(std::string("config ") + field + " must be an integer");
-    }
-
-    const int channel = value.get<int>();
-    if (channel < 0 || channel > 15) {
+static void validate_channel(int channel, const char *field, int max_value) {
+    if (channel < 0 || channel > max_value) {
         throw ConfigError(std::string("config ") + field + " channel out of range");
     }
-
-    return channel;
 }
 
 // ================================================================================
 
-static RobotType parse_robot_type(const nlohmann::json &value) {
-    if (value.is_string() == false) {
-        throw ConfigError("config robot.type must be a string");
+static void validate_lora(const doggy::v1::Lora &lora) {
+    switch (lora.baud()) {
+        case 0:
+        case 9600:
+        case 19200:
+        case 38400:
+        case 57600:
+        case 115200:
+            break;
+        default:
+            throw ConfigError("config lora.baud must be 9600, 19200, 38400, 57600, or 115200");
     }
-
-    const std::string type = value.get<std::string>();
-    if (type == "DOG") {
-        return RobotType::dog;
+    if (lora.txch() < 0 || lora.txch() > 80) {
+        throw ConfigError("config lora.txch out of range");
     }
-    if (type == "ROVER") {
-        return RobotType::rover;
+    if (lora.rxch() < 0 || lora.rxch() > 80) {
+        throw ConfigError("config lora.rxch out of range");
     }
-
-    throw ConfigError("config robot.type must be DOG or ROVER");
-}
-
-// ================================================================================
-
-static MotorDirection parse_motor_direction(const nlohmann::json &value,
-                                            const char *field) {
-    if (value.is_string() == false) {
-        throw ConfigError(std::string("config motors.") + field
-                          + ".direction must be a string");
+    if (lora.device().find('\n') != std::string::npos
+            || lora.device().find('\r') != std::string::npos) {
+        throw ConfigError("config lora.device must not contain a newline");
     }
-
-    const std::string direction = value.get<std::string>();
-    if (direction == "forward") {
-        return MotorDirection::forward;
-    }
-    if (direction == "reverse") {
-        return MotorDirection::reverse;
-    }
-
-    throw ConfigError(std::string("config motors.") + field
-                      + ".direction must be forward or reverse");
-}
-
-// ================================================================================
-
-static void apply_motor(MotorConfig &motor, const nlohmann::json &obj, const char *field) {
-    if (obj.is_object() == false) {
-        throw ConfigError(std::string("config motors.") + field + " must be an object");
-    }
-
-    if (obj.contains("channel")) {
-        motor.channel = parse_channel(obj["channel"], field);
-    }
-    if (obj.contains("enabled")) {
-        if (obj["enabled"].is_boolean() == false) {
-            throw ConfigError(std::string("config motors.") + field
-                              + ".enabled must be boolean");
+    if (lora.air_key().empty() == false) {
+        if (lora.air_key().find('\n') != std::string::npos
+                || lora.air_key().find('\r') != std::string::npos) {
+            throw ConfigError("config lora.air_key passphrase must not contain a newline");
         }
-        motor.enabled = obj["enabled"].get<bool>();
-    }
-    if (obj.contains("direction")) {
-        motor.direction = parse_motor_direction(obj["direction"], field);
-    }
-}
-
-// ================================================================================
-
-static void apply_i2c_device(I2cDeviceConfig &device, const nlohmann::json &obj, const char *field) {
-    if (obj.is_object() == false) {
-        throw ConfigError(std::string("config i2c.") + field + " must be an object");
-    }
-
-    if (obj.contains("bus")) {
-        device.bus = parse_bus(obj["bus"], field);
-    }
-
-    if (obj.contains("address")) {
-        device.address = parse_address(obj["address"], field);
-    }
-}
-
-// ================================================================================
-
-static int parse_frequency_hz(const nlohmann::json &value) {
-    if (value.is_number_integer() == false) {
-        throw ConfigError("config lora.frequency_hz must be an integer");
-    }
-
-    const int hz = value.get<int>();
-    if (hz != 0 && (hz < 150000000 || hz > 960000000)) {
-        throw ConfigError("config lora.frequency_hz out of range");
-    }
-
-    return hz;
-}
-
-// ================================================================================
-
-static void apply_lora(LoraConfig &lora, const nlohmann::json &obj) {
-    if (obj.is_object() == false) {
-        throw ConfigError("config lora must be an object");
-    }
-
-    if (obj.contains("enabled")) {
-        if (obj["enabled"].is_boolean() == false) {
-            throw ConfigError("config lora.enabled must be boolean");
-        }
-        lora.enabled = obj["enabled"].get<bool>();
-    }
-    if (obj.contains("device")) {
-        if (obj["device"].is_string() == false) {
-            throw ConfigError("config lora.device must be a string");
-        }
-        lora.device = obj["device"].get<std::string>();
-        if (lora.device.find('\n') != std::string::npos
-                || lora.device.find('\r') != std::string::npos) {
-            throw ConfigError("config lora.device must not contain a newline");
-        }
-    }
-    if (obj.contains("country")) {
-        if (obj["country"].is_string() == false) {
-            throw ConfigError("config lora.country must be a string");
-        }
-        lora.country = obj["country"].get<std::string>();
-        if (lora.country.size() > 8) {
-            throw ConfigError("config lora.country is too long");
-        }
-    }
-    if (obj.contains("frequency_hz")) {
-        lora.frequency_hz = parse_frequency_hz(obj["frequency_hz"]);
-    }
-}
-
-// ================================================================================
-
-static void apply_json(Config &config, const nlohmann::json &root) {
-    if (root.is_object() == false) {
-        throw ConfigError("config root must be a JSON object");
-    }
-
-    if (root.contains("robot")) {
-        const auto &robot = root["robot"];
-        if (robot.is_object() == false) {
-            throw ConfigError("config robot must be an object");
-        }
-        if (robot.contains("type")) {
-            config.robot.type = parse_robot_type(robot["type"]);
-        }
-    }
-
-    if (root.contains("i2c")) {
-        const auto &i2c = root["i2c"];
-        if (i2c.is_object() == false) {
-            throw ConfigError("config i2c must be an object");
-        }
-
-        if (i2c.contains("servo_board")) {
-            apply_i2c_device(config.i2c.servo_board, i2c["servo_board"], "servo_board");
-        }
-
-        if (i2c.contains("imu")) {
-            apply_i2c_device(config.i2c.imu, i2c["imu"], "imu");
-        }
-
-        if (i2c.contains("ads")) {
-            apply_i2c_device(config.i2c.ads, i2c["ads"], "ads");
-        }
-    }
-
-    if (root.contains("servos")) {
-        const auto &servos = root["servos"];
-        if (servos.is_object() == false) {
-            throw ConfigError("config servos must be an object");
-        }
-
-        const auto set_ch = [&](const char *key, int &dest) {
-            if (servos.contains(key)) {
-                dest = parse_channel(servos[key], key);
-            }
-        };
-
-        set_ch("front_right_waist", config.servos.front_right_waist);
-        set_ch("front_right_hip", config.servos.front_right_hip);
-        set_ch("front_right_knee", config.servos.front_right_knee);
-        set_ch("front_left_waist", config.servos.front_left_waist);
-        set_ch("front_left_hip", config.servos.front_left_hip);
-        set_ch("front_left_knee", config.servos.front_left_knee);
-        set_ch("rear_left_waist", config.servos.rear_left_waist);
-        set_ch("rear_left_hip", config.servos.rear_left_hip);
-        set_ch("rear_left_knee", config.servos.rear_left_knee);
-        set_ch("rear_right_waist", config.servos.rear_right_waist);
-        set_ch("rear_right_hip", config.servos.rear_right_hip);
-        set_ch("rear_right_knee", config.servos.rear_right_knee);
-        set_ch("head_neck", config.servos.head_neck);
-    }
-
-    if (root.contains("motors")) {
-        const auto &motors = root["motors"];
-        if (motors.is_object() == false) {
-            throw ConfigError("config motors must be an object");
-        }
-        if (motors.contains("front_left")) {
-            apply_motor(config.motors.front_left, motors["front_left"], "front_left");
-        }
-        if (motors.contains("front_right")) {
-            apply_motor(config.motors.front_right, motors["front_right"], "front_right");
-        }
-        if (motors.contains("rear_left")) {
-            apply_motor(config.motors.rear_left, motors["rear_left"], "rear_left");
-        }
-        if (motors.contains("rear_right")) {
-            apply_motor(config.motors.rear_right, motors["rear_right"], "rear_right");
-        }
-    }
-
-    if (root.contains("lora")) {
-        apply_lora(config.lora, root["lora"]);
-    }
-
-    if (root.contains("system")) {
-        const auto &system = root["system"];
-        if (system.is_object() == false) {
-            throw ConfigError("config system must be an object");
-        }
-
-        if (system.contains("pin_hash")) {
-            if (system["pin_hash"].is_string() == false) {
-                throw ConfigError("config system.pin_hash must be a string");
-            }
-
-            config.system.pin_hash = system["pin_hash"].get<std::string>();
+        const std::size_t first = lora.air_key().find_first_not_of(" \t\f\v");
+        const std::size_t last = lora.air_key().find_last_not_of(" \t\f\v");
+        const std::size_t normalized_size =
+                first == std::string::npos ? 0 : last - first + 1;
+        if (normalized_size < 8 || normalized_size > 128) {
+            throw ConfigError("config lora.air_key passphrase must be 8 to 128 bytes");
         }
     }
 }
 
 // ================================================================================
 
-static nlohmann::json i2c_device_json(const I2cDeviceConfig &device) {
-    return nlohmann::json{
-        {"bus", device.bus},
-        {"address", hex_address(device.address)}
-    };
+static void validate_config(const Config &config) {
+    validate_i2c_device(config.i2c().servo_board(), "servo_board");
+    validate_i2c_device(config.i2c().imu(), "imu");
+    validate_i2c_device(config.i2c().ads(), "ads");
+    validate_channel(config.servos().front_right_waist(), "front_right_waist", 15);
+    validate_channel(config.servos().front_right_hip(), "front_right_hip", 15);
+    validate_channel(config.servos().front_right_knee(), "front_right_knee", 15);
+    validate_channel(config.servos().front_left_waist(), "front_left_waist", 15);
+    validate_channel(config.servos().front_left_hip(), "front_left_hip", 15);
+    validate_channel(config.servos().front_left_knee(), "front_left_knee", 15);
+    validate_channel(config.servos().rear_left_waist(), "rear_left_waist", 15);
+    validate_channel(config.servos().rear_left_hip(), "rear_left_hip", 15);
+    validate_channel(config.servos().rear_left_knee(), "rear_left_knee", 15);
+    validate_channel(config.servos().rear_right_waist(), "rear_right_waist", 15);
+    validate_channel(config.servos().rear_right_hip(), "rear_right_hip", 15);
+    validate_channel(config.servos().rear_right_knee(), "rear_right_knee", 15);
+    validate_channel(config.servos().head_neck(), "head_neck", 15);
+    validate_lora(config.lora());
 }
 
 // ================================================================================
 
-static const char *robot_type_json(RobotType type) {
-    switch (type) {
-        case RobotType::dog: return "DOG";
-        case RobotType::rover: return "ROVER";
+static void set_motor_default(doggy::v1::Motor *motor, int channel) {
+    motor->set_channel(channel);
+    motor->set_enabled(true);
+    motor->set_direction(doggy::v1::forward);
+}
+
+// ================================================================================
+
+void fill_config_defaults(Config &config) {
+    if (config.robot().has_type() == false) {
+        config.mutable_robot()->set_type(doggy::v1::DOG);
     }
-
-    return "DOG";
-}
-
-// ================================================================================
-
-static const char *motor_direction_json(MotorDirection direction) {
-    switch (direction) {
-        case MotorDirection::forward: return "forward";
-        case MotorDirection::reverse: return "reverse";
+    doggy::v1::I2cConfig *i2c = config.mutable_i2c();
+    if (i2c->servo_board().has_bus() == false) {
+        i2c->mutable_servo_board()->set_bus(1);
     }
-
-    return "forward";
-}
-
-// ================================================================================
-
-static nlohmann::json motor_json(const MotorConfig &motor) {
-    return {
-        {"channel", motor.channel},
-        {"enabled", motor.enabled},
-        {"direction", motor_direction_json(motor.direction)}
-    };
-}
-
-// ================================================================================
-
-static nlohmann::json to_json(const Config &config) {
-    nlohmann::json root = {
-        {"robot", {{"type", robot_type_json(config.robot.type)}}},
-        {"i2c",
-         {{"servo_board", i2c_device_json(config.i2c.servo_board)},
-          {"imu", i2c_device_json(config.i2c.imu)},
-          {"ads", i2c_device_json(config.i2c.ads)}}},
-        {"servos",
-         {{"front_right_waist", config.servos.front_right_waist},
-          {"front_right_hip", config.servos.front_right_hip},
-          {"front_right_knee", config.servos.front_right_knee},
-          {"front_left_waist", config.servos.front_left_waist},
-          {"front_left_hip", config.servos.front_left_hip},
-          {"front_left_knee", config.servos.front_left_knee},
-          {"rear_left_waist", config.servos.rear_left_waist},
-          {"rear_left_hip", config.servos.rear_left_hip},
-          {"rear_left_knee", config.servos.rear_left_knee},
-          {"rear_right_waist", config.servos.rear_right_waist},
-          {"rear_right_hip", config.servos.rear_right_hip},
-          {"rear_right_knee", config.servos.rear_right_knee},
-          {"head_neck", config.servos.head_neck}}},
-        {"motors",
-         {{"front_left", motor_json(config.motors.front_left)},
-          {"front_right", motor_json(config.motors.front_right)},
-          {"rear_left", motor_json(config.motors.rear_left)},
-          {"rear_right", motor_json(config.motors.rear_right)}}},
-        {"lora",
-         {{"enabled", config.lora.enabled},
-          {"device", config.lora.device},
-          {"country", config.lora.country},
-          {"frequency_hz", config.lora.frequency_hz}}}
-    };
-    if (config.system.pin_hash.empty() == false) {
-        root["system"] = {{"pin_hash", config.system.pin_hash}};
+    if (i2c->servo_board().has_address() == false) {
+        i2c->mutable_servo_board()->set_address(hex_address(0x40));
     }
-
-    return root;
+    if (i2c->imu().has_bus() == false) {
+        i2c->mutable_imu()->set_bus(1);
+    }
+    if (i2c->imu().has_address() == false) {
+        i2c->mutable_imu()->set_address(hex_address(0x68));
+    }
+    if (i2c->ads().has_bus() == false) {
+        i2c->mutable_ads()->set_bus(1);
+    }
+    if (i2c->ads().has_address() == false) {
+        i2c->mutable_ads()->set_address(hex_address(0x48));
+    }
+    doggy::v1::ServoChannels *servos = config.mutable_servos();
+    if (servos->has_front_right_waist() == false) {
+        servos->set_front_right_waist(11);
+    }
+    if (servos->has_front_right_hip() == false) {
+        servos->set_front_right_hip(12);
+    }
+    if (servos->has_front_right_knee() == false) {
+        servos->set_front_right_knee(13);
+    }
+    if (servos->has_front_left_waist() == false) {
+        servos->set_front_left_waist(4);
+    }
+    if (servos->has_front_left_hip() == false) {
+        servos->set_front_left_hip(3);
+    }
+    if (servos->has_front_left_knee() == false) {
+        servos->set_front_left_knee(2);
+    }
+    if (servos->has_rear_left_waist() == false) {
+        servos->set_rear_left_waist(7);
+    }
+    if (servos->has_rear_left_hip() == false) {
+        servos->set_rear_left_hip(6);
+    }
+    if (servos->has_rear_left_knee() == false) {
+        servos->set_rear_left_knee(5);
+    }
+    if (servos->has_rear_right_waist() == false) {
+        servos->set_rear_right_waist(8);
+    }
+    if (servos->has_rear_right_hip() == false) {
+        servos->set_rear_right_hip(9);
+    }
+    if (servos->has_rear_right_knee() == false) {
+        servos->set_rear_right_knee(10);
+    }
+    if (servos->has_head_neck() == false) {
+        servos->set_head_neck(15);
+    }
+    doggy::v1::Motors *motors = config.mutable_motors();
+    if (motors->has_front_left() == false) {
+        set_motor_default(motors->mutable_front_left(), 0);
+    }
+    if (motors->has_front_right() == false) {
+        set_motor_default(motors->mutable_front_right(), 1);
+    }
+    if (motors->has_rear_left() == false) {
+        set_motor_default(motors->mutable_rear_left(), 2);
+    }
+    if (motors->has_rear_right() == false) {
+        set_motor_default(motors->mutable_rear_right(), 3);
+    }
+    doggy::v1::Lora *lora = config.mutable_lora();
+    if (lora->has_enabled() == false) {
+        lora->set_enabled(false);
+    }
+    if (lora->has_baud() == false || lora->baud() == 0) {
+        lora->set_baud(115200);
+    }
+    if (lora->has_band() == false) {
+        lora->set_band(doggy::v1::HF);
+    }
+    if (lora->has_txch() == false) {
+        lora->set_txch(18);
+    }
+    if (lora->has_rxch() == false) {
+        lora->set_rxch(18);
+    }
 }
 
 // ================================================================================
 
-std::string Config::default_path() {
-    if (const char *env = std::getenv("DOGGY_CONFIG")) {
-        if (env[0] != '\0') {
-            return env;
-        }
-    }
-
-    return kDefaultConfigPath;
-}
-
-// ================================================================================
-
-Config Config::from_json_string(const std::string &text) {
-    nlohmann::json root;
-    try {
-        root = nlohmann::json::parse(text);
-    } catch (const nlohmann::json::exception &ex) {
-        throw ConfigError(std::string("invalid config JSON: ") + ex.what());
-    }
-
+Config default_config() {
     Config config;
-    apply_json(config, root);
+    fill_config_defaults(config);
     return config;
 }
 
 // ================================================================================
 
-Config Config::overlay_json_string(const Config &base, const std::string &text) {
-    nlohmann::json root;
-    try {
-        root = nlohmann::json::parse(text);
-    } catch (const nlohmann::json::exception &ex) {
-        throw ConfigError(std::string("invalid config JSON: ") + ex.what());
+uint8_t i2c_address_byte(const doggy::v1::I2cDevice &device) {
+    if (device.address().empty()) {
+        return 0;
     }
-
-    Config config = base;
-    apply_json(config, root);
-    return config;
+    return parse_address_text(device.address(), "i2c");
 }
 
 // ================================================================================
 
-std::string Config::to_json_string() const {
-    return to_json(*this).dump();
+std::vector<std::string> status_error_messages(DogStatus status) {
+    std::vector<std::string> messages;
+    messages.reserve(static_cast<std::size_t>(status.errors_size()));
+    for (const doggy::v1::Error &err : status.errors()) {
+        messages.push_back(err.message());
+    }
+    return messages;
 }
 
 // ================================================================================
 
-std::string Config::to_public_json_string() const {
-    nlohmann::json root = to_json(*this);
-    root.erase("system");
-    root["system"] = {{"pin_set", system.pin_is_set()}};
-    return root.dump();
+bool pin_is_set(const Config &config) {
+    return config.system().pin_hash().empty() == false;
 }
 
 // ================================================================================
 
-bool SystemConfig::pin_is_set() const {
-    return pin_hash.empty() == false;
-}
-
-// ================================================================================
-
-bool Config::pin_length_ok(const std::string &pin) {
+bool pin_length_ok(const std::string &pin) {
     return pin.size() >= static_cast<std::size_t>(kPinMinLength)
             && pin.size() <= static_cast<std::size_t>(kPinMaxLength);
 }
@@ -477,7 +274,6 @@ static std::string hash_pin_with_salt(const std::string &pin, const std::string 
     if (mbedtls_sha256(material.data(), material.size(), digest, 0) != 0) {
         throw ConfigError("could not hash PIN");
     }
-
     return to_hex(digest, sizeof(digest));
 }
 
@@ -489,43 +285,37 @@ static std::string random_pin_salt_hex() {
     if (fd < 0) {
         throw ConfigError("could not open /dev/urandom for PIN salt");
     }
-
     const ssize_t got = read(fd, raw, sizeof(raw));
     close(fd);
     if (got != static_cast<ssize_t>(sizeof(raw))) {
         throw ConfigError("could not read random bytes for PIN salt");
     }
-
     return to_hex(raw, sizeof(raw));
 }
 
 // ================================================================================
 
-std::string Config::hash_pin(const std::string &pin) {
+std::string hash_pin(const std::string &pin) {
     if (pin_length_ok(pin) == false) {
         throw ConfigError("PIN length out of range");
     }
-
     const std::string salt = random_pin_salt_hex();
     return std::string("sha256$") + salt + "$" + hash_pin_with_salt(pin, salt);
 }
 
 // ================================================================================
 
-bool Config::pin_matches(const std::string &pin, const std::string &hash) {
+bool pin_matches(const std::string &pin, const std::string &hash) {
     if (hash.empty() || pin_length_ok(pin) == false) {
         return false;
     }
-
     if (hash.compare(0, 7, "sha256$") != 0) {
         return false;
     }
-
     const std::size_t salt_end = hash.find('$', 7);
     if (salt_end == std::string::npos || salt_end + 1 >= hash.size()) {
         return false;
     }
-
     const std::string salt = hash.substr(7, salt_end - 7);
     const std::string expected = std::string("sha256$") + salt + "$"
             + hash_pin_with_salt(pin, salt);
@@ -534,58 +324,157 @@ bool Config::pin_matches(const std::string &pin, const std::string &hash) {
 
 // ================================================================================
 
-Config Config::load_file(const std::string &path) {
-    std::ifstream in(path);
-    if (in.is_open() == false) {
-        throw ConfigError("could not read config file: " + path);
+std::string proto_to_json(const google::protobuf::Message &message) {
+    google::protobuf::util::JsonPrintOptions options;
+    options.preserve_proto_field_names = true;
+    std::string out;
+    const auto status = google::protobuf::util::MessageToJsonString(message, &out, options);
+    if (status.ok() == false) {
+        throw ConfigError(std::string("protobuf json: ") + status.ToString());
     }
+    return out;
+}
 
-    nlohmann::json root;
-    try {
-        in >> root;
-    } catch (const nlohmann::json::exception &ex) {
-        throw ConfigError(std::string("invalid config JSON: ") + ex.what());
+// ================================================================================
+
+bool proto_from_json(const std::string &text, google::protobuf::Message &message) {
+    google::protobuf::util::JsonParseOptions options;
+    options.ignore_unknown_fields = false;
+    const auto status = google::protobuf::util::JsonStringToMessage(text, &message, options);
+    return status.ok();
+}
+
+// ================================================================================
+
+std::string config_to_json(const Config &config) {
+    Config file = config;
+    file.clear_pin();
+    file.mutable_system()->clear_pin_set();
+    file.mutable_lora()->clear_air_key_set();
+    google::protobuf::util::JsonPrintOptions options;
+    options.preserve_proto_field_names = true;
+    options.add_whitespace = true;
+    std::string out;
+    const auto status = google::protobuf::util::MessageToJsonString(file, &out, options);
+    if (status.ok() == false) {
+        throw ConfigError(std::string("protobuf json: ") + status.ToString());
     }
+    return out;
+}
 
+// ================================================================================
+
+std::string config_to_public_json(const Config &config) {
+    Config pub = config;
+    pub.clear_pin();
+    const bool key_set = pub.lora().air_key().empty() == false;
+    pub.mutable_lora()->clear_air_key();
+    pub.mutable_lora()->set_air_key_set(key_set);
+    pub.mutable_system()->clear_pin_hash();
+    pub.mutable_system()->set_pin_set(pin_is_set(config));
+    return proto_to_json(pub);
+}
+
+// ================================================================================
+
+Config config_from_json(const std::string &text) {
     Config config;
-    apply_json(config, root);
+    if (proto_from_json(text, config) == false) {
+        throw ConfigError("invalid config JSON");
+    }
+    fill_config_defaults(config);
+    validate_config(config);
     return config;
 }
 
 // ================================================================================
 
-void Config::save_file(const Config &config, const std::string &path) {
+Config config_overlay_json(const Config &base, const std::string &text) {
+    Config overlay;
+    if (proto_from_json(text, overlay) == false) {
+        throw ConfigError("invalid config JSON");
+    }
+    Config next = base;
+    const std::string kept_key = next.lora().air_key();
+    next.MergeFrom(overlay);
+    if (overlay.lora().air_key().empty()) {
+        next.mutable_lora()->set_air_key(kept_key);
+    }
+    next.clear_pin();
+    fill_config_defaults(next);
+    validate_config(next);
+    return next;
+}
+
+// ================================================================================
+
+std::string config_default_path() {
+    if (const char *env = std::getenv("DOGGY_CONFIG")) {
+        if (env[0] != '\0') {
+            return env;
+        }
+    }
+    return kDefaultConfigPath;
+}
+
+// ================================================================================
+
+Config config_load_file(const std::string &path) {
+    std::ifstream in(path);
+    if (in.is_open() == false) {
+        throw ConfigError("could not read config file: " + path);
+    }
+    const std::string text((std::istreambuf_iterator<char>(in)),
+            std::istreambuf_iterator<char>());
+    return config_from_json(text);
+}
+
+// ================================================================================
+
+void config_save_file(const Config &config, const std::string &path) {
     const fs::path file(path);
     if (file.has_parent_path()) {
         fs::create_directories(file.parent_path());
     }
-
+    if (config.lora().air_key().empty() == false) {
+        const int fd = open(path.c_str(), O_WRONLY | O_CREAT, 0600);
+        if (fd < 0) {
+            throw ConfigError("could not secure config file: " + path);
+        }
+        const int chmod_result = fchmod(fd, 0600);
+        close(fd);
+        if (chmod_result != 0) {
+            throw ConfigError("could not secure config file: " + path);
+        }
+    }
     std::ofstream out(path);
     if (out.is_open() == false) {
         throw ConfigError("could not write config file: " + path);
     }
-
-    out << to_json(config).dump(2) << '\n';
+    out << config_to_json(config);
     if (out.fail()) {
         throw ConfigError("could not write config file: " + path);
+    }
+    out.close();
+    if (config.lora().air_key().empty() == false) {
+        fs::permissions(file, fs::perms::owner_read | fs::perms::owner_write,
+                fs::perm_options::replace);
     }
 }
 
 // ================================================================================
 
-Config Config::load_or_create(const std::string &path, std::string *create_error) {
+Config config_load_or_create(const std::string &path, std::string *create_error) {
     if (fs::is_regular_file(path)) {
-        return load_file(path);
+        return config_load_file(path);
     }
-
-    Config config;
+    Config config = default_config();
     try {
-        save_file(config, path);
+        config_save_file(config, path);
     } catch (const std::exception &ex) {
         if (create_error != nullptr) {
             *create_error = ex.what();
         }
     }
-
     return config;
 }

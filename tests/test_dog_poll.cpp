@@ -28,16 +28,16 @@ int main() {
     const DogStatus second = dog.getStatus();
 
     expect(true, "poll does not throw");
-    if (first.imu.ok) {
-        expect(second.imu.ok, "open IMU stays ok across polls");
+    if (first.imu().ok()) {
+        expect(second.imu().ok(), "open IMU stays ok across polls");
     } else {
-        expect(second.imu.ok == false, "closed IMU stays not ok across polls");
+        expect(second.imu().ok() == false, "closed IMU stays not ok across polls");
     }
 
-    if (first.battery.ok) {
-        expect(second.battery.ok, "open ADC stays ok across polls");
+    if (first.battery().ok()) {
+        expect(second.battery().ok(), "open ADC stays ok across polls");
     } else {
-        expect(second.battery.ok == false, "closed ADC stays not ok across polls");
+        expect(second.battery().ok() == false, "closed ADC stays not ok across polls");
     }
 
     const std::filesystem::path dir =
@@ -47,39 +47,39 @@ int main() {
     std::filesystem::create_directories(dir);
     const std::string path = (dir / "doggy.json").string();
 
-    Config next;
-    next.servos.front_right_waist = 1;
-    Dog stored(Config{}, path);
+    Config next = default_config();
+    next.mutable_servos()->set_front_right_waist(1);
+    Dog stored(default_config(), path);
     expect(stored.replaceConfig(next) == CommandResult::ok,
            "replaceConfig writes when path is set");
-    expect(stored.getConfig().servos.front_right_waist == 1,
+    expect(stored.getConfig().servos().front_right_waist() == 1,
            "replaceConfig stores the new channel");
-    expect(stored.listServos().front().id == 1,
+    expect(stored.listServos().front().id() == 1,
            "replaceConfig remaps the servo id now");
-    const Config from_disk = Config::load_file(path);
-    expect(from_disk.servos.front_right_waist == 1,
+    const Config from_disk = config_load_file(path);
+    expect(from_disk.servos().front_right_waist() == 1,
            "replaceConfig persists the channel to disk");
 
     Config typed = stored.getConfig();
-    typed.robot.type = RobotType::rover;
+    typed.mutable_robot()->set_type(doggy::v1::ROVER);
     expect(stored.setSystemPin("1234", "") == CommandResult::ok,
            "PIN can be set for type change");
     expect(stored.replaceConfig(typed, "1234") == CommandResult::ok,
            "type change with PIN succeeds");
-    expect(stored.getConfig().robot.type == RobotType::rover,
+    expect(stored.getConfig().robot().type() == doggy::v1::ROVER,
            "type change is stored in memory");
-    const Config typed_disk = Config::load_file(path);
-    expect(typed_disk.robot.type == RobotType::rover,
+    const Config typed_disk = config_load_file(path);
+    expect(typed_disk.robot().type() == doggy::v1::ROVER,
            "type change persists DOG to ROVER in the config file");
 
     Dog memory_only;
-    Config skipped;
-    skipped.servos.front_right_waist = 2;
+    Config skipped = default_config();
+    skipped.mutable_servos()->set_front_right_waist(2);
     expect(memory_only.replaceConfig(skipped) == CommandResult::ok,
            "replaceConfig with empty path still remaps");
-    expect(memory_only.getConfig().servos.front_right_waist == 2,
+    expect(memory_only.getConfig().servos().front_right_waist() == 2,
            "empty path still stores the new channel in memory");
-    expect(memory_only.listServos().front().id == 2,
+    expect(memory_only.listServos().front().id() == 2,
            "empty path still remaps the servo id");
 
     std::filesystem::remove_all(dir);

@@ -78,6 +78,9 @@ CMakeLists.txt.user*
 compile_commands.json
 
 
+# Generated protobuf (protoc from proto/doggy.proto)
+/lora/internal/pb/*.pb.go
+
 # Agent Platform Bootstrap — START
 # Platform coordination files — gitignored by default so nothing is
 # accidentally committed with your code. Only the platform's OWN files are

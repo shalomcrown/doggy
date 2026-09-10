@@ -1,6 +1,6 @@
 # doggy
 
-Things to do with robot dogs. Firmware for a Freenove robot dog on **Raspberry Pi aarch64** (Pi 5 / 64-bit Raspberry Pi OS). There is no Windows target.
+Things to do with robot dogs. Firmware for a Freenove robot dog on **Raspberry Pi aarch64** (Pi 5 / 64-bit Raspberry Pi OS). The robot runtime is not a Windows target. Laptop LoRa operator clients are **x86_64** (Ubuntu DEB and Windows NSIS).
 
 ## Prerequisites
 
@@ -11,10 +11,11 @@ Run the installer once before building. First-class hosts: **Debian / Raspberry 
 ./install-prereqs.sh --mode native           # force Pi native packages
 ./install-prereqs.sh --mode cross            # Ubuntu aarch64 cross toolchain
 ./install-prereqs.sh --mode all              # native + cross
+./install-prereqs.sh --mode windows        # nsis + nsis-common + go (Windows operator installer)
 ./install-prereqs.sh --dry-run               # preview without making changes
 ```
 
-Native packages include compile deps (`cmake`, `ninja-build`, `g++`) and dev tools (`qtcreator`, `git`, `vim`, `zssh`, `lrzsz`, `i2c-tools`). zlib, I2C SMBus, and IMU vectors are compiled from this tree — no `libdlib-dev`, `libi2c-dev`, or sysroot.
+Native packages include compile deps (`cmake`, `ninja-build`, `g++`, `golang-go`) and dev tools (`qtcreator`, `git`, `vim`, `zssh`, `lrzsz`, `i2c-tools`). `golang-go` builds the `doggy-lora` sidecar (and `GOARCH=arm64` when packaging for the Pi). zlib, I2C SMBus, and IMU vectors are compiled from this tree — no `libdlib-dev`, `libi2c-dev`, or sysroot.
 
 ## Native Raspberry Pi build
 
@@ -54,10 +55,14 @@ The firmware binary stays running and serves a single page (LAN, no login):
 - The IMU section shows the last body MPU6050 sample (accel in g, gyro in °/s, temperature in °C).
 - The battery section shows pack voltage from the ADS7830 (channel 0).
 - The title line (`<h1>` and the browser tab) shows `Doggy <version>` from `GET /api/status`.
-- **Configuration** loads `GET /api/config` and saves with `PUT /api/config`. Robot type is `DOG` or `ROVER` (missing type in the file is a dog). Changing type requires the system PIN, schedules a service restart, and the page tells you to **refresh** afterwards. Servo or motor channel changes apply immediately. I2C bus and address changes are stored and take effect after a restart. Set a **system PIN** here (4–64 characters, hashed in `doggy.json`).
+- **Configuration** loads `GET /api/config` and saves with `PUT /api/config`. Robot type is `DOG` or `ROVER` (missing type in the file is a dog). Changing type requires the system PIN, schedules a service restart, and the page tells you to **refresh** afterwards. Servo or motor channel changes apply immediately. I2C bus and address changes are stored and take effect after a restart. **LoRa** (`lora.enabled`, `device`, `baud`, `band` `HF`|`LF`, `txch`, `rxch` 0–80) is stored the same way and does not restart `doggy`; the `doggy-lora` sidecar opens that USB serial port at the chosen baud (default 115200, 8N1) then enters AT mode and sets `AT+TXCH` / `AT+RXCH`. HF channel 18 is 868 MHz; LF channel 23 is 433 MHz. An 8–128 byte **air passphrase** (`lora.air_key`) is hashed with SHA-256 to derive the AES-256 key; GET JSON only reports `air_key_set`. Both ends must use the same strong passphrase. Set a **system PIN** here (4–64 characters, hashed in `doggy.json`).
 - **Power** can restart `doggy.service`, reboot, or shut down the Pi. Each call is `POST /api/system` with the PIN (not the Unix password). Shutdown asks you to type `SHUTDOWN`. Privilege comes from a packaged polkit rule for user `doggy`.
 
-HTTPS: `DOGGY_HTTPS_PORT` (default `443`). HTTP: `DOGGY_HTTP_PORT` (default `80`) only redirects to HTTPS. Unprivileged runs need ports above 1024. TLS files: `DOGGY_TLS_CERT` / `DOGGY_TLS_KEY`, or `tls.crt` / `tls.key` next to the JSON config (generated on first start if missing; browsers warn once on the self-signed cert). HTML: `DOGGY_WEB_ROOT` or `/usr/share/doggy` after the DEB is installed (`index.html` and `rover.html`). Config: `DOGGY_CONFIG` or `/etc/doggy/doggy.json` (JSON; `robot.type`, servo channels, motor channels/enable/direction, and I2C bus/address for the PCA9685, IMU, and ADS7830). If the file is missing, the process writes compiled defaults there (`postinst` creates `/etc/doggy` owned by `doggy`). A present but invalid file stops startup. `GET /api/config` returns that file shape (hex addresses) plus `system.pin_set` (never the PIN or hash). `PUT /api/config` overlays those fields; a type change also needs `pin` and returns 202 before restart. `POST /api/system/pin` sets the power PIN. `GET /api/status` includes `"type"`, the stamped `version`, hardware errors, cached IMU and battery readings, and either servo PWM/angle (`angle` is `null` when PWM is 0) or rover motors plus last `speed`/`turn`. The page shows errors at the top. The firmware main loop samples the IMU and battery ADC every 200 ms independently of the web UI.
+HTTPS: `DOGGY_HTTPS_PORT` (default `443`). HTTP: `DOGGY_HTTP_PORT` (default `80`) only redirects to HTTPS. Unprivileged runs need ports above 1024. TLS files: `DOGGY_TLS_CERT` / `DOGGY_TLS_KEY`, or `tls.crt` / `tls.key` next to the JSON config (generated on first start if missing; browsers warn once on the self-signed cert). HTML: `DOGGY_WEB_ROOT` or `/usr/share/doggy` after the DEB is installed (`index.html`, `rover.html`, `lora.html`). Config: `DOGGY_CONFIG` or `/etc/doggy/doggy.json` (JSON; `robot.type`, `lora`, servo channels, motor channels/enable/direction, and I2C bus/address for the PCA9685, IMU, and ADS7830). If the file is missing, the process writes compiled defaults there (`postinst` creates `/etc/doggy` owned by `doggy`). A present but invalid file stops startup. `GET /api/config` returns that file shape (hex addresses) plus `system.pin_set` (never the PIN or hash). `PUT /api/config` overlays those fields; a type change also needs `pin` and returns 202 before restart. `POST /api/system/pin` sets the power PIN. `GET /api/status` includes `"type"`, the stamped `version`, hardware errors, cached IMU and battery readings, and either servo PWM/angle (`angle` is omitted when PWM is 0) or rover motors plus last `speed`/`turn`. Domain models are defined in `proto/doggy.proto` (HTTP uses ProtoJSON; the LoRa hop uses binary protobuf).
+
+The DEB also installs `doggy-lora` (`User=doggy`, `dialout`). Robot mode reads radio fields from `https://127.0.0.1/api/config` (self-signed cert) and the air key from `/etc/doggy/doggy.json` (the key is not in public GET JSON). It opens `lora.device` at `lora.baud` (115200 8N1 unless you change it), writes Waveshare AT (`+++`, 200 ms pause, then `AT+TXCH`, `AT+RXCH`, `AT+EXIT`, waiting for `OK`), **keeps the port open**, and answers operator HTTP requests over LoRa (protobuf + AES-256-GCM).
+
+Laptop operator (separate packages, not the Pi DEB): `./build-operator.sh` builds an **amd64** Ubuntu package `shaloms-doggy-lora-operator` and/or a Windows NSIS installer. Both bind `http://127.0.0.1:8765/`. Ubuntu enables `doggy-lora-operator.service` and a desktop icon. Windows installs a LocalSystem service `DoggyLoraOperator` (needed for USB serial) and Start Menu/Desktop shortcuts to that URL. Settings live in `/var/lib/doggy-lora/lora.json` or `%ProgramData%\doggy\lora.json`. `/api/lora` is that local file; dog/rover `/api/*` is proxied over the radio. Set the same air passphrase on both ends.
 
 Logs go to `/var/log/doggy/doggy.log` (override with `DOGGY_LOG_DIR`). The file is rolled on every start and when it exceeds the size cap; 10 files are kept and rolled copies are named `doggy-YYYY-MM-DD-HHMM.log.gz`. The log directory is `0755` and log files are world-readable (`0644`). `/api/...` requests are logged except successful `GET /api/status` (the UI polls it at 5 Hz). Config saves log the resulting robot type and whether it changed; they never log the PIN. HTTP failures (4xx/5xx) and hardware errors are logged at error severity. The packaged unit sets `LogsDirectory=doggy` so the directory is owned by user `doggy`.
 
@@ -65,7 +70,7 @@ Logs go to `/var/log/doggy/doggy.log` (override with `DOGGY_LOG_DIR`). The file 
 
 ```sh
 ./build.sh                                  # native-release on aarch64; cross otherwise
-./install.sh user@hostname                  # newest .deb under build/
+./install.sh user@hostname                  # newest shaloms-doggy_*.deb under build/
 ./install.sh user@hostname path/to.deb      # explicit package
 ./install.sh --dry-run user@hostname        # print scp/ssh only
 ```
@@ -77,7 +82,7 @@ cmake --preset native-release
 cmake --build --preset native-release --target package
 ```
 
-The script copies the `.deb` to `/tmp` over SSH and runs `sudo apt-get install`. Copy and install share one SSH connection (ControlMaster), so the login password is asked once; `sudo` may still ask once if the account is not passwordless. The package creates system user `doggy` if needed, enables I2C in `/boot/firmware/config.txt` when missing, and may ask you to reboot. It then enables and **restarts** `doggy.service` (`User=doggy`, I2C via the `i2c` group) before any reboot prompt. An upgrade does not stop the unit in `prerm`, so a failed `postinst` cannot leave the dog down.
+The script copies the `.deb` to `/tmp` over SSH and runs `sudo apt-get install`. Copy and install share one SSH connection (ControlMaster), so the login password is asked once; `sudo` may still ask once if the account is not passwordless. The package creates system user `doggy` if needed, enables I2C in `/boot/firmware/config.txt` when missing, and may ask you to reboot. It then enables and **restarts** `doggy.service` and `doggy-lora.service` (`User=doggy`, I2C via the `i2c` group, USB serial via `dialout`) before any reboot prompt. An upgrade does not stop the unit in `prerm`, so a failed `postinst` cannot leave the dog down.
 
 CMake configure fetches cpp-httplib v0.52.0, plog 1.1.11, zlib 1.3.1, nlohmann/json 3.11.3, and Mbed TLS 3.6.7 (needs network once, or set `FETCHCONTENT_SOURCE_DIR_CPP_HTTPLIB` / `FETCHCONTENT_SOURCE_DIR_PLOG` / `FETCHCONTENT_SOURCE_DIR_ZLIB` / `FETCHCONTENT_SOURCE_DIR_JSON` / `FETCHCONTENT_SOURCE_DIR_MBEDTLS`). The system PIN is hashed with Mbed TLS SHA-256; HTTPS uses the same Mbed TLS tree.
 
@@ -122,6 +127,19 @@ cmake --build --preset ubuntu-aarch64-cross --target package
 ```
 
 No Pi sysroot: zlib is fetched by CMake, I2C uses the kernel `I2C_SMBUS` ioctl, and IMU math uses `Vec3` instead of dlib.
+
+## Laptop LoRa operator (Ubuntu + Windows)
+
+x86_64 only. Does not build Pi firmware. Needs `golang-go`; Windows NSIS also needs `nsis` and `nsis-common` (stubs and plugins such as MUI2 and nsExec — `./install-prereqs.sh --mode windows`).
+
+```sh
+./build-operator.sh                # Ubuntu DEB and Windows NSIS
+./build-operator.sh linux         # shaloms-doggy-lora-operator_*.amd64.deb
+./build-operator.sh windows        # doggy-lora-operator-*-win64.exe
+./build-operator.sh --dry-run
+```
+
+CMake presets: `operator-linux-amd64`, `operator-windows-amd64` (`--target package`). The Windows binary is `GOOS=windows GOARCH=amd64` with `CGO_ENABLED=0` (no MinGW). The installer creates the `DoggyLoraOperator` service (LocalSystem, localhost HTTP) using CPack NSIS, same idea as other CPack NSIS projects.
 
 ## Tests
 

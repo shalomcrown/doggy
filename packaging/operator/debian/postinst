@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+mkdir -p /var/lib/doggy-lora
+chmod 0755 /var/lib/doggy-lora
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+    systemctl enable doggy-lora-operator.service || true
+    systemctl restart doggy-lora-operator.service || true
+fi
+
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database -q || true
+fi
+
+exit 0

@@ -2,7 +2,6 @@
 #define ROBOT_API_H
 
 #include "config.h"
-#include "dog_status.h"
 
 #include <chrono>
 #include <memory>
