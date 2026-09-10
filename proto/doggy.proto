@@ -110,6 +110,7 @@ message Lora {
   optional int32 rxch = 6;
   optional string air_key = 7;
   optional bool air_key_set = 8;
+  optional uint32 lbt = 9;
 }
 
 // ================================================================================

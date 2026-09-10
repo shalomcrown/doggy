@@ -55,14 +55,25 @@ The firmware binary stays running and serves a single page (LAN, no login):
 - The IMU section shows the last body MPU6050 sample (accel in g, gyro in °/s, temperature in °C).
 - The battery section shows pack voltage from the ADS7830 (channel 0).
 - The title line (`<h1>` and the browser tab) shows `Doggy <version>` from `GET /api/status`.
-- **Configuration** loads `GET /api/config` and saves with `PUT /api/config`. Robot type is `DOG` or `ROVER` (missing type in the file is a dog). Changing type requires the system PIN, schedules a service restart, and the page tells you to **refresh** afterwards. Servo or motor channel changes apply immediately. I2C bus and address changes are stored and take effect after a restart. **LoRa** (`lora.enabled`, `device`, `baud`, `band` `HF`|`LF`, `txch`, `rxch` 0–80) is stored the same way and does not restart `doggy`; the `doggy-lora` sidecar opens that USB serial port at the chosen baud (default 115200, 8N1) then enters AT mode and sets `AT+TXCH` / `AT+RXCH`. HF channel 18 is 868 MHz; LF channel 23 is 433 MHz. An 8–128 byte **air passphrase** (`lora.air_key`) is hashed with SHA-256 to derive the AES-256 key; GET JSON only reports `air_key_set`. Both ends must use the same strong passphrase. Set a **system PIN** here (4–64 characters, hashed in `doggy.json`).
+- **Configuration** loads `GET /api/config` and saves with `PUT /api/config`. Robot type is `DOG` or `ROVER` (missing type in the file is a dog). Changing type requires the system PIN, schedules a service restart, and the page tells you to **refresh** afterwards. Servo or motor channel changes apply immediately. I2C bus and address changes are stored and take effect after a restart. **LoRa** (`lora.enabled`, `device`, `baud`, `band` `HF`|`LF`, `txch`, `rxch` 0–80, `lbt` 0–255) is stored the same way and does not restart `doggy`; the `doggy-lora` sidecar opens that USB serial port at the chosen baud (default 115200, 8N1) then applies `AT+LBT`, `AT+TXCH`, and `AT+RXCH`. LBT defaults to the module's factory value `0`. HF channel 18 is 868 MHz; LF channel 23 is 433 MHz. An 8–128 byte **air passphrase** (`lora.air_key`) is hashed with SHA-256 to derive the AES-256 key; GET JSON only reports `air_key_set`. Both ends must use the same strong passphrase. Set a **system PIN** here (4–64 characters, hashed in `doggy.json`).
 - **Power** can restart `doggy.service`, reboot, or shut down the Pi. Each call is `POST /api/system` with the PIN (not the Unix password). Shutdown asks you to type `SHUTDOWN`. Privilege comes from a packaged polkit rule for user `doggy`.
 
 HTTPS: `DOGGY_HTTPS_PORT` (default `443`). HTTP: `DOGGY_HTTP_PORT` (default `80`) only redirects to HTTPS. Unprivileged runs need ports above 1024. TLS files: `DOGGY_TLS_CERT` / `DOGGY_TLS_KEY`, or `tls.crt` / `tls.key` next to the JSON config (generated on first start if missing; browsers warn once on the self-signed cert). HTML: `DOGGY_WEB_ROOT` or `/usr/share/doggy` after the DEB is installed (`index.html`, `rover.html`, `lora.html`). Config: `DOGGY_CONFIG` or `/etc/doggy/doggy.json` (JSON; `robot.type`, `lora`, servo channels, motor channels/enable/direction, and I2C bus/address for the PCA9685, IMU, and ADS7830). If the file is missing, the process writes compiled defaults there (`postinst` creates `/etc/doggy` owned by `doggy`). A present but invalid file stops startup. `GET /api/config` returns that file shape (hex addresses) plus `system.pin_set` (never the PIN or hash). `PUT /api/config` overlays those fields; a type change also needs `pin` and returns 202 before restart. `POST /api/system/pin` sets the power PIN. `GET /api/status` includes `"type"`, the stamped `version`, hardware errors, cached IMU and battery readings, and either servo PWM/angle (`angle` is omitted when PWM is 0) or rover motors plus last `speed`/`turn`. Domain models are defined in `proto/doggy.proto` (HTTP uses ProtoJSON; the LoRa hop uses binary protobuf).
 
-The DEB also installs `doggy-lora` (`User=doggy`, `dialout`). Robot mode reads radio fields from `https://127.0.0.1/api/config` (self-signed cert) and the air key from `/etc/doggy/doggy.json` (the key is not in public GET JSON). It opens `lora.device` at `lora.baud` (115200 8N1 unless you change it), writes Waveshare AT (`+++`, 200 ms pause, then `AT+TXCH`, `AT+RXCH`, `AT+EXIT`, waiting for `OK`), **keeps the port open**, and answers operator HTTP requests over LoRa (protobuf + AES-256-GCM).
+The DEB also installs `doggy-lora` (`User=doggy`, `dialout`). Robot mode reads public radio fields from `https://127.0.0.1/api/config` (self-signed cert) and the air passphrase from `/etc/doggy/doggy.json` (the passphrase is not in public GET JSON). It opens `lora.device` at `lora.baud` (115200 8N1 unless you change it), writes Waveshare AT (`+++`, 200 ms pause, then `AT+LBT=0..255`, `AT+TXCH`, `AT+RXCH`, `AT+EXIT`, waiting for `OK` after each command), **keeps the port open**, and answers operator HTTP requests over LoRa (binary protobuf + AES-256-GCM).
 
 Laptop operator (separate packages, not the Pi DEB): `./build-operator.sh` builds an **amd64** Ubuntu package `shaloms-doggy-lora-operator` and/or a Windows NSIS installer. Both bind `http://127.0.0.1:8765/`. Ubuntu enables `doggy-lora-operator.service` and a desktop icon. Windows installs a LocalSystem service `DoggyLoraOperator` (needed for USB serial) and Start Menu/Desktop shortcuts to that URL. Settings live in `/var/lib/doggy-lora/lora.json` or `%ProgramData%\doggy\lora.json`. `/api/lora` is that local file; dog/rover `/api/*` is proxied over the radio. Set the same air passphrase on both ends.
+
+## Protobuf models and transports
+
+`proto/doggy.proto` is the single source of truth for configuration, status, commands, API payloads, and the LoRa request/response envelope. Do not hand-write parallel C++ or Go wire-model classes.
+
+- CMake runs `protoc` and generates C++ into `build/<preset>/generated/doggy.pb.{h,cc}`.
+- `protoc-gen-go` generates `lora/internal/pb/doggy.pb.go`; generated protobuf files are build output and are not edited by hand.
+- The HTTPS API serializes those generated messages as ProtoJSON, preserving the `.proto` field names.
+- The LoRa air hop serializes generated `AirRequest` and `AirResponse` messages as binary protobuf. It then applies AES-256-GCM, fragments the ciphertext into COBS-delimited frames, and protects each frame with CRC32C.
+- Each fragment requires an ACK and is sent at most three times. Missing ACKs use bounded exponential waits (1.5, 3, then 6 seconds) plus up to 500 ms of jitter to avoid synchronized retransmissions.
+- Native builds can build `protoc` from the pinned protobuf source fetched by CMake. Cross-builds use the host `protoc` because an aarch64 target executable cannot run on the amd64 build host.
 
 Logs go to `/var/log/doggy/doggy.log` (override with `DOGGY_LOG_DIR`). The file is rolled on every start and when it exceeds the size cap; 10 files are kept and rolled copies are named `doggy-YYYY-MM-DD-HHMM.log.gz`. The log directory is `0755` and log files are world-readable (`0644`). `/api/...` requests are logged except successful `GET /api/status` (the UI polls it at 5 Hz). Config saves log the resulting robot type and whether it changed; they never log the PIN. HTTP failures (4xx/5xx) and hardware errors are logged at error severity. The packaged unit sets `LogsDirectory=doggy` so the directory is owned by user `doggy`.
 
@@ -94,11 +105,14 @@ After `apt-get install` of `shaloms-doggy` the Pi has:
 
 ```
 /usr/bin/doggy                         firmware (systemd ExecStart)
+/usr/bin/doggy-lora                    LoRa sidecar (robot mode on the Pi)
 /usr/share/doggy/index.html            dog web UI
-/usr/share/doggy/rover.html             rover web UI
+/usr/share/doggy/rover.html            rover web UI
+/usr/share/doggy/lora.html             LoRa setup UI
 /etc/systemd/system/doggy.service      unit (User=doggy)
+/etc/systemd/system/doggy-lora.service sidecar unit (User=doggy, dialout)
 /etc/doggy/                            created at install (User=doggy, mode 0755)
-/etc/doggy/doggy.json                  written on first start if missing
+/etc/doggy/doggy.json                  firmware + robot-side LoRa configuration
 /etc/doggy/tls.crt                     self-signed cert (created on first start)
 /etc/doggy/tls.key                     TLS private key (mode 0600, not in the DEB)
 /var/log/doggy/                        created at install and on start
@@ -154,11 +168,70 @@ Or: `bash tests/install-prereqs.test.sh`
 
 ## Source layout
 
-Application sources live in `src/`. CMake stays at the repository root. Installed paths are under **Target on-disk layout**.
+```
+proto/doggy.proto             protobuf source of truth for all wire models
+src/                          C++ firmware, hardware drivers, HTTPS API, config
+lora/cmd/doggy-lora/          Go sidecar/operator executable and mode startup
+lora/internal/air/            encrypted protobuf air session, frames, COBS, CRC
+lora/internal/atcmd/          Waveshare command generation and reply handling
+lora/internal/hop/            robot/operator air-hop runtime
+lora/internal/operator/       localhost operator HTTP server and API proxy
+lora/internal/pb/             generated Go protobuf package
+lora/internal/radio/          serial radio ownership and apply loop
+lora/internal/serialport/     Linux/Windows serial configuration
+lora/internal/settings/       shared LoRa JSON settings
+web/                          dog, rover, and LoRa setup pages
+packaging/                    systemd, desktop, polkit, Debian, and NSIS assets
+cmake/                        protobuf generation, packaging, and toolchains
+tests/                        C++ and shell integration/regression tests
+CMakeLists.txt                firmware, sidecar, generated models, tests, install
+CMakePresets.json             native, cross, Linux operator, Windows operator
+build.sh / build-operator.sh  firmware and laptop package entry points
+install.sh                    newest firmware-DEB remote installer
+```
 
+CMake stays at the repository root. Generated files belong under `build/` or
+`lora/internal/pb/`; edit `proto/doggy.proto`, not generated `doggy.pb.*` files.
+Installed paths are listed under **Target on-disk layout**.
 
-## Note for later
-### Mandatory Configuration Checklist
-The module defaults to generalized 915 MHz settings out of the box. To comply with Israeli wireless telegraph laws, you must plug the USB into a PC and use the Waveshare configuration software (or raw AT commands) to constrain the hardware:
-- Set the Center Frequency: Lock the frequency explicitly within 917.0 MHz to 920.0 MHz.
-- Enable LBT (Listen Before Talk): Turn on the LBT function in the configuration tool. Israeli regulations require devices to monitor channel environmental noise to prevent jamming other spectrum users.
+## LoRa setup
+
+The robot and operator each need a Waveshare USB-TO-LoRa-xF device. Configure
+the Pi at `https://<pi-ip>/` and the laptop at
+`http://127.0.0.1:8765/`:
+
+1. Select **Enabled** and enter the local serial device
+   (`/dev/ttyACM0`, `/dev/ttyUSB0`, or `COM3`) and host baud (normally
+   `115200`, 8N1).
+2. Select the module family: **HF** (850–930 MHz) or **LF** (410–490 MHz).
+3. Set TXCH and RXCH on both ends so the radios agree. HF frequency in MHz is
+   `850 + channel`; LF frequency is `410 + channel`.
+4. Set **LBT** to the module's unsigned 8-bit value (0–255). Start with `0`,
+   the factory default. The module accepts the full range but does not document
+   its units; do not assume that `1` means simply “enabled”. Apply another value
+   only when you have vendor or local regulatory guidance for that radio.
+5. Enter the same strong 8–128 byte air passphrase on both ends. It is
+   write-only in HTTP responses and is hashed with SHA-256 to derive the
+   32-byte AES-256-GCM key.
+6. Save both ends. The helper enters command mode with `+++`, waits 200 ms,
+   sends `AT+LBT`, `AT+TXCH`, `AT+RXCH`, and `AT+EXIT` sequentially, and waits
+   for `OK` before each next command.
+
+Migration: configurations created with the experimental boolean setting must
+replace `"listen_before_talk": true|false` with `"lbt": 0`. Legacy fields are
+rejected so a stale configuration cannot silently apply the problematic value 1.
+Edit `/etc/doggy/doggy.json` on the Pi and `/var/lib/doggy-lora/lora.json` on a
+Linux operator host. Startup names the file and the rejected field, for example
+`/etc/doggy/doggy.json: invalid config JSON: INVALID_ARGUMENT:(lora)
+listen_before_talk: Cannot find field.`
+
+On the Pi, verify `doggy.service` and `doggy-lora.service`; on Linux operator
+packages verify `doggy-lora-operator.service`. Service logs show AT commands
+and replies but never the air passphrase. If diagnosing a module manually,
+enter command mode and use `AT+HELP`, `AT+LBT?`, `AT+TXCH?`, and `AT+RXCH?`,
+then finish with `AT+EXIT`.
+
+The HF module can power up with generalized 915 MHz settings. For the Israeli
+installation described here, constrain operation to 917–920 MHz (HF channels
+67–70). Confirm current LBT and other regulatory requirements for the deployment
+location; this README is not a substitute for radio certification.

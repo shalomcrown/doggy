@@ -45,6 +45,7 @@ func TestSetupPageAndLoraAPI(t *testing.T) {
 			Txch int    `json:"txch"`
 			Rxch int    `json:"rxch"`
 			Baud int    `json:"baud"`
+			LBT  uint8  `json:"lbt"`
 		} `json:"lora"`
 	}
 	if err := json.Unmarshal(raw0, &empty); err != nil {
@@ -53,9 +54,12 @@ func TestSetupPageAndLoraAPI(t *testing.T) {
 	if empty.Lora.Band != "HF" || empty.Lora.Txch != 18 || empty.Lora.Rxch != 18 || empty.Lora.Baud != 115200 {
 		t.Fatalf("missing file defaults %+v", empty)
 	}
+	if empty.Lora.LBT != 0 {
+		t.Fatalf("missing file LBT %d, want factory value 0", empty.Lora.LBT)
+	}
 
 	put, err := http.NewRequest(http.MethodPut, ts.URL+"/api/lora", strings.NewReader(
-		`{"lora":{"enabled":true,"device":"/dev/ttyUSB0","baud":115200,"band":"LF","txch":23,"rxch":23,"air_key":"correct horse battery staple"}}`))
+		`{"lora":{"enabled":true,"device":"/dev/ttyUSB0","baud":115200,"band":"LF","txch":23,"rxch":23,"lbt":255,"air_key":"correct horse battery staple"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,13 +86,14 @@ func TestSetupPageAndLoraAPI(t *testing.T) {
 			Rxch   int    `json:"rxch"`
 			Baud   int    `json:"baud"`
 			Device string `json:"device"`
+			LBT    uint8  `json:"lbt"`
 		} `json:"lora"`
 	}
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatal(err)
 	}
 	if got.Lora.Band != "LF" || got.Lora.Txch != 23 || got.Lora.Rxch != 23 ||
-		got.Lora.Baud != 115200 || got.Lora.Device != "/dev/ttyUSB0" {
+		got.Lora.Baud != 115200 || got.Lora.Device != "/dev/ttyUSB0" || got.Lora.LBT != 255 {
 		t.Fatalf("saved %+v", got)
 	}
 	var public map[string]map[string]json.RawMessage
@@ -171,6 +176,21 @@ func TestSetupPageAndLoraAPI(t *testing.T) {
 	}
 	res.Body.Close()
 
+	badLBT, err := http.NewRequest(http.MethodPut, ts.URL+"/api/lora", strings.NewReader(
+		`{"lora":{"lbt":256}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	badLBT.Header.Set("Content-Type", "application/json")
+	res, err = http.DefaultClient.Do(badLBT)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("out of range lbt status %d", res.StatusCode)
+	}
+	res.Body.Close()
+
 	badBaud, err := http.NewRequest(http.MethodPut, ts.URL+"/api/lora", strings.NewReader(
 		`{"lora":{"baud":1200}}`))
 	if err != nil {
@@ -219,5 +239,30 @@ func TestSetupPageAndLoraAPI(t *testing.T) {
 	cfgRes.Body.Close()
 	if cfgRes.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("operator /api/config must proxy, got %d %s", cfgRes.StatusCode, cfgBody)
+	}
+}
+
+// ================================================================================
+
+func TestInvalidLoraFileIsNotTreatedAsMissing(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "lora.json")
+	if err := os.WriteFile(cfg, []byte(`{"lora":{"listen_before_talk":true}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(New(dir, cfg, nil))
+	defer ts.Close()
+
+	res, err := http.Get(ts.URL + "/api/lora")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("invalid existing config status %d, want 500", res.StatusCode)
+	}
+	body, _ := io.ReadAll(res.Body)
+	if strings.Contains(string(body), `"error":"config_read"`) == false {
+		t.Fatalf("invalid config response %s", body)
 	}
 }

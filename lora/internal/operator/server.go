@@ -95,8 +95,11 @@ func (s *Server) handleLora(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		cur, err := settings.LoadFile(s.localFile)
-		if err != nil {
+		if os.IsNotExist(err) {
 			cur = settings.Default()
+		} else if err != nil {
+			http.Error(w, `{"error":"config_read"}`, http.StatusInternalServerError)
+			return
 		} else {
 			cur = cur.Normalize()
 		}

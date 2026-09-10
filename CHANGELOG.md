@@ -12,6 +12,7 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 > Work merged but not yet shipped. Move entries to a versioned section on release.
 
 ### Added
+- Numeric LoRa `lbt` setting (0–255, default 0) on firmware and operator setup pages; the sidecar applies the exact value with `AT+LBT` before channel commands.
 - Robot type `DOG` or `ROVER` in `doggy.json` (`robot.type`; missing type is a dog). Changing type on either page requires the system PIN, restarts `doggy.service`, and the UI tells you to refresh. A rover page (`rover.html`) has steering/speed sliders and a motor table; `POST /api/drive` stores normalized `speed`/`turn` (PWM conversion later).
 - `doggy-lora` Go sidecar for a Waveshare USB-TO-LoRa-xF dongle: AT apply/monitor, then a framed protobuf + AES-256-GCM hop so the laptop operator can call the same `/api/*` as Wi‑Fi. `/api/lora` on the operator is local radio config (including write-only `air_key`). Channels are TXCH/RXCH 0–80 for HF or LF. Laptop clients: `./build-operator.sh` produces a separate amd64 Ubuntu DEB (`shaloms-doggy-lora-operator`) and a Windows NSIS installer with a LocalSystem `DoggyLoraOperator` service (HTTP on 127.0.0.1:8765).
 - Domain models in `proto/doggy.proto`; CMake runs `protoc` for C++ (`doggy.pb.cc`) and Go (`doggy.pb.go`). HTTP uses ProtoJSON; LoRa uses binary `AirRequest`/`AirResponse`.
@@ -39,6 +40,9 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 - DEB `postinst` enables `dtparam=i2c_arm=on` in the Pi boot config when missing and asks to reboot.
 
 ### Fixed
+- Config file failures now name the file and the rejected field instead of a bare `invalid config JSON` (for example `/etc/doggy/doggy.json: invalid config JSON: INVALID_ARGUMENT:(lora) listen_before_talk: Cannot find field.`). HTTP `PUT /api/config` still answers with the generic `bad_json` code.
+- LoRa fragment retries now use bounded exponential backoff plus jitter, reducing synchronized retransmission failures when a radio defers transmission.
+- LoRa LBT is no longer modelled as a boolean: the Waveshare command accepts an unsigned 8-bit value, and `AT+LBT=1` can prevent a noisy endpoint from transmitting. Existing configs must replace `listen_before_talk` with numeric `lbt`.
 - Firmware no longer crashes at startup when I2C devices fail to open: startup now copies `getStatus()` before reading `errors` (C++20 does not keep that temporary alive for a range-for).
 - LoRa helper now applies host serial settings: `lora.device` and `lora.baud` (default 115200, 8N1) before AT. USB-CDC may ignore baud; the port still has to be set.
 - LoRa AT is sent one command at a time: 200 ms after `+++`, then wait for `OK` (or `ERROR`) before the next line.

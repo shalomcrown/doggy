@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,10 +19,13 @@ import (
 )
 
 const (
-	ackWait     = 1500 * time.Millisecond
-	maxRetries  = 3
-	maxReqBytes = 48 * 1024
-	maxCache    = 32
+	ackWait        = 1500 * time.Millisecond
+	ackWaitMax     = 6500 * time.Millisecond
+	ackJitterMax   = 500 * time.Millisecond
+	maxAttempts    = 3
+	maxReqBytes    = 48 * 1024
+	maxCache       = 32
+	maxBackoffStep = 2
 )
 
 // ================================================================================
@@ -41,10 +45,11 @@ type engine struct {
 	pending map[ackKey]chan struct{}
 	inbox   map[uint32]*reassembly
 
-	complete chan assembled
-	stop     chan struct{}
-	stopped  sync.Once
-	done     sync.WaitGroup
+	complete  chan assembled
+	stop      chan struct{}
+	stopped   sync.Once
+	done      sync.WaitGroup
+	retryWait func(int) time.Duration
 }
 
 // ================================================================================
@@ -66,12 +71,13 @@ type reassembly struct {
 
 func newEngine(rw io.ReadWriter, key []byte) *engine {
 	e := &engine{
-		link:     NewLink(rw),
-		key:      append([]byte(nil), key...),
-		pending:  make(map[ackKey]chan struct{}),
-		inbox:    make(map[uint32]*reassembly),
-		complete: make(chan assembled, 8),
-		stop:     make(chan struct{}),
+		link:      NewLink(rw),
+		key:       append([]byte(nil), key...),
+		pending:   make(map[ackKey]chan struct{}),
+		inbox:     make(map[uint32]*reassembly),
+		complete:  make(chan assembled, 8),
+		stop:      make(chan struct{}),
+		retryWait: defaultRetryDelay,
 	}
 	e.done.Add(1)
 	go e.readLoop()
@@ -180,23 +186,68 @@ func (e *engine) collect(f frame) ([]byte, bool) {
 
 // ================================================================================
 
+func retryDelay(attempt int, jitter time.Duration) time.Duration {
+	if attempt < 0 {
+		attempt = 0
+	}
+	if attempt > maxBackoffStep {
+		attempt = maxBackoffStep
+	}
+	if jitter < 0 {
+		jitter = 0
+	}
+	if jitter > ackJitterMax {
+		jitter = ackJitterMax
+	}
+	delay := ackWait * time.Duration(1<<attempt)
+	if delay+jitter > ackWaitMax {
+		return ackWaitMax
+	}
+	return delay + jitter
+}
+
+// ================================================================================
+
+func defaultRetryDelay(attempt int) time.Duration {
+	jitter := time.Duration(rand.Int63n(int64(ackJitterMax) + 1))
+	return retryDelay(attempt, jitter)
+}
+
+// ================================================================================
+
 func (e *engine) sendReliable(ctx context.Context, f frame) error {
 	key := ackKey{reqID: f.reqID, fragI: f.fragI}
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-e.stop:
+			return fmt.Errorf("air: closed")
+		default:
+		}
 		wait := make(chan struct{}, 1)
 		e.mu.Lock()
 		e.pending[key] = wait
 		e.mu.Unlock()
 		if err := e.link.send(f); err != nil {
+			e.mu.Lock()
+			delete(e.pending, key)
+			e.mu.Unlock()
 			return err
 		}
-		timer := time.NewTimer(ackWait)
+		timer := time.NewTimer(e.retryWait(attempt))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
+			e.mu.Lock()
+			delete(e.pending, key)
+			e.mu.Unlock()
 			return ctx.Err()
 		case <-e.stop:
 			timer.Stop()
+			e.mu.Lock()
+			delete(e.pending, key)
+			e.mu.Unlock()
 			return fmt.Errorf("air: closed")
 		case <-wait:
 			timer.Stop()

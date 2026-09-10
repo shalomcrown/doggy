@@ -77,6 +77,9 @@ static void validate_lora(const doggy::v1::Lora &lora) {
     if (lora.rxch() < 0 || lora.rxch() > 80) {
         throw ConfigError("config lora.rxch out of range");
     }
+    if (lora.lbt() > 255) {
+        throw ConfigError("config lora.lbt out of range");
+    }
     if (lora.device().find('\n') != std::string::npos
             || lora.device().find('\r') != std::string::npos) {
         throw ConfigError("config lora.device must not contain a newline");
@@ -220,6 +223,9 @@ void fill_config_defaults(Config &config) {
     if (lora->has_rxch() == false) {
         lora->set_rxch(18);
     }
+    if (lora->has_lbt() == false) {
+        lora->set_lbt(0);
+    }
 }
 
 // ================================================================================
@@ -337,10 +343,14 @@ std::string proto_to_json(const google::protobuf::Message &message) {
 
 // ================================================================================
 
-bool proto_from_json(const std::string &text, google::protobuf::Message &message) {
+bool proto_from_json(const std::string &text, google::protobuf::Message &message,
+        std::string *error) {
     google::protobuf::util::JsonParseOptions options;
     options.ignore_unknown_fields = false;
     const auto status = google::protobuf::util::JsonStringToMessage(text, &message, options);
+    if (status.ok() == false && error != nullptr) {
+        *error = status.ToString();
+    }
     return status.ok();
 }
 
@@ -379,8 +389,9 @@ std::string config_to_public_json(const Config &config) {
 
 Config config_from_json(const std::string &text) {
     Config config;
-    if (proto_from_json(text, config) == false) {
-        throw ConfigError("invalid config JSON");
+    std::string parse_error;
+    if (proto_from_json(text, config, &parse_error) == false) {
+        throw ConfigError("invalid config JSON: " + parse_error);
     }
     fill_config_defaults(config);
     validate_config(config);
@@ -426,7 +437,11 @@ Config config_load_file(const std::string &path) {
     }
     const std::string text((std::istreambuf_iterator<char>(in)),
             std::istreambuf_iterator<char>());
-    return config_from_json(text);
+    try {
+        return config_from_json(text);
+    } catch (const ConfigError &ex) {
+        throw ConfigError(path + ": " + ex.what());
+    }
 }
 
 // ================================================================================

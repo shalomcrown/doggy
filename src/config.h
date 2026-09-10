@@ -44,6 +44,7 @@ Config config_load_file(const std::string &path);
 Config config_load_or_create(const std::string &path, std::string *create_error = nullptr);
 std::string config_default_path();
 std::string proto_to_json(const google::protobuf::Message &message);
-bool proto_from_json(const std::string &text, google::protobuf::Message &message);
+bool proto_from_json(const std::string &text, google::protobuf::Message &message,
+        std::string *error = nullptr);
 
 #endif

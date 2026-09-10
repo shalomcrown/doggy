@@ -396,6 +396,8 @@ int main() {
            "dog page uses HF/LF dongle select for lora.band");
     expect(page && page->body.find("lora-baud") != std::string::npos,
            "dog page can set lora serial baud");
+    expect(page && page->body.find("[\"lora\", \"lbt\"]") != std::string::npos,
+           "dog page can set numeric lora LBT");
     expect(page && page->body.find("lora-air-key") != std::string::npos,
            "dog page can set lora air_key");
     expect(page && page->body.find("Refresh the page") != std::string::npos,
@@ -661,6 +663,8 @@ int main() {
            "rover page uses HF/LF dongle select for lora.band");
     expect(rover_page && rover_page->body.find("lora-baud") != std::string::npos,
            "rover page can set lora serial baud");
+    expect(rover_page && rover_page->body.find("[\"lora\", \"lbt\"]") != std::string::npos,
+           "rover page can set numeric lora LBT");
     expect(rover_page && rover_page->body.find("lora-air-key") != std::string::npos,
            "rover page can set lora air_key");
     expect(rover_page && rover_page->body.find("Refresh the page") != std::string::npos,

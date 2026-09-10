@@ -16,11 +16,14 @@
 </head>
 <body>
   <h1>LoRa setup</h1>
-  <p>Waveshare USB-TO-LoRa-xF: set the USB serial device (Linux <code>/dev/ttyUSB0</code>, Windows <code>COM3</code>) and host baud (module default 115200; USB-CDC often ignores baud). Choose HF (850–930 MHz) or LF (410–490 MHz). TXCH and RXCH are 0–80. AT uses TXCH/RXCH, not BAND/REGION. Dog and rover pages on this host proxy <code>/api/*</code> over LoRa (AES-256-GCM). <code>/api/lora</code> stays local.</p>
+  <p>Waveshare USB-TO-LoRa-xF: set the USB serial device (Linux <code>/dev/ttyUSB0</code>, Windows <code>COM3</code>) and host baud (module default 115200; USB-CDC often ignores baud). Choose HF (850–930 MHz) or LF (410–490 MHz). TXCH and RXCH are 0–80. LBT is the module's numeric 0–255 value; 0 is the factory default. Dog and rover pages on this host proxy <code>/api/*</code> over LoRa (AES-256-GCM). <code>/api/lora</code> stays local.</p>
   <p><a href="/dog">Dog page</a> · <a href="/rover">Rover page</a></p>
   <p id="status" role="status"></p>
   <label class="field">Enabled
     <input type="checkbox" id="enabled">
+  </label>
+  <label class="field">LBT (0–255)
+    <input type="number" id="lbt" min="0" max="255" step="1" value="0">
   </label>
   <label class="field">Serial device
     <input type="text" id="device" placeholder="/dev/ttyUSB0 or COM3">
@@ -85,6 +88,7 @@
       const data = await res.json();
       const lora = data.lora || {};
       document.getElementById("enabled").checked = !!lora.enabled;
+      document.getElementById("lbt").value = String(lora.lbt === undefined ? 0 : lora.lbt);
       document.getElementById("device").value = lora.device || "";
       document.getElementById("baud").value = String(lora.baud === undefined || lora.baud === 0 ? 115200 : lora.baud);
       document.getElementById("band").value = lora.band === "LF" ? "LF" : "HF";
@@ -115,10 +119,17 @@
     document.getElementById("rxch").addEventListener("input", refreshFreq);
 
     document.getElementById("save").addEventListener("click", async () => {
+      const lbtInput = document.getElementById("lbt");
+      if (lbtInput.checkValidity() === false) {
+        setStatus("LBT must be a whole number from 0 to 255.");
+        lbtInput.focus();
+        return;
+      }
       setStatus("Saving…");
       const body = {
         lora: {
           enabled: document.getElementById("enabled").checked,
+          lbt: Number(lbtInput.value),
           device: document.getElementById("device").value,
           baud: Number(document.getElementById("baud").value),
           band: document.getElementById("band").value,

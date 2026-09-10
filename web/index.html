@@ -491,6 +491,9 @@
         if (path[path.length - 1] === "txch" || path[path.length - 1] === "rxch") {
           input.max = "80";
         }
+        if (path[path.length - 1] === "lbt") {
+          input.max = "255";
+        }
         input.value = String(value);
         input.addEventListener("input", () => {
           setDraftValue(path, Number(input.value));
@@ -584,9 +587,9 @@
       const loraTr3 = document.createElement("tr");
       const loraGroup3 = document.createElement("td");
       loraTr3.appendChild(loraGroup3);
+      appendPair(loraTr3, ["lora", "lbt"], lora.lbt === undefined ? 0 : lora.lbt, "int");
       appendPair(loraTr3, ["lora", "air_key_set"], lora.air_key_set ? "set" : "not set", "readonly");
       appendPair(loraTr3, ["lora", "air_key"], "", "lora-air-key");
-      appendEmptyPairs(loraTr3, 1);
       configBodyEl.appendChild(loraTr3);
 
       const servos = config.servos || {};

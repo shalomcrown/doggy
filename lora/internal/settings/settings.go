@@ -24,7 +24,27 @@ type Settings struct {
 	Band    string `json:"band"`
 	Txch    int    `json:"txch"`
 	Rxch    int    `json:"rxch"`
+	LBT     uint8  `json:"lbt"`
 	AirKey  string `json:"air_key,omitempty"`
+}
+
+// ================================================================================
+
+func (s *Settings) UnmarshalJSON(data []byte) error {
+	type plain Settings
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if _, legacy := fields["listen_before_talk"]; legacy {
+		return fmt.Errorf("listen_before_talk was replaced by numeric lbt")
+	}
+	value := plain(Default())
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*s = Settings(value)
+	return nil
 }
 
 // ================================================================================
@@ -36,15 +56,22 @@ type fileEnvelope struct {
 // ================================================================================
 
 func ParseLoraJSON(text []byte) (Settings, error) {
-	var env fileEnvelope
-	if err := json.Unmarshal(text, &env); err != nil {
-		var direct Settings
-		if err2 := json.Unmarshal(text, &direct); err2 != nil {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(text, &object); err != nil {
+		return Settings{}, fmt.Errorf("lora json: %w", err)
+	}
+	if raw, ok := object["lora"]; ok {
+		var nested Settings
+		if err := json.Unmarshal(raw, &nested); err != nil {
 			return Settings{}, fmt.Errorf("lora json: %w", err)
 		}
-		return direct, nil
+		return nested, nil
 	}
-	return env.Lora, nil
+	var direct Settings
+	if err := json.Unmarshal(text, &direct); err != nil {
+		return Settings{}, fmt.Errorf("lora json: %w", err)
+	}
+	return direct, nil
 }
 
 // ================================================================================
@@ -89,6 +116,7 @@ func (s Settings) Public() map[string]any {
 		"band":        s.Band,
 		"txch":        s.Txch,
 		"rxch":        s.Rxch,
+		"lbt":         s.LBT,
 		"air_key_set": strings.Trim(s.AirKey, airKeyTrimCutset) != "",
 	}
 }
@@ -98,13 +126,20 @@ func (s Settings) Public() map[string]any {
 func Equal(a, b Settings) bool {
 	a, b = a.Normalize(), b.Normalize()
 	return a.Enabled == b.Enabled && a.Device == b.Device && a.Baud == b.Baud &&
-		a.Band == b.Band && a.Txch == b.Txch && a.Rxch == b.Rxch
+		a.Band == b.Band && a.Txch == b.Txch && a.Rxch == b.Rxch &&
+		a.LBT == b.LBT
 }
 
 // ================================================================================
 
 func Default() Settings {
-	return Settings{Band: "HF", Txch: 18, Rxch: 18, Baud: 115200}
+	return Settings{
+		Band: "HF",
+		Txch: 18,
+		Rxch: 18,
+		Baud: 115200,
+		LBT:  0,
+	}
 }
 
 // ================================================================================

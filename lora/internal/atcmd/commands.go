@@ -7,7 +7,8 @@ import (
 )
 
 // Commands is the Waveshare USB-TO-LoRa-xF AT sequence:
-// +++ enters command mode, TXCH/RXCH are 0–80, AT+EXIT returns to stream mode.
+// +++ enters command mode, LBT is 0–255, TXCH/RXCH are 0–80, and AT+EXIT
+// returns to stream mode.
 
 // ================================================================================
 
@@ -19,6 +20,7 @@ func Commands(s settings.Settings) []string {
 
 	return []string{
 		"+++",
+		fmt.Sprintf("AT+LBT=%d", s.LBT),
 		fmt.Sprintf("AT+TXCH=%d", s.Txch),
 		fmt.Sprintf("AT+RXCH=%d", s.Rxch),
 		"AT+EXIT",

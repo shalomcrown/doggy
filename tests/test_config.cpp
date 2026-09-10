@@ -39,6 +39,8 @@ int main() {
     expect(defaults.lora().txch() == 18 && defaults.lora().rxch() == 18,
            "lora HF default channels are 18 (868 MHz)");
     expect(defaults.lora().baud() == 115200, "lora baud defaults to 115200");
+    expect(defaults.lora().lbt() == 0,
+           "lora LBT defaults to factory value 0");
     expect(defaults.servos().front_right_waist() == 11, "default front_right_waist is 11");
     expect(defaults.servos().front_right_hip() == 12, "default front_right_hip is 12");
     expect(defaults.servos().front_right_knee() == 13, "default front_right_knee is 13");
@@ -77,9 +79,11 @@ int main() {
            "to_json_string writes lora TXCH");
     expect(dumped.find("115200") != std::string::npos,
            "to_json_string writes lora baud");
+    expect(dumped.find("\"lbt\"") != std::string::npos,
+           "to_json_string writes numeric lora LBT");
 
     const Config from_text = config_from_json(
-            R"({"robot":{"type":"ROVER"},"motors":{"front_left":{"channel":4,"enabled":false,"direction":"reverse"}},"lora":{"enabled":true,"band":"LF","txch":23,"rxch":23},"servos":{"head_neck":14},"i2c":{"imu":{"address":"0x69"}}})");
+            R"({"robot":{"type":"ROVER"},"motors":{"front_left":{"channel":4,"enabled":false,"direction":"reverse"}},"lora":{"enabled":true,"band":"LF","txch":23,"rxch":23,"lbt":255},"servos":{"head_neck":14},"i2c":{"imu":{"address":"0x69"}}})");
     expect(from_text.robot().type() == doggy::v1::ROVER, "from_json_string reads ROVER");
     expect(from_text.motors().front_left().channel() == 4, "from_json_string reads motor channel");
     expect(from_text.motors().front_left().enabled() == false, "from_json_string reads motor enabled");
@@ -93,6 +97,8 @@ int main() {
     expect(from_text.lora().band() == doggy::v1::LF, "from_json_string reads lora.band LF");
     expect(from_text.lora().txch() == 23 && from_text.lora().rxch() == 23,
            "from_json_string reads lora TXCH/RXCH");
+    expect(from_text.lora().lbt() == 255,
+           "from_json_string reads maximum numeric lora LBT");
 
     Config rover_base = default_config();
     rover_base.mutable_robot()->set_type(doggy::v1::ROVER);
@@ -139,6 +145,24 @@ int main() {
         bad_txch_threw = true;
     }
     expect(bad_txch_threw, "lora TXCH above 80 throws ConfigError");
+
+    bool bad_lbt_threw = false;
+    try {
+        config_from_json(R"({"lora":{"lbt":256}})");
+    } catch (const ConfigError &) {
+        bad_lbt_threw = true;
+    }
+    expect(bad_lbt_threw, "lora LBT above 255 throws ConfigError");
+
+    std::string legacy_lbt_error;
+    try {
+        config_from_json(R"({"lora":{"listen_before_talk":true}})");
+    } catch (const ConfigError &ex) {
+        legacy_lbt_error = ex.what();
+    }
+    expect(legacy_lbt_error.empty() == false, "legacy boolean LBT config fails clearly");
+    expect(legacy_lbt_error.find("listen_before_talk") != std::string::npos,
+           "invalid config JSON error names the rejected field");
 
     bool bad_baud_threw = false;
     try {
@@ -281,19 +305,21 @@ int main() {
     const Config from_int = config_load_file(numeric);
     expect(from_int.i2c().servo_board().address() == "0x40", "hex string address 0x40");
 
-    bool invalid_threw = false;
+    const std::string bad = (dir / "bad.json").string();
+    std::string invalid_error;
     try {
-        const std::string bad = (dir / "bad.json").string();
         {
             std::ofstream out(bad);
             out << "{ not json" << '\n';
         }
         config_load_file(bad);
-    } catch (const ConfigError &) {
-        invalid_threw = true;
+    } catch (const ConfigError &ex) {
+        invalid_error = ex.what();
     }
 
-    expect(invalid_threw, "invalid JSON throws ConfigError");
+    expect(invalid_error.empty() == false, "invalid JSON throws ConfigError");
+    expect(invalid_error.find(bad) != std::string::npos,
+           "config file load error names the offending file");
 
     bool range_threw = false;
     try {

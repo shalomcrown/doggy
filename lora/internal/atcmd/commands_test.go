@@ -26,6 +26,7 @@ func TestCommandsTxRxAndMode(t *testing.T) {
 		Band:    "HF",
 		Txch:    18,
 		Rxch:    18,
+		LBT:     255,
 	})
 	joined := strings.Join(lines, "\n")
 	if strings.Contains(joined, "AT+BAND") || strings.Contains(joined, "AT+REGION") {
@@ -40,8 +41,24 @@ func TestCommandsTxRxAndMode(t *testing.T) {
 	if strings.Contains(joined, "AT+RXCH=18") == false {
 		t.Fatalf("missing RXCH: %v", lines)
 	}
+	if strings.Contains(joined, "AT+LBT=255") == false {
+		t.Fatalf("missing exact LBT value: %v", lines)
+	}
 	if strings.Contains(joined, "AT+EXIT") == false {
 		t.Fatalf("missing EXIT: %v", lines)
+	}
+}
+
+// ================================================================================
+
+func TestCommandsFactoryLBTDefault(t *testing.T) {
+	lines := Commands(settings.Settings{
+		Enabled: true,
+		Txch:    18,
+		Rxch:    18,
+	})
+	if strings.Contains(strings.Join(lines, "\n"), "AT+LBT=0") == false {
+		t.Fatalf("missing factory LBT value: %v", lines)
 	}
 }
 
@@ -109,14 +126,17 @@ func TestApplyWritesWhenChanged(t *testing.T) {
 	if strings.Contains(joined, "AT+TXCH=23") == false {
 		t.Fatalf("writes %q", port.writes)
 	}
-	if len(port.writes) < 4 {
+	if len(port.writes) < 5 {
 		t.Fatalf("expected one write per AT line, got %v", port.writes)
 	}
 	if port.writes[0] != "+++\r\n" {
 		t.Fatalf("first write %q", port.writes[0])
 	}
-	if port.writes[1] != "AT+TXCH=23\r\n" {
+	if port.writes[1] != "AT+LBT=0\r\n" {
 		t.Fatalf("second write %q", port.writes[1])
+	}
+	if port.writes[2] != "AT+TXCH=23\r\n" {
+		t.Fatalf("third write %q", port.writes[2])
 	}
 
 	port = &fakePort{}
@@ -169,13 +189,13 @@ func TestApplyStopsOnErrorBeforeNextCommand(t *testing.T) {
 	s := settings.Settings{Enabled: true, Txch: 18, Rxch: 18}
 	_, err := Apply(port, settings.Settings{}, s)
 	if err == nil {
-		t.Fatal("expected ERROR from TXCH")
+		t.Fatal("expected ERROR from LBT")
 	}
 	if len(port.writes) != 2 {
-		t.Fatalf("must not send RXCH after ERROR: %v", port.writes)
+		t.Fatalf("must not send TXCH after ERROR: %v", port.writes)
 	}
-	if strings.Contains(strings.Join(port.writes, ""), "AT+RXCH") {
-		t.Fatalf("sent RXCH after ERROR: %v", port.writes)
+	if strings.Contains(strings.Join(port.writes, ""), "AT+TXCH") {
+		t.Fatalf("sent TXCH after ERROR: %v", port.writes)
 	}
 }
 
