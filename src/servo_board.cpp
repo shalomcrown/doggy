@@ -3,34 +3,9 @@
 #include <iostream>
 #include <system_error>
 
-#include "i2c_interface.hpp"
 #include "pwm_math.h"
 #include "servo_board.h"
-
-// Registers/etc:
-constexpr uint8_t MODE1              = 0x00;
-constexpr uint8_t MODE2              = 0x01;
-constexpr uint8_t SUBADR1            = 0x02;
-constexpr uint8_t SUBADR2            = 0x03;
-constexpr uint8_t SUBADR3            = 0x04;
-constexpr uint8_t PRESCALE           = 0xFE;
-constexpr uint8_t LED0_ON_L          = 0x06;
-constexpr uint8_t LED0_ON_H          = 0x07;
-constexpr uint8_t LED0_OFF_L         = 0x08;
-constexpr uint8_t LED0_OFF_H         = 0x09;
-constexpr uint8_t ALL_LED_ON_L       = 0xFA;
-constexpr uint8_t ALL_LED_ON_H       = 0xFB;
-constexpr uint8_t ALL_LED_OFF_L      = 0xFC;
-constexpr uint8_t ALL_LED_OFF_H      = 0xFD;
-
-// Bits:
-constexpr uint8_t RESTART            = 0x80;
-constexpr uint8_t SLEEP              = 0x10;
-constexpr uint8_t ALLCALL            = 0x01;
-constexpr uint8_t INVRT              = 0x10;
-constexpr uint8_t OUTDRV             = 0x04;
-
-// Thanks to: https://github.com/barulicm/PiPCA9685
+#include "pca9685.h"
 
 // ================================================================================
 
@@ -39,29 +14,26 @@ ServoBoard::ServoBoard() : ServoBoard(1, 0x40) {
 
 // ================================================================================
 
-ServoBoard::ServoBoard(int bus, uint8_t address) : bus_fd(-1) {
+ServoBoard::ServoBoard(int bus, uint8_t address) : pca(nullptr) {
     try {
-        bus_fd = openBus(i2c_device_path(bus), address);
-        writeRegisterByte(bus_fd, MODE2, OUTDRV);
-        usleep(5'000);
-        writeRegisterByte(bus_fd, MODE1, ALLCALL);
-        usleep(5'000);
-        auto mode1_val = readRegisterByte(bus_fd, MODE1);
-        mode1_val &= ~SLEEP;
-        writeRegisterByte(bus_fd, MODE1, mode1_val);
-        usleep(5'000);
+        pca = std::make_unique<PCA9685>(bus, address);
+        if (pca->isOpen() == false) {
+            lastErrorMessage = pca->lastError();
+            pca.reset();
+            return;
+        }
         set_pwm_freq(50.0);
         set_all_pwm(0, 0);
     } catch (const std::system_error &ex) {
         lastErrorMessage = ex.what();
-        bus_fd = -1;
+        pca.reset();
     }
 }
 
 // ================================================================================
 
 bool ServoBoard::isOpen() const {
-    return bus_fd >= 0;
+    return pca != nullptr && pca->isOpen();
 }
 
 // ================================================================================
@@ -100,11 +72,7 @@ void ServoBoard::set_all_pwm(const uint16_t on, const uint16_t off) {
     if (isOpen() == false) {
         return;
     }
-
-    writeRegisterByte(bus_fd, ALL_LED_ON_L, on & 0xFF);
-    writeRegisterByte(bus_fd, ALL_LED_ON_H, on >> 8);
-    writeRegisterByte(bus_fd, ALL_LED_OFF_L, off & 0xFF);
-    writeRegisterByte(bus_fd, ALL_LED_OFF_H, off >> 8);
+    pca->set_all_pwm(on, off);
 }
 
 // ================================================================================
@@ -114,23 +82,7 @@ void ServoBoard::set_pwm_freq(const double freq_hz) {
     if (isOpen() == false) {
         return;
     }
-
-    auto prescaleval = 2.5e7; //    # 25MHz
-    prescaleval /= 4096.0; //       # 12-bit
-    prescaleval /= freq_hz;
-    prescaleval -= 1.0;
-
-    auto prescale = static_cast<int>(std::round(prescaleval));
-
-    const auto oldmode = readRegisterByte(bus_fd, MODE1);
-
-    auto newmode = (oldmode & 0x7F) | SLEEP;
-
-    writeRegisterByte(bus_fd, MODE1, newmode);
-    writeRegisterByte(bus_fd, PRESCALE, prescale);
-    writeRegisterByte(bus_fd, MODE1, oldmode);
-    usleep(5'000);
-    writeRegisterByte(bus_fd, MODE1, oldmode | RESTART);
+    pca->set_pwm_freq(freq_hz);
 }
 
 // ================================================================================
@@ -139,12 +91,7 @@ void ServoBoard::set_pwm(const int channel, const uint16_t on, const uint16_t of
     if (isOpen() == false) {
         return;
     }
-
-    const auto channel_offset = 4 * channel;
-    writeRegisterByte(bus_fd, LED0_ON_L + channel_offset, on & 0xFF);
-    writeRegisterByte(bus_fd, LED0_ON_H + channel_offset, on >> 8);
-    writeRegisterByte(bus_fd, LED0_OFF_L + channel_offset, off & 0xFF);
-    writeRegisterByte(bus_fd, LED0_OFF_H + channel_offset, off >> 8);
+    pca->set_pwm(channel, on, off);
 }
 
 // ================================================================================
@@ -168,10 +115,9 @@ void ServoBoard::set_angle(const int channel, const double angleDegrees) {
 // ================================================================================
 
 ServoBoard::~ServoBoard() {
-    if (isOpen() == false) {
+    if (pca == nullptr || pca->isOpen() == false) {
         return;
     }
 
     set_all_pwm(0, 0);
-    closeBus(bus_fd);
 }

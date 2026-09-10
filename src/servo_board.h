@@ -6,9 +6,13 @@
 
 // ================================================================================
 
+#include <memory>
+
+class PCA9685;
+
 class ServoBoard {
 private:
-    int bus_fd = -1;
+    std::unique_ptr<PCA9685> pca;
     double frequency = 50.0;
     double maxAngle = 180;
     double minPwmMs = 0.5;

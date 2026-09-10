@@ -223,6 +223,7 @@ add_executable(doggy
     src/i2c_interface.hpp
     src/servo_board.h
     src/servo_board.cpp
+    src/pca9685.cpp
     src/servo.h
     src/servo.cpp
     src/imu.h
