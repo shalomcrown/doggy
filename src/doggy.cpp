@@ -96,7 +96,7 @@ Dog::Dog(const Config &config, std::string config_path) :
 Dog::Dog(const Config &config, std::string config_path,
          std::unique_ptr<SystemControl> system_control) :
     DogApi(config, std::move(config_path), std::move(system_control)),
-    board(config.i2c().servo_board().bus(), i2c_address_byte(config.i2c().servo_board())),
+    board(config.i2c().servo_board().bus(), i2c_address_byte(config.i2c().servo_board()), config.i2c().servo_board().type()),
     imu(config.i2c().imu().bus(), i2c_address_byte(config.i2c().imu())),
     ads(config.i2c().ads().bus(), i2c_address_byte(config.i2c().ads())),
     frontRightWaist(board, config.servos().front_right_waist(), "front-right-waist"),

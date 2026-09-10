@@ -13,6 +13,7 @@ class PCA9685;
 class ServoBoard {
 private:
     std::unique_ptr<PCA9685> pca;
+    int bus_fd = -1; // used by legacy board path
     double frequency = 50.0;
     double maxAngle = 180;
     double minPwmMs = 0.5;
@@ -21,7 +22,8 @@ private:
 
 public:
     ServoBoard();
-    ServoBoard(int bus, uint8_t address);
+    // new constructor accepts optional backend type: "pca9685" or "legacy"; empty -> autodetect
+    ServoBoard(int bus, uint8_t address, const std::string &backend_type = std::string());
     ~ServoBoard();
 
     bool isOpen() const;
