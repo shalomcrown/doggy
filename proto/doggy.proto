@@ -85,9 +85,11 @@ message ServoChannels {
 // ================================================================================
 
 message Motor {
-  optional int32 channel = 1;
+  optional int32 pwm = 1;
   optional bool enabled = 2;
   optional MotorDirection direction = 3;
+  optional int32 in2 = 4;
+  optional int32 in1 = 5;
 }
 
 // ================================================================================

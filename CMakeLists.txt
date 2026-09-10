@@ -218,6 +218,7 @@ add_executable(doggy
     src/doggy.cpp
     src/rover.h
     src/rover.cpp
+    src/motor_math.h
     src/i2c_interface.cpp
     src/i2c_interface.hpp
     src/servo_board.h
@@ -357,6 +358,31 @@ add_executable(test_servo_board
 )
 target_include_directories(test_servo_board PRIVATE "${CMAKE_SOURCE_DIR}/src")
 add_test(NAME servo_board COMMAND test_servo_board)
+
+add_executable(test_motor_math tests/test_motor_math.cpp)
+target_include_directories(test_motor_math PRIVATE "${CMAKE_SOURCE_DIR}/src")
+add_test(NAME motor_math COMMAND test_motor_math)
+
+add_executable(test_rover_drive
+    tests/test_rover_drive.cpp
+    src/rover.cpp
+    src/imu.cpp
+    src/ads7830.cpp
+    src/servo_board.cpp
+    src/i2c_interface.cpp
+    src/config.cpp
+    src/utils.cpp
+    src/robot_api.cpp
+    src/system_control.cpp
+    "${DOGGY_PB_CC}"
+)
+target_include_directories(test_rover_drive PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+    "${CMAKE_BINARY_DIR}/generated"
+)
+target_link_libraries(test_rover_drive PRIVATE pthread nlohmann_json::nlohmann_json mbedcrypto protobuf::libprotobuf)
+add_dependencies(test_rover_drive doggy_proto)
+add_test(NAME rover_drive COMMAND test_rover_drive)
 
 add_executable(test_web_server tests/test_web_server.cpp)
 target_link_libraries(test_web_server PRIVATE doggy_web)

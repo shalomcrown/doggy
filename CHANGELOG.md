@@ -13,7 +13,7 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 
 ### Added
 - Numeric LoRa `lbt` setting (0–255, default 0) on firmware and operator setup pages; the sidecar applies the exact value with `AT+LBT` before channel commands.
-- Robot type `DOG` or `ROVER` in `doggy.json` (`robot.type`; missing type is a dog). Changing type on either page requires the system PIN, restarts `doggy.service`, and the UI tells you to refresh. A rover page (`rover.html`) has steering/speed sliders and a motor table; `POST /api/drive` stores normalized `speed`/`turn` (PWM conversion later).
+- Robot type `DOG` or `ROVER` in `doggy.json` (`robot.type`; missing type is a dog). Changing type on either page requires the system PIN, restarts `doggy.service`, and the UI tells you to refresh. A rover page (`rover.html`) has steering/speed sliders and a motor table; `POST /api/drive` now maps normalized speed to all enabled motors through the Adafruit bonnet while retaining turn for later steering.
 - `doggy-lora` Go sidecar for a Waveshare USB-TO-LoRa-xF dongle: AT apply/monitor, then a framed protobuf + AES-256-GCM hop so the laptop operator can call the same `/api/*` as Wi‑Fi. `/api/lora` on the operator is local radio config (including write-only `air_key`). Channels are TXCH/RXCH 0–80 for HF or LF. Laptop clients: `./build-operator.sh` produces a separate amd64 Ubuntu DEB (`shaloms-doggy-lora-operator`) and a Windows NSIS installer with a LocalSystem `DoggyLoraOperator` service (HTTP on 127.0.0.1:8765).
 - Domain models in `proto/doggy.proto`; CMake runs `protoc` for C++ (`doggy.pb.cc`) and Go (`doggy.pb.go`). HTTP uses ProtoJSON; LoRa uses binary `AirRequest`/`AirResponse`.
 - In-process HTTPS on port 443 (cpp-httplib v0.52.0 + Mbed TLS). Port 80 only 301-redirects; it does not serve the page or APIs. A self-signed cert is created once under `/etc/doggy/` (`tls.crt` / `tls.key`). The unit keeps `NoNewPrivileges=yes` and adds `CAP_NET_BIND_SERVICE`.
@@ -48,6 +48,7 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 - LoRa AT is sent one command at a time: 200 ms after `+++`, then wait for `OK` (or `ERROR`) before the next line.
 
 ### Changed
+- Rover motor configuration replaces `motors.<name>.channel` with independent `pwm`, `in2`, and `in1` PCA9685 channels. Existing rover configs must add all three fields per motor and set the bonnet address to `0x60` if they persisted the former `0x40` default.
 - ⚠ Breaking: `lora.air_key` is now always an 8–128 byte passphrase. Both ends derive the AES-256 key with SHA-256; 64 hex characters are hashed as a passphrase instead of decoded as a raw key. Upgrade both ends together and keep the same configured string.
 - Log files under `/var/log/doggy/` are world-readable (`0644`); the directory is `0755`. Config saves log robot type and `type_changed` without the PIN.
 - `./install.sh` multiplexes `scp` and `ssh` on one ControlMaster connection so the SSH login password is not asked again for the install step. Auto-detect installs the newest `shaloms-doggy_*.deb` (Pi firmware), not a laptop operator package even if that file is newer.

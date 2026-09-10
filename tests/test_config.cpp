@@ -27,10 +27,14 @@ static void expect(bool cond, const char *name) {
 int main() {
     Config defaults = default_config();
     expect(defaults.robot().type() == doggy::v1::DOG, "missing robot type defaults to DOG");
-    expect(defaults.motors().front_left().channel() == 0, "default front_left motor channel is 0");
-    expect(defaults.motors().front_right().channel() == 1, "default front_right motor channel is 1");
-    expect(defaults.motors().rear_left().channel() == 2, "default rear_left motor channel is 2");
-    expect(defaults.motors().rear_right().channel() == 3, "default rear_right motor channel is 3");
+    expect(defaults.motors().front_left().pwm() == 2
+                    && defaults.motors().front_left().in2() == 3
+                    && defaults.motors().front_left().in1() == 4,
+           "default front_left motor uses channels 2, 3, 4");
+    expect(defaults.motors().front_right().pwm() == 5
+                    && defaults.motors().rear_right().pwm() == 8
+                    && defaults.motors().rear_left().pwm() == 11,
+           "default motor groups proceed clockwise");
     expect(defaults.motors().front_left().enabled(), "motors default enabled");
     expect(defaults.motors().front_left().direction() == doggy::v1::forward,
            "motors default forward");
@@ -69,8 +73,12 @@ int main() {
            "to_json_string writes default channels");
     expect(dumped.find("\"type\"") != std::string::npos && dumped.find("DOG") != std::string::npos,
            "to_json_string writes DOG type");
-    expect(dumped.find("\"front_left\"") != std::string::npos,
-           "to_json_string writes motor configuration");
+    expect(dumped.find("\"front_left\"") != std::string::npos
+                    && dumped.find("\"pwm\"") != std::string::npos
+                    && dumped.find("\"in2\"") != std::string::npos
+                    && dumped.find("\"in1\"") != std::string::npos
+                    && dumped.find("\"channel\"") == std::string::npos,
+           "to_json_string writes motor function channels");
     expect(dumped.find("\"lora\"") != std::string::npos,
            "to_json_string writes lora configuration");
     expect(dumped.find("HF") != std::string::npos,
@@ -83,9 +91,12 @@ int main() {
            "to_json_string writes numeric lora LBT");
 
     const Config from_text = config_from_json(
-            R"({"robot":{"type":"ROVER"},"motors":{"front_left":{"channel":4,"enabled":false,"direction":"reverse"}},"lora":{"enabled":true,"band":"LF","txch":23,"rxch":23,"lbt":255},"servos":{"head_neck":14},"i2c":{"imu":{"address":"0x69"}}})");
+            R"({"robot":{"type":"ROVER"},"motors":{"front_left":{"pwm":0,"in2":1,"in1":2,"enabled":false,"direction":"reverse"}},"lora":{"enabled":true,"band":"LF","txch":23,"rxch":23,"lbt":255},"servos":{"head_neck":14},"i2c":{"imu":{"address":"0x69"}}})");
     expect(from_text.robot().type() == doggy::v1::ROVER, "from_json_string reads ROVER");
-    expect(from_text.motors().front_left().channel() == 4, "from_json_string reads motor channel");
+    expect(from_text.motors().front_left().pwm() == 0
+                    && from_text.motors().front_left().in2() == 1
+                    && from_text.motors().front_left().in1() == 2,
+           "from_json_string reads motor function channels");
     expect(from_text.motors().front_left().enabled() == false, "from_json_string reads motor enabled");
     expect(from_text.motors().front_left().direction() == doggy::v1::reverse,
            "from_json_string reads reverse direction");
@@ -93,6 +104,8 @@ int main() {
     expect(from_text.servos().front_right_waist() == 11,
            "from_json_string keeps default waist");
     expect(from_text.i2c().imu().address() == "0x69", "from_json_string overlays imu address");
+    expect(from_text.i2c().servo_board().address() == "0x60",
+           "ROVER defaults the motor bonnet to address 0x60");
     expect(from_text.lora().enabled(), "from_json_string reads lora.enabled");
     expect(from_text.lora().band() == doggy::v1::LF, "from_json_string reads lora.band LF");
     expect(from_text.lora().txch() == 23 && from_text.lora().rxch() == 23,
@@ -102,15 +115,15 @@ int main() {
 
     Config rover_base = default_config();
     rover_base.mutable_robot()->set_type(doggy::v1::ROVER);
-    rover_base.mutable_motors()->mutable_front_left()->set_channel(7);
+    rover_base.mutable_motors()->mutable_front_left()->set_pwm(0);
     const Config overlaid_rover = config_overlay_json(
-            rover_base, R"({"motors":{"front_right":{"channel":8}}})");
+            rover_base, R"({"motors":{"front_right":{"pwm":14}}})");
     expect(overlaid_rover.robot().type() == doggy::v1::ROVER,
            "overlay without type keeps ROVER");
-    expect(overlaid_rover.motors().front_left().channel() == 7,
-           "overlay keeps existing motor channel");
-    expect(overlaid_rover.motors().front_right().channel() == 8,
-           "overlay updates named motor channel");
+    expect(overlaid_rover.motors().front_left().pwm() == 0,
+           "overlay keeps existing motor PWM channel");
+    expect(overlaid_rover.motors().front_right().pwm() == 14,
+           "overlay updates named motor PWM channel");
 
     bool from_text_threw = false;
     try {
@@ -137,6 +150,24 @@ int main() {
         bad_direction_threw = true;
     }
     expect(bad_direction_threw, "unknown motor direction throws ConfigError");
+
+    bool bad_motor_channel_threw = false;
+    try {
+        config_from_json(R"({"motors":{"front_left":{"in1":16}}})");
+    } catch (const ConfigError &) {
+        bad_motor_channel_threw = true;
+    }
+    expect(bad_motor_channel_threw,
+           "motor function channel above 15 throws ConfigError");
+
+    bool duplicate_motor_channel_threw = false;
+    try {
+        config_from_json(R"({"motors":{"front_left":{"pwm":3}}})");
+    } catch (const ConfigError &) {
+        duplicate_motor_channel_threw = true;
+    }
+    expect(duplicate_motor_channel_threw,
+           "duplicate motor function channels throw ConfigError");
 
     bool bad_txch_threw = false;
     try {

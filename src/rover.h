@@ -4,8 +4,10 @@
 #include "ads7830.h"
 #include "imu.h"
 #include "rover_api.h"
+#include "servo_board.h"
 #include "system_control.h"
 
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -13,6 +15,17 @@
 // ================================================================================
 
 class Rover : public RoverApi {
+private:
+    ServoBoard motor_board_;
+    std::array<int, 4> motor_pwm_{};
+    DogStatus status_;
+
+    std::vector<MotorSnapshot> snapshotUnlocked() const;
+    void applyMotorOutputsUnlocked(double speed);
+    void coastMotorOutputsUnlocked();
+    void pollImuUnlocked();
+    void pollBatteryUnlocked();
+
 public:
     Imu imu;
     Ads7830 ads;
@@ -30,13 +43,6 @@ public:
     CommandResult replaceConfig(const Config &config,
                                 const std::string &pin = {}) override;
     void poll();
-
-private:
-    DogStatus status_;
-
-    std::vector<MotorSnapshot> snapshotUnlocked() const;
-    void pollImuUnlocked();
-    void pollBatteryUnlocked();
 };
 
 #endif

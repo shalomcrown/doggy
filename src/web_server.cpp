@@ -362,6 +362,8 @@ void register_api(httplib::Server &server, RobotApi &api,
                                 "application/json");
             } else if (result == CommandResult::busy) {
                 res.set_content(error_json("busy"), "application/json");
+            } else if (result == CommandResult::failed) {
+                res.set_content(error_json("motor_io"), "application/json");
             } else {
                 res.set_content(error_json("bad_drive"), "application/json");
             }

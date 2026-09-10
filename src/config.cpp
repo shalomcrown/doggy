@@ -4,6 +4,7 @@
 #include <google/protobuf/util/json_util.h>
 #include <mbedtls/sha256.h>
 
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <fcntl.h>
@@ -101,6 +102,31 @@ static void validate_lora(const doggy::v1::Lora &lora) {
 
 // ================================================================================
 
+static void validate_motor_channel(
+        int channel,
+        const char *field,
+        std::array<bool, 16> &used) {
+    validate_channel(channel, field, 15);
+    if (used[static_cast<std::size_t>(channel)]) {
+        throw ConfigError(std::string("config duplicate motor channel: ") + field);
+    }
+    used[static_cast<std::size_t>(channel)] = true;
+}
+
+// ================================================================================
+
+static void validate_motor(
+        const doggy::v1::Motor &motor,
+        const char *name,
+        std::array<bool, 16> &used) {
+    const std::string prefix = std::string("motors.") + name;
+    validate_motor_channel(motor.pwm(), (prefix + ".pwm").c_str(), used);
+    validate_motor_channel(motor.in2(), (prefix + ".in2").c_str(), used);
+    validate_motor_channel(motor.in1(), (prefix + ".in1").c_str(), used);
+}
+
+// ================================================================================
+
 static void validate_config(const Config &config) {
     validate_i2c_device(config.i2c().servo_board(), "servo_board");
     validate_i2c_device(config.i2c().imu(), "imu");
@@ -118,15 +144,36 @@ static void validate_config(const Config &config) {
     validate_channel(config.servos().rear_right_hip(), "rear_right_hip", 15);
     validate_channel(config.servos().rear_right_knee(), "rear_right_knee", 15);
     validate_channel(config.servos().head_neck(), "head_neck", 15);
+    std::array<bool, 16> used_motor_channels{};
+    validate_motor(config.motors().front_left(), "front_left", used_motor_channels);
+    validate_motor(config.motors().front_right(), "front_right", used_motor_channels);
+    validate_motor(config.motors().rear_right(), "rear_right", used_motor_channels);
+    validate_motor(config.motors().rear_left(), "rear_left", used_motor_channels);
     validate_lora(config.lora());
 }
 
 // ================================================================================
 
-static void set_motor_default(doggy::v1::Motor *motor, int channel) {
-    motor->set_channel(channel);
-    motor->set_enabled(true);
-    motor->set_direction(doggy::v1::forward);
+static void set_motor_defaults(
+        doggy::v1::Motor *motor,
+        int pwm,
+        int in2,
+        int in1) {
+    if (motor->has_pwm() == false) {
+        motor->set_pwm(pwm);
+    }
+    if (motor->has_in2() == false) {
+        motor->set_in2(in2);
+    }
+    if (motor->has_in1() == false) {
+        motor->set_in1(in1);
+    }
+    if (motor->has_enabled() == false) {
+        motor->set_enabled(true);
+    }
+    if (motor->has_direction() == false) {
+        motor->set_direction(doggy::v1::forward);
+    }
 }
 
 // ================================================================================
@@ -140,7 +187,9 @@ void fill_config_defaults(Config &config) {
         i2c->mutable_servo_board()->set_bus(1);
     }
     if (i2c->servo_board().has_address() == false) {
-        i2c->mutable_servo_board()->set_address(hex_address(0x40));
+        const uint8_t address =
+                config.robot().type() == doggy::v1::ROVER ? 0x60 : 0x40;
+        i2c->mutable_servo_board()->set_address(hex_address(address));
     }
     if (i2c->imu().has_bus() == false) {
         i2c->mutable_imu()->set_bus(1);
@@ -195,18 +244,10 @@ void fill_config_defaults(Config &config) {
         servos->set_head_neck(15);
     }
     doggy::v1::Motors *motors = config.mutable_motors();
-    if (motors->has_front_left() == false) {
-        set_motor_default(motors->mutable_front_left(), 0);
-    }
-    if (motors->has_front_right() == false) {
-        set_motor_default(motors->mutable_front_right(), 1);
-    }
-    if (motors->has_rear_left() == false) {
-        set_motor_default(motors->mutable_rear_left(), 2);
-    }
-    if (motors->has_rear_right() == false) {
-        set_motor_default(motors->mutable_rear_right(), 3);
-    }
+    set_motor_defaults(motors->mutable_front_left(), 2, 3, 4);
+    set_motor_defaults(motors->mutable_front_right(), 5, 6, 7);
+    set_motor_defaults(motors->mutable_rear_right(), 8, 9, 10);
+    set_motor_defaults(motors->mutable_rear_left(), 11, 12, 13);
     doggy::v1::Lora *lora = config.mutable_lora();
     if (lora->has_enabled() == false) {
         lora->set_enabled(false);

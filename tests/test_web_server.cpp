@@ -206,6 +206,7 @@ public:
     };
     double speed = 0.0;
     double turn = 0.0;
+    bool drive_fail = false;
 
     FakeRover() {
         config.mutable_robot()->set_type(doggy::v1::ROVER);
@@ -220,6 +221,9 @@ public:
     }
 
     CommandResult setDrive(double next_speed, double next_turn) override {
+        if (drive_fail) {
+            return CommandResult::failed;
+        }
         if (next_speed < -1.0 || next_speed > 1.0
                 || next_turn < -1.0 || next_turn > 1.0) {
             return CommandResult::bad_drive;
@@ -663,6 +667,13 @@ int main() {
            "rover page uses HF/LF dongle select for lora.band");
     expect(rover_page && rover_page->body.find("lora-baud") != std::string::npos,
            "rover page can set lora serial baud");
+    expect(rover_page && rover_page->body.find("[\"motors\", key, \"pwm\"]")
+                   != std::string::npos
+                   && rover_page->body.find("[\"motors\", key, \"in1\"]")
+                   != std::string::npos
+                   && rover_page->body.find("[\"motors\", key, \"in2\"]")
+                   != std::string::npos,
+           "rover page edits each motor function channel separately");
     expect(rover_page && rover_page->body.find("[\"lora\", \"lbt\"]") != std::string::npos,
            "rover page can set numeric lora LBT");
     expect(rover_page && rover_page->body.find("lora-air-key") != std::string::npos,
@@ -687,6 +698,12 @@ int main() {
     auto bad_drive = rover_cli.Post(
             "/api/drive", R"({"speed":2,"turn":0})", "application/json");
     expect(bad_drive && bad_drive->status == 400, "out-of-range rover drive is 400");
+    rover.drive_fail = true;
+    auto failed_drive = rover_cli.Post(
+            "/api/drive", R"({"speed":0.5,"turn":0})", "application/json");
+    expect(failed_drive && failed_drive->status == 500
+                   && failed_drive->body.find("motor_io") != std::string::npos,
+           "motor I2C failure is 500 motor_io");
     auto rover_home = rover_cli.Post("/api/home", "", "text/plain");
     expect(rover_home && rover_home->status == 404, "home on rover is 404");
     auto rover_servos = rover_cli.Get("/api/servos");
