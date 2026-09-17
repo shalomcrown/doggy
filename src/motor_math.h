@@ -52,6 +52,16 @@ inline MotorSignal motor_signal(double speed, bool enabled, bool reverse_wiring)
     return signal;
 }
 
+// ==============================================================================
+
+inline MotorSignal motor_brake_signal() {
+    MotorSignal signal;
+    signal.pwm = 0;
+    signal.in1 = true;
+    signal.in2 = true;
+    return signal;
+}
+
 // ================================================================================
 
 inline MotorWritePlan motor_write_plan(

@@ -23,6 +23,7 @@ private:
     std::vector<MotorSnapshot> snapshotUnlocked() const;
     void applyMotorOutputsUnlocked(double speed);
     void coastMotorOutputsUnlocked();
+    void brakeMotorOutputsUnlocked();
     void pollImuUnlocked();
     void pollBatteryUnlocked();
 
@@ -39,6 +40,11 @@ public:
     RobotType robotType() const override;
     std::vector<MotorSnapshot> listMotors() override;
     CommandResult setDrive(double speed, double turn) override;
+    CommandResult stop();
+    CommandResult brake();
+    CommandResult runMotor(int id, double speed) override;
+    CommandResult coastMotor(int id) override;
+    CommandResult brakeMotor(int id) override;
     DogStatus getStatus() const override;
     CommandResult replaceConfig(const Config &config,
                                 const std::string &pin = {}) override;

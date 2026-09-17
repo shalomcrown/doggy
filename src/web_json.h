@@ -70,6 +70,69 @@ inline bool parse_servo_post(const std::string &body, bool &disable, double &ang
 
 // ================================================================================
 
+inline std::string motors_to_json(const std::vector<MotorSnapshot> &items) {
+    doggy::v1::MotorList list;
+    for (const MotorSnapshot &item : items) {
+        *list.add_items() = item;
+    }
+    return proto_to_json(list);
+}
+
+// ================================================================================
+
+// Simple motor post parser. Accepts JSON like {"speed":0.5} or {"coast":true} or {"brake":true}
+inline bool parse_motor_post(const std::string &body, bool &coast, bool &brake, double &speed, bool &has_speed) {
+    coast = false;
+    brake = false;
+    has_speed = false;
+    const std::string b = body;
+    if (b.find("\"coast\"") != std::string::npos) {
+        // look for coast:true
+        const std::size_t pos = b.find("\"coast\"");
+        const std::size_t colon = b.find(':', pos);
+        if (colon != std::string::npos && b.find("true", colon) != std::string::npos) {
+            coast = true;
+            return true;
+        }
+    }
+    if (b.find("\"brake\"") != std::string::npos) {
+        const std::size_t pos = b.find("\"brake\"");
+        const std::size_t colon = b.find(':', pos);
+        if (colon != std::string::npos && b.find("true", colon) != std::string::npos) {
+            brake = true;
+            return true;
+        }
+    }
+    // parse speed number
+    const std::size_t pos = b.find("\"speed\"");
+    if (pos != std::string::npos) {
+        const std::size_t colon = b.find(':', pos);
+        if (colon != std::string::npos) {
+            // extract substring after colon
+            const std::size_t start = colon + 1;
+            std::size_t end = start;
+            // skip whitespace
+            while (end < b.size() && std::isspace(static_cast<unsigned char>(b[end]))) ++end;
+            std::size_t num_end = end;
+            if (num_end < b.size() && (b[num_end] == '-' || b[num_end] == '+' || (b[num_end] >= '0' && b[num_end] <= '9') || b[num_end]=='.')) {
+                ++num_end;
+                while (num_end < b.size() && ( (b[num_end] >= '0' && b[num_end] <= '9') || b[num_end]=='.' || b[num_end]=='e' || b[num_end]=='E' || b[num_end]=='+' || b[num_end]=='-')) ++num_end;
+                try {
+                    const std::string num = b.substr(end, num_end - end);
+                    speed = std::stod(num);
+                    has_speed = true;
+                    return true;
+                } catch (const std::exception &) {
+                    return false;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+// ================================================================================
+
 inline bool parse_system_post(const std::string &body, SystemAction &action, std::string &pin) {
     doggy::v1::SystemCommand cmd;
     if (proto_from_json(body, cmd) == false) {

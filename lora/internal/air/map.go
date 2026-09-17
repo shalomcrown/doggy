@@ -56,6 +56,12 @@ func HTTPToAir(method, path string, body []byte) (*pb.AirRequest, error) {
 			return nil, err
 		}
 		req.Op = &pb.AirRequest_Drive{Drive: drive}
+	case method == http.MethodPost && path == "/api/stop":
+		// Represent stop as a Drive with sentinel turn == -1e9 and speed 0
+		req.Op = &pb.AirRequest_Drive{Drive: &pb.Drive{Speed: proto.Float64(0.0), Turn: proto.Float64(-1e9)}}
+	case method == http.MethodPost && path == "/api/brake":
+		// Represent brake as a Drive with sentinel turn == +1e9 and speed 0
+		req.Op = &pb.AirRequest_Drive{Drive: &pb.Drive{Speed: proto.Float64(0.0), Turn: proto.Float64(1e9)}}
 	case method == http.MethodPost && path == "/api/system":
 		cmd := &pb.SystemCommand{}
 		if err := protojson.Unmarshal(body, cmd); err != nil {
@@ -112,6 +118,15 @@ func AirToHTTP(req *pb.AirRequest) (HttpRequest, error) {
 	case *pb.AirRequest_Home:
 		return HttpRequest{Method: http.MethodPost, Path: "/api/home"}, nil
 	case *pb.AirRequest_Drive:
+		// Check for sentinel values that encode stop/brake
+		if op.Drive != nil {
+			if op.Drive.GetTurn() == -1e9 && op.Drive.GetSpeed() == 0.0 {
+				return HttpRequest{Method: http.MethodPost, Path: "/api/stop"}, nil
+			}
+			if op.Drive.GetTurn() == 1e9 && op.Drive.GetSpeed() == 0.0 {
+				return HttpRequest{Method: http.MethodPost, Path: "/api/brake"}, nil
+			}
+		}
 		return HttpRequest{
 			Method:      http.MethodPost,
 			Path:        "/api/drive",

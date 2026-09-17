@@ -44,6 +44,10 @@
       <input type="range" id="speed" min="-1" max="1" step="0.01" value="0" aria-label="Speed">
       <span id="speed-value">0.000</span>
     </label>
+    <div class="drive-field">
+      <button type="button" id="drive-stop">Stop</button>
+      <button type="button" id="drive-brake">Brake</button>
+    </div>
   </section>
   <section id="imu" aria-labelledby="imu-heading">
     <h2 id="imu-heading">IMU</h2>
@@ -87,6 +91,7 @@
         <th scope="col">PWM</th>
         <th scope="col">Enabled</th>
         <th scope="col">Direction</th>
+        <th scope="col">Controls</th>
       </tr>
     </thead>
     <tbody id="motors"></tbody>
@@ -258,6 +263,98 @@
         return;
       }
 
+      function makeControls(motorId) {
+        const controls = document.createElement("div");
+        controls.style.display = "flex";
+        controls.style.gap = "0.4rem";
+        controls.style.alignItems = "center";
+
+        const speedInput = document.createElement("input");
+        speedInput.type = "range";
+        speedInput.min = -1;
+        speedInput.max = 1;
+        speedInput.step = 0.01;
+        speedInput.value = 0;
+        speedInput.style.width = "8rem";
+        speedInput.ariaLabel = "motor speed";
+        speedInput.dataset.motorId = String(motorId);
+
+        const speedVal = document.createElement("span");
+        speedVal.textContent = "0.000";
+        speedVal.style.minWidth = "4.5rem";
+
+        speedInput.addEventListener("input", () => {
+          speedVal.textContent = Number(speedInput.value).toFixed(3);
+        });
+
+        const runBtn = document.createElement("button");
+        runBtn.type = "button";
+        runBtn.textContent = "Run";
+        runBtn.addEventListener("click", async () => {
+          const id = Number(speedInput.dataset.motorId);
+          const sp = Number(speedInput.value);
+          try {
+            const res = await fetch(`/api/motors/${id}`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ speed: sp })
+            });
+            if (res.ok == false) {
+              setStatus("Motor command failed");
+              return;
+            }
+            setStatus("");
+          } catch (err) {
+            setStatus("Motor command failed");
+          }
+        });
+
+        const coastBtn = document.createElement("button");
+        coastBtn.type = "button";
+        coastBtn.textContent = "Coast";
+        coastBtn.addEventListener("click", async () => {
+          const id = Number(speedInput.dataset.motorId);
+          try {
+            const res = await fetch(`/api/motors/${id}`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ coast: true })
+            });
+            if (res.ok == false) {
+              setStatus("Motor coast failed");
+              return;
+            }
+            setStatus("");
+          } catch (err) {
+            setStatus("Motor coast failed");
+          }
+        });
+
+        const brakeBtn = document.createElement("button");
+        brakeBtn.type = "button";
+        brakeBtn.textContent = "Brake";
+        brakeBtn.addEventListener("click", async () => {
+          const id = Number(speedInput.dataset.motorId);
+          try {
+            const res = await fetch(`/api/motors/${id}`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ brake: true })
+            });
+            if (res.ok == false) {
+              setStatus("Motor brake failed");
+              return;
+            }
+            setStatus("");
+          } catch (err) {
+            setStatus("Motor brake failed");
+          }
+        });
+
+        controls.append(speedInput, speedVal, runBtn, coastBtn, brakeBtn);
+        return controls;
+      }
+
       if (bodyEl.children.length === 0) {
         bodyEl.replaceChildren();
         for (const motor of items) {
@@ -273,8 +370,23 @@
           enabledTd.textContent = motor.enabled ? "on" : "off";
           const dirTd = document.createElement("td");
           dirTd.className = "motor-direction";
-          dirTd.textContent = motor.direction || "";
-          tr.append(nameTd, pwmTd, enabledTd, dirTd);
+          const dirSelect = document.createElement("select");
+          dirSelect.setAttribute("aria-label", "Motor direction");
+          const optF = document.createElement("option"); optF.value = "forward"; optF.textContent = "forward";
+          const optR = document.createElement("option"); optR.value = "reverse"; optR.textContent = "reverse";
+          dirSelect.append(optF, optR);
+          dirSelect.value = motor.direction || "forward";
+          dirSelect.dataset.motorId = String(motor.id);
+          dirSelect.addEventListener("change", () => {
+            // update config draft so Save will persist change
+            setDraftValue(["motors", motor.name.replaceAll("-","_") , "direction"], dirSelect.value);
+          });
+          dirTd.appendChild(dirSelect);
+
+          const controlsTd = document.createElement("td");
+          controlsTd.appendChild(makeControls(motor.id));
+
+          tr.append(nameTd, pwmTd, enabledTd, dirTd, controlsTd);
           bodyEl.appendChild(tr);
         }
         return;
@@ -288,7 +400,8 @@
 
         tr.querySelector(".motor-pwm").textContent = String(motor.pwm);
         tr.querySelector(".motor-enabled").textContent = motor.enabled ? "on" : "off";
-        tr.querySelector(".motor-direction").textContent = motor.direction || "";
+        const sel = tr.querySelector(".motor-direction select");
+        if (sel) sel.value = motor.direction || "forward";
       }
     }
 
@@ -301,7 +414,18 @@
       try {
         const res = await fetch("/api/status");
         if (res.ok == false) {
-          applyErrors([{ message: "Failed to load status" }]);
+          try {
+            const text = await res.text();
+            // Try parse JSON message
+            try {
+              const body = JSON.parse(text);
+              applyErrors([{ message: body.message || body.error || text }]);
+            } catch (e) {
+              applyErrors([{ message: text }]);
+            }
+          } catch (e) {
+            applyErrors([{ message: "Failed to load status" }]);
+          }
           return;
         }
 
@@ -372,6 +496,42 @@
     });
     steeringEl.addEventListener("input", queueDrive);
     speedEl.addEventListener("input", queueDrive);
+    const driveStopEl = document.getElementById("drive-stop");
+    if (driveStopEl !== null) {
+      driveStopEl.addEventListener("click", async () => {
+        try {
+          const res = await fetch("/api/stop", { method: "POST" });
+          if (res.ok == false) {
+            setStatus("Stop failed");
+            return;
+          }
+          speedEl.value = "0";
+          steeringEl.value = "0";
+          speedValueEl.textContent = formatNum(0);
+          steeringValueEl.textContent = formatNum(0);
+          setStatus("");
+        } catch (err) {
+          setStatus("Stop failed");
+        }
+      });
+    }
+
+    const driveBrakeEl = document.getElementById("drive-brake");
+    if (driveBrakeEl !== null) {
+      driveBrakeEl.addEventListener("click", async () => {
+        try {
+          const res = await fetch("/api/brake", { method: "POST" });
+          if (res.ok == false) {
+            setStatus("Brake failed");
+            return;
+          }
+          // Do not change slider positions; brake engages hardware while leaving UI state
+          setStatus("");
+        } catch (err) {
+          setStatus("Brake failed");
+        }
+      });
+    }
 
     function displayName(key) {
       const spaced = String(key).replaceAll("_", " ");
@@ -447,6 +607,18 @@
         input.value = String(value);
         input.readOnly = true;
         return input;
+      }
+      if (kind === "motor-direction") {
+        const select = document.createElement("select");
+        select.setAttribute("aria-label", path.map(displayName).join(" "));
+        const f = document.createElement("option"); f.value = "forward"; f.textContent = "forward";
+        const r = document.createElement("option"); r.value = "reverse"; r.textContent = "reverse";
+        select.append(f, r);
+        select.value = value === "reverse" ? "reverse" : "forward";
+        select.addEventListener("change", () => {
+          setDraftValue(path, select.value);
+        });
+        return select;
       }
       if (kind === "int") {
         input.type = "number";
@@ -556,7 +728,7 @@
 
         const optionsTr = document.createElement("tr");
         appendPair(optionsTr, ["motors", key, "enabled"], motor.enabled, "bool");
-        appendPair(optionsTr, ["motors", key, "direction"], motor.direction, "text");
+        appendPair(optionsTr, ["motors", key, "direction"], motor.direction, "motor-direction");
         appendEmptyPairs(optionsTr, 1);
         configBodyEl.appendChild(optionsTr);
       });

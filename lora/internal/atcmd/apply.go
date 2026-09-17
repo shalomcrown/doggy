@@ -12,9 +12,11 @@ import (
 
 // afterPlusDelay is how long to wait after +++ before reading a reply or
 // sending the next AT command. The dongle needs this to enter command mode.
-var afterPlusDelay = 200 * time.Millisecond
+// Many USB-to-LoRa adapters respond slower than a 1s deadline and need a
+// little more time to echo the command and return the final OK.
+var afterPlusDelay = 500 * time.Millisecond
 
-var replyTimeout = time.Second
+var replyTimeout = 3 * time.Second
 
 // ================================================================================
 

@@ -57,6 +57,15 @@ int main() {
                     && coast_plan.writes[2].off == 4096,
            "coast fully disables PWM, IN1, and IN2");
 
+    const MotorSignal brake = motor_brake_signal();
+    expect(brake.pwm == 0 && brake.in1 && brake.in2,
+           "brake drives both IN lines high");
+    const MotorWritePlan brake_plan = motor_write_plan(2, 3, 4, brake);
+    expect(brake_plan.size == 3
+                    && brake_plan.writes[1].on == 4096
+                    && brake_plan.writes[2].on == 4096,
+           "brake sets both direction inputs high");
+
     const MotorSignal disabled = motor_signal(1.0, false, false);
     expect(disabled.pwm == 0 && disabled.in1 == false && disabled.in2 == false,
            "disabled motor coasts");

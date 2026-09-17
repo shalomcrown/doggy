@@ -260,6 +260,54 @@ public:
     CommandResult setSystemPin(const std::string &, const std::string &) override {
         return CommandResult::ok;
     }
+
+    CommandResult stop() override {
+        // stop clears the commanded speed/turn in the fake rover
+        speed = 0.0;
+        turn = 0.0;
+        return CommandResult::ok;
+    }
+
+    CommandResult brake() override {
+        // brake applies the brake but leaves reported speed/turn unchanged for this fake
+        return CommandResult::ok;
+    }
+
+    CommandResult runMotor(int id, double sp) override {
+        if (id < 0 || id >= static_cast<int>(motors.size())) return CommandResult::not_found;
+        motors[id].set_pwm(static_cast<int>(std::abs(sp) * 400));
+        return CommandResult::ok;
+    }
+
+    CommandResult coastMotor(int id) override {
+        if (id < 0 || id >= static_cast<int>(motors.size())) return CommandResult::not_found;
+        motors[id].set_pwm(0);
+        return CommandResult::ok;
+    }
+
+    CommandResult brakeMotor(int id) override {
+        if (id < 0 || id >= static_cast<int>(motors.size())) return CommandResult::not_found;
+        motors[id].set_pwm(0);
+        return CommandResult::ok;
+    }
+
+    CommandResult runMotor(int id, double sp) override {
+        if (id < 0 || id >= static_cast<int>(motors.size())) return CommandResult::not_found;
+        motors[id].set_pwm(static_cast<int>(std::abs(sp) * 400));
+        return CommandResult::ok;
+    }
+
+    CommandResult coastMotor(int id) override {
+        if (id < 0 || id >= static_cast<int>(motors.size())) return CommandResult::not_found;
+        motors[id].set_pwm(0);
+        return CommandResult::ok;
+    }
+
+    CommandResult brakeMotor(int id) override {
+        if (id < 0 || id >= static_cast<int>(motors.size())) return CommandResult::not_found;
+        motors[id].set_pwm(0);
+        return CommandResult::ok;
+    }
 };
 
 // ================================================================================
@@ -367,6 +415,10 @@ int main() {
            "page has a config Save control");
     expect(page && page->body.find("/api/config") != std::string::npos,
            "page fetches /api/config");
+    expect(page && page->body.find("/api/motors") != std::string::npos,
+           "rover page fetches /api/motors");
+    expect(page && (page->body.find("Run") != std::string::npos || page->body.find("\"Run\"") != std::string::npos),
+           "page has Run control");
     expect(page && page->body.find("replaceAll(\"_\", \" \")") != std::string::npos,
            "page display-cases config keys");
     expect(page && page->body.find("charAt(0).toUpperCase") != std::string::npos,
@@ -467,6 +519,21 @@ int main() {
            "GET /api/servos has servo name");
     expect(list && list->body.find("\"angle\"") == std::string::npos,
            "GET /api/servos omits angle when pwm is 0");
+
+    auto mlist = cli.Get("/api/motors");
+    expect(mlist && mlist->status == 200, "GET /api/motors is 200");
+    expect(mlist && mlist->body.find("\"items\"") != std::string::npos,
+           "GET /api/motors has items");
+    expect(mlist && mlist->body.find("front-left") != std::string::npos,
+           "GET /api/motors has motor name");
+
+    auto run = cli.Post("/api/motors/0", "{\"speed\":0.5}", "application/json");
+    expect(run && run->status == 200, "POST /api/motors/0 is 200");
+
+    auto motorsAfter = cli.Get("/api/motors");
+    expect(motorsAfter && motorsAfter->status == 200, "GET /api/motors after run is 200");
+    expect(motorsAfter && motorsAfter->body.find("\"pwm\"") != std::string::npos,
+           "GET /api/motors reports pwm");
 
     auto moved = cli.Post("/api/servos/11", "{\"angle\":45}", "application/json");
     expect(moved && moved->status == 200, "POST /api/servos/11 is 200");

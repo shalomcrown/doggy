@@ -15,6 +15,7 @@ import (
 	"doggy-lora/internal/hop"
 	"doggy-lora/internal/pb"
 	"doggy-lora/internal/settings"
+	"log"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -174,7 +175,11 @@ func (s *Server) proxyStatus(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.roundTrip(r, 8*time.Second)
 	if err != nil {
-		writeOffline(w)
+		// Log and return a more descriptive JSON error to help operator debugging
+		log.Printf("operator: roundTrip /api/status error: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"radio_not_connected","message":"` + err.Error() + `"}`))
 		return
 	}
 	code, ct, body := air.AirHTTP(resp)
@@ -192,7 +197,10 @@ func (s *Server) proxyStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) roundTripWrite(w http.ResponseWriter, r *http.Request, timeout time.Duration) {
 	resp, err := s.roundTrip(r, timeout)
 	if err != nil {
-		writeOffline(w)
+		log.Printf("operator: roundTrip error %v for %s %s", err, r.Method, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"radio_not_connected","message":"` + err.Error() + `"}`))
 		return
 	}
 	writeAir(w, resp)

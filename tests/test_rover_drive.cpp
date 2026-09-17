@@ -49,6 +49,12 @@ int main() {
            "changing turn with the same speed succeeds");
     expect(rover.getStatus().motors().items(0).pwm() == 2048,
            "turn does not change motor PWM in this slice");
+    expect(rover.stop() == CommandResult::ok,
+           "stop command succeeds and clears motor speed");
+    expect(rover.getStatus().speed() == 0.0 && rover.getStatus().turn() == 0.0,
+           "stop clears the reported drive state");
+    expect(rover.brake() == CommandResult::ok,
+           "brake command succeeds");
 
     Config remapped = rover.getConfig();
     remapped.mutable_motors()->mutable_front_left()->set_pwm(0);

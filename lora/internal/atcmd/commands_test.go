@@ -216,3 +216,40 @@ func TestApplyDelaysAfterPlus(t *testing.T) {
 		t.Fatal("expected delay after +++")
 	}
 }
+
+// ==============================================================================
+
+type lateReplyPort struct {
+	ready chan struct{}
+}
+
+func (p *lateReplyPort) Write(b []byte) (int, error) {
+	go func() {
+		time.Sleep(1500 * time.Millisecond)
+		close(p.ready)
+	}()
+	return len(b), nil
+}
+
+func (p *lateReplyPort) Read(b []byte) (int, error) {
+	<-p.ready
+	copy(b, []byte("OK\r\n"))
+	return len("OK\r\n"), io.EOF
+}
+
+func TestApplyAcceptsSlowATReplies(t *testing.T) {
+	savedTimeout := replyTimeout
+	replyTimeout = 2 * time.Second
+	defer func() { replyTimeout = savedTimeout }()
+
+	port := &lateReplyPort{ready: make(chan struct{})}
+	s := settings.Settings{Enabled: true, Txch: 18, Rxch: 18, LBT: 0}
+	start := time.Now()
+	_, err := Apply(port, settings.Settings{}, s)
+	if err != nil {
+		t.Fatalf("slow AT reply should succeed: %v", err)
+	}
+	if time.Since(start) < 1500*time.Millisecond {
+		t.Fatal("expected serial helper to wait for the slow OK reply")
+	}
+}

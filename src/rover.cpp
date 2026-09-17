@@ -90,6 +90,16 @@ static void coast_motor_output(
 
 // ================================================================================
 
+static void brake_motor_output(
+        ServoBoard &board,
+        const doggy::v1::Motor &motor) {
+    write_motor_plan(
+            board,
+            motor_write_plan(motor.pwm(), motor.in2(), motor.in1(), motor_brake_signal()));
+}
+
+// ================================================================================
+
 Rover::Rover() : Rover(default_rover_config(), {}) {
 }
 
@@ -175,6 +185,16 @@ void Rover::coastMotorOutputsUnlocked() {
 
 // ================================================================================
 
+void Rover::brakeMotorOutputsUnlocked() {
+    brake_motor_output(motor_board_, config_.motors().front_left());
+    brake_motor_output(motor_board_, config_.motors().front_right());
+    brake_motor_output(motor_board_, config_.motors().rear_left());
+    brake_motor_output(motor_board_, config_.motors().rear_right());
+    motor_pwm_.fill(0);
+}
+
+// ================================================================================
+
 std::vector<MotorSnapshot> Rover::listMotors() {
     std::lock_guard<std::mutex> lock(mutex_);
     return snapshotUnlocked();
@@ -207,6 +227,159 @@ CommandResult Rover::setDrive(double speed, double turn) {
     }
     status_.set_speed(speed);
     status_.set_turn(turn);
+    return CommandResult::ok;
+}
+
+// ================================================================================
+
+CommandResult Rover::stop() {
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+    if (lock.owns_lock() == false) {
+        return CommandResult::busy;
+    }
+
+    try {
+        coastMotorOutputsUnlocked();
+    } catch (const std::system_error &) {
+        add_i2c_error(status_, "Could not coast rover motor outputs");
+        return CommandResult::failed;
+    }
+    status_.set_speed(0.0);
+    status_.set_turn(0.0);
+    return CommandResult::ok;
+}
+
+// ================================================================================
+
+CommandResult Rover::brake() {
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+    if (lock.owns_lock() == false) {
+        return CommandResult::busy;
+    }
+
+    try {
+        brakeMotorOutputsUnlocked();
+    } catch (const std::system_error &) {
+        add_i2c_error(status_, "Could not brake rover motor outputs");
+        return CommandResult::failed;
+    }
+    status_.set_speed(0.0);
+    status_.set_turn(0.0);
+    return CommandResult::ok;
+}
+
+// ==============================================================================
+
+CommandResult Rover::runMotor(int id, double speed) {
+    if (std::isfinite(speed) == false || speed < -1.0 || speed > 1.0) {
+        return CommandResult::bad_drive;
+    }
+
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+    if (lock.owns_lock() == false) {
+        return CommandResult::busy;
+    }
+
+    try {
+        switch (id) {
+            case 0:
+                motor_pwm_[0] = apply_motor_output(
+                        motor_board_, config_.motors().front_left(), speed);
+                break;
+            case 1:
+                motor_pwm_[1] = apply_motor_output(
+                        motor_board_, config_.motors().front_right(), speed);
+                break;
+            case 2:
+                motor_pwm_[2] = apply_motor_output(
+                        motor_board_, config_.motors().rear_left(), speed);
+                break;
+            case 3:
+                motor_pwm_[3] = apply_motor_output(
+                        motor_board_, config_.motors().rear_right(), speed);
+                break;
+            default:
+                return CommandResult::not_found;
+        }
+    } catch (const std::system_error &) {
+        add_i2c_error(status_, "Could not set rover motor outputs");
+        return CommandResult::failed;
+    }
+
+    return CommandResult::ok;
+}
+
+// ==============================================================================
+
+CommandResult Rover::coastMotor(int id) {
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+    if (lock.owns_lock() == false) {
+        return CommandResult::busy;
+    }
+
+    try {
+        switch (id) {
+            case 0:
+                coast_motor_output(motor_board_, config_.motors().front_left());
+                motor_pwm_[0] = 0;
+                break;
+            case 1:
+                coast_motor_output(motor_board_, config_.motors().front_right());
+                motor_pwm_[1] = 0;
+                break;
+            case 2:
+                coast_motor_output(motor_board_, config_.motors().rear_left());
+                motor_pwm_[2] = 0;
+                break;
+            case 3:
+                coast_motor_output(motor_board_, config_.motors().rear_right());
+                motor_pwm_[3] = 0;
+                break;
+            default:
+                return CommandResult::not_found;
+        }
+    } catch (const std::system_error &) {
+        add_i2c_error(status_, "Could not coast rover motor outputs");
+        return CommandResult::failed;
+    }
+
+    return CommandResult::ok;
+}
+
+// ==============================================================================
+
+CommandResult Rover::brakeMotor(int id) {
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+    if (lock.owns_lock() == false) {
+        return CommandResult::busy;
+    }
+
+    try {
+        switch (id) {
+            case 0:
+                brake_motor_output(motor_board_, config_.motors().front_left());
+                motor_pwm_[0] = 0;
+                break;
+            case 1:
+                brake_motor_output(motor_board_, config_.motors().front_right());
+                motor_pwm_[1] = 0;
+                break;
+            case 2:
+                brake_motor_output(motor_board_, config_.motors().rear_left());
+                motor_pwm_[2] = 0;
+                break;
+            case 3:
+                brake_motor_output(motor_board_, config_.motors().rear_right());
+                motor_pwm_[3] = 0;
+                break;
+            default:
+                return CommandResult::not_found;
+        }
+    } catch (const std::system_error &) {
+        add_i2c_error(status_, "Could not brake rover motor outputs");
+        return CommandResult::failed;
+    }
+
     return CommandResult::ok;
 }
 

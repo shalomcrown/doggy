@@ -368,6 +368,88 @@ void register_api(httplib::Server &server, RobotApi &api,
                 res.set_content(error_json("bad_drive"), "application/json");
             }
         });
+
+        server.Post("/api/stop", [rover](const httplib::Request &req, httplib::Response &res) {
+            const CommandResult result = rover->stop();
+            res.status = status_for(result);
+            if (result == CommandResult::ok) {
+                res.set_content(status_to_json(rover->getStatus(), DOGGY_VERSION), "application/json");
+            } else if (result == CommandResult::busy) {
+                res.set_content(error_json("busy"), "application/json");
+            } else {
+                res.set_content(error_json("motor_io"), "application/json");
+            }
+        });
+
+        server.Post("/api/brake", [rover](const httplib::Request &req, httplib::Response &res) {
+            const CommandResult result = rover->brake();
+            res.status = status_for(result);
+            if (result == CommandResult::ok) {
+                res.set_content(status_to_json(rover->getStatus(), DOGGY_VERSION), "application/json");
+            } else if (result == CommandResult::busy) {
+                res.set_content(error_json("busy"), "application/json");
+            } else {
+                res.set_content(error_json("motor_io"), "application/json");
+            }
+        });
+
+        // Per-motor listing and control endpoints
+        server.Get("/api/motors", [rover](const httplib::Request &, httplib::Response &res) {
+            res.set_content(motors_to_json(rover->listMotors()), "application/json");
+        });
+
+        server.Post(R"(/api/motors/(\d+))", [rover](const httplib::Request &req,
+                                                     httplib::Response &res) {
+            int id = 0;
+            try {
+                id = std::stoi(req.matches[1]);
+            } catch (const std::exception &) {
+                res.status = 400;
+                res.set_content(error_json("bad_id"), "application/json");
+                return;
+            }
+
+            bool coast = false;
+            bool brake = false;
+            double speed = 0.0;
+            bool has_speed = false;
+            if (parse_motor_post(req.body, coast, brake, speed, has_speed) == false) {
+                res.status = 400;
+                res.set_content(error_json("bad_json"), "application/json");
+                return;
+            }
+
+            CommandResult result = CommandResult::failed;
+            if (has_speed) {
+                result = rover->runMotor(id, speed);
+            } else if (coast) {
+                result = rover->coastMotor(id);
+            } else if (brake) {
+                result = rover->brakeMotor(id);
+            } else {
+                res.status = 400;
+                res.set_content(error_json("bad_json"), "application/json");
+                return;
+            }
+
+            res.status = status_for(result);
+            if (result == CommandResult::ok) {
+                res.set_content(status_to_json(rover->getStatus(), DOGGY_VERSION), "application/json");
+                return;
+            }
+
+            if (result == CommandResult::not_found) {
+                res.set_content(error_json("not_found"), "application/json");
+                return;
+            }
+
+            if (result == CommandResult::busy) {
+                res.set_content(error_json("busy"), "application/json");
+                return;
+            }
+
+            res.set_content(error_json("motor_io"), "application/json");
+        });
     }
 
     server.set_logger([](const httplib::Request &req, const httplib::Response &res) {
