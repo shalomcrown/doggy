@@ -6,8 +6,10 @@
 #include "web_server.h"
 
 #include "httplib.h"
+#include "nlohmann/json.hpp"
 
 #include <chrono>
+#include <ctime>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -207,6 +209,8 @@ public:
     double speed = 0.0;
     double turn = 0.0;
     bool drive_fail = false;
+    int heartbeat_count = 0;
+    CommandResult heartbeat_result = CommandResult::ok;
 
     FakeRover() {
         config.mutable_robot()->set_type(doggy::v1::ROVER);
@@ -231,6 +235,13 @@ public:
         speed = next_speed;
         turn = next_turn;
         return CommandResult::ok;
+    }
+
+    // ================================================================================
+
+    CommandResult heartbeat() override {
+        heartbeat_count += 1;
+        return heartbeat_result;
     }
 
     DogStatus getStatus() const override {
@@ -262,32 +273,20 @@ public:
     }
 
     CommandResult stop() override {
-        // stop clears the commanded speed/turn in the fake rover
         speed = 0.0;
         turn = 0.0;
+        for (MotorSnapshot &item : motors) {
+            item.set_pwm(0);
+        }
         return CommandResult::ok;
     }
 
     CommandResult brake() override {
-        // brake applies the brake but leaves reported speed/turn unchanged for this fake
-        return CommandResult::ok;
-    }
-
-    CommandResult runMotor(int id, double sp) override {
-        if (id < 0 || id >= static_cast<int>(motors.size())) return CommandResult::not_found;
-        motors[id].set_pwm(static_cast<int>(std::abs(sp) * 400));
-        return CommandResult::ok;
-    }
-
-    CommandResult coastMotor(int id) override {
-        if (id < 0 || id >= static_cast<int>(motors.size())) return CommandResult::not_found;
-        motors[id].set_pwm(0);
-        return CommandResult::ok;
-    }
-
-    CommandResult brakeMotor(int id) override {
-        if (id < 0 || id >= static_cast<int>(motors.size())) return CommandResult::not_found;
-        motors[id].set_pwm(0);
+        speed = 0.0;
+        turn = 0.0;
+        for (MotorSnapshot &item : motors) {
+            item.set_pwm(0);
+        }
         return CommandResult::ok;
     }
 
@@ -388,6 +387,10 @@ int main() {
     expect(page && page->body.find("Home") != std::string::npos, "page has Home button");
     expect(page && page->body.find("/api/status") != std::string::npos,
            "page fetches /api/status");
+    expect(page && page->body.find("id=\"linux-time\"") != std::string::npos,
+           "dog page displays Linux time");
+    expect(page && page->body.find("toISOString()") != std::string::npos,
+           "dog page formats Linux time as UTC ISO-8601");
     expect(page && page->body.find("id=\"imu\"") != std::string::npos,
            "page has an IMU section");
     expect(page && page->body.find("id=\"battery\"") != std::string::npos,
@@ -415,10 +418,10 @@ int main() {
            "page has a config Save control");
     expect(page && page->body.find("/api/config") != std::string::npos,
            "page fetches /api/config");
-    expect(page && page->body.find("/api/motors") != std::string::npos,
-           "rover page fetches /api/motors");
-    expect(page && (page->body.find("Run") != std::string::npos || page->body.find("\"Run\"") != std::string::npos),
-           "page has Run control");
+    expect(page && page->body.find("/api/motors") == std::string::npos,
+           "dog page does not fetch /api/motors");
+    expect(page && page->body.find("failureText(res, \"Save failed\")") != std::string::npos,
+           "dog page shows the server's save failure reason");
     expect(page && page->body.find("replaceAll(\"_\", \" \")") != std::string::npos,
            "page display-cases config keys");
     expect(page && page->body.find("charAt(0).toUpperCase") != std::string::npos,
@@ -454,6 +457,9 @@ int main() {
            "dog page can set lora serial baud");
     expect(page && page->body.find("[\"lora\", \"lbt\"]") != std::string::npos,
            "dog page can set numeric lora LBT");
+    expect(page && page->body.find("[\"robot\", \"gcs_timeout_s\"]")
+                   != std::string::npos,
+           "dog page preserves the rover GCS timeout");
     expect(page && page->body.find("lora-air-key") != std::string::npos,
            "dog page can set lora air_key");
     expect(page && page->body.find("Refresh the page") != std::string::npos,
@@ -462,6 +468,7 @@ int main() {
                    && page->body.find("#status:empty") != std::string::npos,
            "dog page pins the status line so Save feedback stays visible");
 
+    const std::time_t before_status = std::time(nullptr);
     auto healthy = cli.Get("/api/status");
     expect(healthy && healthy->status == 200, "GET /api/status is 200");
     expect(healthy && healthy->body.find("\"imu\"") != std::string::npos,
@@ -473,12 +480,23 @@ int main() {
     expect(healthy && healthy->body.find(std::string("\"version\":\"") + DOGGY_VERSION + "\"")
                    != std::string::npos,
            "GET /api/status includes stamped version");
+    expect(healthy && healthy->body.find("\"unix_time\":") != std::string::npos,
+           "GET /api/status includes Linux unix time");
+    const nlohmann::json healthy_json = nlohmann::json::parse(healthy->body);
+    const std::time_t unix_time =
+            static_cast<std::time_t>(std::stoll(
+                    healthy_json.at("unix_time").get<std::string>()));
+    expect(unix_time >= before_status && unix_time <= std::time(nullptr),
+           "GET /api/status stamps current whole-second Linux time");
     expect(healthy && healthy->body.find("\"type\":\"DOG\"") != std::string::npos,
            "dog status includes DOG type");
     expect(healthy && healthy->body.find("\"servos\"") != std::string::npos,
            "GET /api/status includes servos");
     expect(healthy && healthy->body.find("\"angle\"") == std::string::npos,
            "GET /api/status omits angle when pwm is 0");
+    auto dog_heartbeat = cli.Post("/api/heartbeat", "", "text/plain");
+    expect(dog_heartbeat && dog_heartbeat->status == 404,
+           "POST /api/heartbeat on dog is 404");
 
     dog.status.mutable_imu()->set_ok(true);
     dog.status.mutable_imu()->set_temperature_c(37.5);
@@ -520,20 +538,8 @@ int main() {
     expect(list && list->body.find("\"angle\"") == std::string::npos,
            "GET /api/servos omits angle when pwm is 0");
 
-    auto mlist = cli.Get("/api/motors");
-    expect(mlist && mlist->status == 200, "GET /api/motors is 200");
-    expect(mlist && mlist->body.find("\"items\"") != std::string::npos,
-           "GET /api/motors has items");
-    expect(mlist && mlist->body.find("front-left") != std::string::npos,
-           "GET /api/motors has motor name");
-
-    auto run = cli.Post("/api/motors/0", "{\"speed\":0.5}", "application/json");
-    expect(run && run->status == 200, "POST /api/motors/0 is 200");
-
-    auto motorsAfter = cli.Get("/api/motors");
-    expect(motorsAfter && motorsAfter->status == 200, "GET /api/motors after run is 200");
-    expect(motorsAfter && motorsAfter->body.find("\"pwm\"") != std::string::npos,
-           "GET /api/motors reports pwm");
+    auto dogMotors = cli.Get("/api/motors");
+    expect(dogMotors && dogMotors->status == 404, "GET /api/motors on dog is 404");
 
     auto moved = cli.Post("/api/servos/11", "{\"angle\":45}", "application/json");
     expect(moved && moved->status == 200, "POST /api/servos/11 is 200");
@@ -688,17 +694,37 @@ int main() {
     expect(badCfg && badCfg->status == 400, "PUT /api/config bad json is 400");
     expect(badCfg && badCfg->body.find("\"error\":\"bad_json\"") != std::string::npos,
            "PUT /api/config bad json uses bad_json");
+    expect(badCfg && badCfg->body.find("\"message\":\"invalid config JSON\"") != std::string::npos,
+           "PUT /api/config bad json explains the body was unparsable");
+    expect(badCfg && badCfg->body.find("protobuf") == std::string::npos
+                   && badCfg->body.find("INVALID_ARGUMENT") == std::string::npos,
+           "PUT /api/config bad json does not leak parser detail");
 
     auto rangeCfg = cli.Put("/api/config",
                             R"({"servos":{"head_neck":16}})",
                             "application/json");
     expect(rangeCfg && rangeCfg->status == 400, "PUT /api/config range is 400");
+    expect(rangeCfg && rangeCfg->body.find("head_neck") != std::string::npos
+                   && rangeCfg->body.find("out of range") != std::string::npos,
+           "PUT /api/config range names the rejected field");
+
+    auto dupCfg = cli.Put("/api/config",
+                          R"({"motors":{"front_left":{"pwm":5}}})",
+                          "application/json");
+    expect(dupCfg && dupCfg->status == 400, "PUT /api/config duplicate channel is 400");
+    expect(dupCfg && dupCfg->body.find("duplicate motor channel") != std::string::npos,
+           "PUT /api/config duplicate channel says which rule failed");
 
     dog.write_fail = true;
     auto writeFail = cli.Put("/api/config",
                              R"({"servos":{"front_right_waist":2}})",
                              "application/json");
     expect(writeFail && writeFail->status == 500, "PUT /api/config write fail is 500");
+    expect(writeFail && writeFail->body.find("\"error\":\"config_write\"") != std::string::npos,
+           "PUT /api/config write fail uses config_write");
+    expect(writeFail && writeFail->body.find("doggy.json") == std::string::npos
+                   && writeFail->body.find("/etc/") == std::string::npos,
+           "PUT /api/config write fail does not disclose the config path");
     dog.write_fail = false;
 
     dog.busy = true;
@@ -720,10 +746,83 @@ int main() {
     expect(rover_server.start(), "rover server starts");
     httplib::Client rover_cli("127.0.0.1", rover_server.port());
     auto rover_page = get_retry(rover_cli, "/");
+    expect(rover_page && rover_page->body.find("/api/motors") != std::string::npos,
+           "rover page fetches /api/motors");
+    expect(rover_page && rover_page->body.find("\"Run\"") != std::string::npos,
+           "rover page has Run control");
     expect(rover_page && rover_page->body.find("id=\"steering\"") != std::string::npos,
            "rover page has steering slider");
     expect(rover_page && rover_page->body.find("id=\"speed\"") != std::string::npos,
            "rover page has speed slider");
+    expect(rover_page && rover_page->body.find("class=\"drive-layout\"") != std::string::npos,
+           "rover drive row lays out sliders, camera, and joystick");
+    expect(rover_page && rover_page->body.find("id=\"drive-video\"") != std::string::npos,
+           "rover page reserves the camera slot");
+    expect(rover_page && rover_page->body.find("id=\"joystick\"") != std::string::npos,
+           "rover page has a drive joystick");
+    expect(rover_page && rover_page->body.find("HEARTBEAT_MS = 750") != std::string::npos
+                   && rover_page->body.find("/api/heartbeat") != std::string::npos,
+           "rover page sends a heartbeat every 750 ms");
+    expect(rover_page && rover_page->body.find("heartbeatBusy") != std::string::npos
+                   && rover_page->body.find("setInterval(sendHeartbeat, HEARTBEAT_MS)")
+                              != std::string::npos,
+           "rover page suppresses overlapping heartbeat requests");
+    expect(rover_page && rover_page->body.find("sendBeacon") == std::string::npos
+                   && rover_page->body.find("beforeunload") == std::string::npos,
+           "rover page does not extend liveness while closing");
+    expect(rover_page && rover_page->body.find("id=\"gcs-status\"") != std::string::npos
+                   && rover_page->body.find("heartbeatFailures >= 2")
+                              != std::string::npos,
+           "rover page reports persistent heartbeat failure");
+    expect(rover_page && rover_page->body.find("id=\"linux-time\"") != std::string::npos,
+           "rover page displays Linux time");
+    expect(rover_page && rover_page->body.find("toISOString()") != std::string::npos,
+           "rover page formats Linux time as UTC ISO-8601");
+    expect(rover_page
+                   && rover_page->body.find("[\"robot\", \"gcs_timeout_s\"]")
+                              != std::string::npos,
+           "rover page edits the GCS timeout");
+    expect(rover_page && rover_page->body.find("input.min = \"2\"") != std::string::npos
+                   && rover_page->body.find("input.max = \"60\"") != std::string::npos,
+           "rover page constrains GCS timeout to the API range");
+    expect(rover_page && rover_page->body.find("JOYSTICK_DEADZONE = 0.15") != std::string::npos
+                   && rover_page->body.find("applyAxisDeadzone") != std::string::npos,
+           "joystick dead zone zeros steer and speed independently");
+    expect(rover_page && rover_page->body.find("ArrowUp") != std::string::npos,
+           "joystick is keyboard operable");
+    expect(rover_page
+                   && rover_page->body.find("\"pointerup\", releaseJoystick") != std::string::npos
+                   && rover_page->body.find("\"pointercancel\", releaseJoystick") != std::string::npos
+                   && rover_page->body.find("\"lostpointercapture\", releaseJoystick")
+                              != std::string::npos,
+           "joystick springs back to center on release, cancel, and lost capture");
+    expect(rover_page && rover_page->body.find("function releaseJoystick") != std::string::npos
+                   && rover_page->body.find("sendDriveNow();") != std::string::npos,
+           "releasing the joystick stops the rover immediately, not after the debounce");
+    expect(rover_page && rover_page->body.find("sendDrive(command)") != std::string::npos
+                   && rover_page->body.find("body: JSON.stringify({ speed: command.speed, "
+                                            "turn: command.turn })")
+                              != std::string::npos,
+           "drive posts the queued command, not whatever the sliders hold when it fires");
+    expect(rover_page && rover_page->body.find("const driveSettled") != std::string::npos
+                   && rover_page->body.find("pendingDrive === null && driveTimer === null")
+                              != std::string::npos,
+           "status poll does not overwrite sliders while a drive command is in flight");
+    expect(rover_page && rover_page->body.find("id=\"drive-brake\"") != std::string::npos,
+           "rover page has drive brake");
+    expect(rover_page && rover_page->body.find("failureText(res, \"Save failed\")") != std::string::npos,
+           "rover page shows the server's save failure reason");
+    expect(rover_page && rover_page->body.find("speedEl.value = \"0\"") != std::string::npos
+                   && rover_page->body.find("/api/brake") != std::string::npos,
+           "drive brake zeros speed sliders without posting /api/drive");
+    expect(rover_page && rover_page->body.find("zeroAllMotorSpeedSliders()") != std::string::npos
+                   && rover_page->body.find("/api/stop") != std::string::npos,
+           "drive stop zeros motor speed sliders");
+    expect(rover_page && rover_page->body.find("clearTimeout(driveTimer)") != std::string::npos,
+           "stop and brake cancel a pending drive post");
+    expect(rover_page && rover_page->body.find("zeroMotorSpeedSlider(speedInput, speedVal)")
+                   != std::string::npos,
+           "per-motor coast and brake zero that motor slider");
     expect(rover_page && rover_page->body.find("id=\"robot-type\"") != std::string::npos,
            "rover page can change robot type");
     expect(rover_page && rover_page->body.find("id=\"config-pin\"") != std::string::npos,
@@ -757,11 +856,47 @@ int main() {
            "rover status includes motors");
     expect(rover_status && rover_status->body.find("\"servos\"") == std::string::npos,
            "rover status omits servos");
+    auto heartbeat = rover_cli.Post("/api/heartbeat", "", "text/plain");
+    expect(heartbeat && heartbeat->status == 200,
+           "POST /api/heartbeat on rover is 200");
+    expect(rover.heartbeat_count == 1,
+           "POST /api/heartbeat refreshes rover liveness");
+    rover.heartbeat_result = CommandResult::busy;
+    auto busy_heartbeat = rover_cli.Post("/api/heartbeat", "", "text/plain");
+    expect(busy_heartbeat && busy_heartbeat->status == 409
+                   && busy_heartbeat->body.find("\"error\":\"busy\"")
+                              != std::string::npos,
+           "busy POST /api/heartbeat is 409 busy");
+    rover.heartbeat_result = CommandResult::ok;
+    auto mlist = rover_cli.Get("/api/motors");
+    expect(mlist && mlist->status == 200, "GET /api/motors is 200");
+    expect(mlist && mlist->body.find("\"items\"") != std::string::npos,
+           "GET /api/motors has items");
+    expect(mlist && mlist->body.find("front-left") != std::string::npos,
+           "GET /api/motors has motor name");
+    auto run = rover_cli.Post("/api/motors/0", "{\"speed\":0.5}", "application/json");
+    expect(run && run->status == 200, "POST /api/motors/0 is 200");
+    auto motorsAfter = rover_cli.Get("/api/motors");
+    expect(motorsAfter && motorsAfter->status == 200, "GET /api/motors after run is 200");
+    expect(motorsAfter && motorsAfter->body.find("\"pwm\":200") != std::string::npos,
+           "GET /api/motors reports pwm");
     auto drive = rover_cli.Post(
             "/api/drive", R"({"speed":0.5,"turn":-0.25})", "application/json");
     expect(drive && drive->status == 200, "valid rover drive is 200");
     expect(drive && drive->body.find("\"speed\":0.5") != std::string::npos,
            "drive response reports speed");
+    auto stopped = rover_cli.Post("/api/stop", "", "text/plain");
+    expect(stopped && stopped->status == 200
+                   && stopped->body.find("\"speed\":0") != std::string::npos,
+           "POST /api/stop reports speed 0");
+    auto driven = rover_cli.Post(
+            "/api/drive", R"({"speed":0.5,"turn":-0.25})", "application/json");
+    expect(driven && driven->status == 200, "drive after stop is 200");
+    auto braked = rover_cli.Post("/api/brake", "", "text/plain");
+    expect(braked && braked->status == 200
+                   && braked->body.find("\"speed\":0") != std::string::npos
+                   && braked->body.find("\"turn\":0") != std::string::npos,
+           "POST /api/brake reports speed and turn 0");
     auto bad_drive = rover_cli.Post(
             "/api/drive", R"({"speed":2,"turn":0})", "application/json");
     expect(bad_drive && bad_drive->status == 400, "out-of-range rover drive is 400");
@@ -791,8 +926,15 @@ int main() {
     expect(log_text.find("\"pin\":\"1234\"") == std::string::npos
                    && log_text.find("pin=1234") == std::string::npos,
            "log does not contain the PIN");
+    expect(log_text.find("PUT /api/config 400 {\"error\":\"bad_json\",\"message\":")
+                   != std::string::npos,
+           "failed config save is logged with its reason");
+    expect(log_text.find("head_neck channel out of range") != std::string::npos,
+           "log names the rejected config field");
     expect(log_text.find("GET /api/status 200") == std::string::npos,
            "successful GET /api/status is not logged");
+    expect(log_text.find("POST /api/heartbeat 200") == std::string::npos,
+           "successful POST /api/heartbeat is not logged");
     expect(log_text.find("POST /api/servos/99 404") != std::string::npos,
            "API failure 404 is logged");
     expect(log_text.find("GET / 200") == std::string::npos,

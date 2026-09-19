@@ -12,6 +12,20 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 > Work merged but not yet shipped. Move entries to a versioned section on release.
 
 ### Added
+- Rover page drive row: sliders on the left, reserved camera panel in the middle, on-screen joystick on the right. The stick has a 15% per-axis dead zone (no steer / zero speed) and springs to center on release.
+- Rover GCS heartbeat over Wi-Fi or LoRa: the rover page posts every 750 ms, `robot.gcs_timeout_s` is configurable from 2–60 seconds (default 3), and loss of the page or channel coasts every motor.
+- `GET /api/status` now includes current Linux Unix time; both pages display it in UTC.
+
+### Changed
+- Rover **Drive** arcade-mixes steering: turn is added on the left and subtracted on the right, then both sides are scaled if either would leave `[-1, 1]`, so steering authority falls as speed rises without a fixed gain.
+- **Breaking behavior:** one-shot rover drive and individual-motor commands no longer run indefinitely. API clients must call `POST /api/heartbeat` or reissue motion inside `robot.gcs_timeout_s`; telemetry status reads do not count as liveness.
+- Rover Stop/Brake (and per-motor Coast/Brake) zero the on-page speed sliders after the existing command; `POST /api/stop` and `POST /api/brake` report commanded `speed`/`turn` as 0.
+
+### Fixed
+- Releasing the joystick now actually stops the rover. The status poll could write the still-moving speed/turn back into the sliders in the gap between centering the stick and the debounced `POST /api/drive`, so the rover kept turning in place. Drive commands are now posted with the values captured when they were queued, the poll leaves the sliders alone while a command is pending, and releasing the stick sends the stop immediately instead of one debounce later. Losing pointer capture, releasing the button off the pad, hiding the tab, or leaving the window all spring the stick back too.
+- A rejected **Save** on the configuration page now says why. `PUT /api/config` adds an optional `message` to the error body naming the offending field (for example `config lora.txch out of range`), both pages show it instead of a bare "Save failed", and failed API calls are logged with their JSON error body instead of only the status code. Config-write failures still return a generic message because the reason contains the config file path — that reason goes to the log.
+
+### Added
 - Numeric LoRa `lbt` setting (0–255, default 0) on firmware and operator setup pages; the sidecar applies the exact value with `AT+LBT` before channel commands.
 - Robot type `DOG` or `ROVER` in `doggy.json` (`robot.type`; missing type is a dog). Changing type on either page requires the system PIN, restarts `doggy.service`, and the UI tells you to refresh. A rover page (`rover.html`) has steering/speed sliders and a motor table; `POST /api/drive` now maps normalized speed to all enabled motors through the Adafruit bonnet while retaining turn for later steering.
 - `doggy-lora` Go sidecar for a Waveshare USB-TO-LoRa-xF dongle: AT apply/monitor, then a framed protobuf + AES-256-GCM hop so the laptop operator can call the same `/api/*` as Wi‑Fi. `/api/lora` on the operator is local radio config (including write-only `air_key`). Channels are TXCH/RXCH 0–80 for HF or LF. Laptop clients: `./build-operator.sh` produces a separate amd64 Ubuntu DEB (`shaloms-doggy-lora-operator`) and a Windows NSIS installer with a LocalSystem `DoggyLoraOperator` service (HTTP on 127.0.0.1:8765).

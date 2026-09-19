@@ -22,11 +22,17 @@ import (
 
 // ================================================================================
 
+type roundTripper interface {
+	RoundTrip(context.Context, *pb.AirRequest) (*pb.AirResponse, error)
+}
+
+// ================================================================================
+
 type Server struct {
 	webRoot   string
 	localFile string
 	pages     *http.ServeMux
-	rt        *hop.Runtime
+	rt        roundTripper
 
 	statusMu   sync.Mutex
 	statusBody []byte
@@ -38,11 +44,15 @@ type Server struct {
 // ================================================================================
 
 func New(webRoot, localFile string, rt *hop.Runtime) http.Handler {
+	var channel roundTripper
+	if rt != nil {
+		channel = rt
+	}
 	s := &Server{
 		webRoot:   webRoot,
 		localFile: localFile,
 		pages:     http.NewServeMux(),
-		rt:        rt,
+		rt:        channel,
 	}
 	s.pages.HandleFunc("/", s.serveRoot)
 	s.pages.HandleFunc("/lora", s.serveLoraPage)

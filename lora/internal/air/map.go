@@ -25,6 +25,8 @@ func HTTPToAir(method, path string, body []byte) (*pb.AirRequest, error) {
 	switch {
 	case method == http.MethodGet && path == "/api/status":
 		req.Op = &pb.AirRequest_GetStatus{GetStatus: &pb.Empty{}}
+	case method == http.MethodPost && path == "/api/heartbeat":
+		req.Op = &pb.AirRequest_Heartbeat{Heartbeat: &pb.Empty{}}
 	case method == http.MethodGet && path == "/api/config":
 		req.Op = &pb.AirRequest_GetConfig{GetConfig: &pb.Empty{}}
 	case method == http.MethodPut && path == "/api/config":
@@ -89,6 +91,8 @@ func AirToHTTP(req *pb.AirRequest) (HttpRequest, error) {
 	switch op := req.Op.(type) {
 	case *pb.AirRequest_GetStatus:
 		return HttpRequest{Method: http.MethodGet, Path: "/api/status"}, nil
+	case *pb.AirRequest_Heartbeat:
+		return HttpRequest{Method: http.MethodPost, Path: "/api/heartbeat"}, nil
 	case *pb.AirRequest_GetConfig:
 		return HttpRequest{Method: http.MethodGet, Path: "/api/config"}, nil
 	case *pb.AirRequest_PutConfig:
@@ -168,7 +172,7 @@ func HTTPToAirResponse(req *pb.AirRequest, resp HttpResponse) *pb.AirResponse {
 		return out
 	}
 	switch req.GetOp().(type) {
-	case *pb.AirRequest_GetStatus:
+	case *pb.AirRequest_GetStatus, *pb.AirRequest_Heartbeat:
 		st := &pb.Status{}
 		_ = protojson.Unmarshal(resp.Body, st)
 		out.Payload = &pb.AirResponse_StatusBody{StatusBody: st}

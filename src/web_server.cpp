@@ -1,6 +1,7 @@
 #include "web_server.h"
 #include "dog_api.h"
 #include "rover_api.h"
+#include "utils.h"
 #include "web_json.h"
 #include "doggy_version.h"
 
@@ -19,9 +20,14 @@
 
 namespace fs = std::filesystem;
 
+// Error bodies are short JSON codes; the cap keeps a malformed response out of the log.
+inline constexpr std::size_t kMaxLoggedErrorBody = 512;
+
 // ================================================================================
 
 namespace {
+
+// ================================================================================
 
 std::string read_file(const std::string &path) {
     std::ifstream in(path);
@@ -33,6 +39,8 @@ std::string read_file(const std::string &path) {
     os << in.rdbuf();
     return os.str();
 }
+
+// ================================================================================
 
 int status_for(CommandResult result) {
     switch (result) {
@@ -51,9 +59,22 @@ int status_for(CommandResult result) {
     return 500;
 }
 
+// ================================================================================
+
 std::string error_json(const char *code) {
     return std::string("{\"error\":\"") + code + "\"}";
 }
+
+// ================================================================================
+
+// Only messages the firmware itself produced may be sent to a LAN caller — never
+// parser output or filesystem paths.
+std::string error_json(const char *code, const std::string &message) {
+    return std::string("{\"error\":\"") + code + "\",\"message\":\""
+            + json_escape(message) + "\"}";
+}
+
+// ================================================================================
 
 bool is_digits(const std::string &text) {
     if (text.empty()) {
@@ -164,16 +185,17 @@ void register_api(httplib::Server &server, RobotApi &api,
         std::string pin;
         if (parse_config_pin(req.body, pin) == false) {
             res.status = 400;
-            res.set_content(error_json("bad_json"), "application/json");
+            // Parser output stays server-side; the caller only learns the body was unparsable.
+            res.set_content(error_json("bad_json", "invalid config JSON"), "application/json");
             return;
         }
 
         Config config;
         try {
             config = config_overlay_json(api.getConfig(), req.body);
-        } catch (const ConfigError &) {
+        } catch (const ConfigError &ex) {
             res.status = 400;
-            res.set_content(error_json("bad_json"), "application/json");
+            res.set_content(error_json("bad_json", ex.what()), "application/json");
             return;
         }
 
@@ -345,6 +367,18 @@ void register_api(httplib::Server &server, RobotApi &api,
 
     RoverApi *rover = dynamic_cast<RoverApi *>(&api);
     if (rover != nullptr) {
+        server.Post("/api/heartbeat", [rover](const httplib::Request &,
+                                              httplib::Response &res) {
+            const CommandResult result = rover->heartbeat();
+            res.status = status_for(result);
+            if (result == CommandResult::ok) {
+                res.set_content(status_to_json(rover->getStatus(), DOGGY_VERSION),
+                                "application/json");
+            } else {
+                res.set_content(error_json("busy"), "application/json");
+            }
+        });
+
         server.Post("/api/drive", [rover](const httplib::Request &req,
                                           httplib::Response &res) {
             double speed = 0.0;
@@ -461,11 +495,21 @@ void register_api(httplib::Server &server, RobotApi &api,
         }
 
         if (failed) {
+            // Error bodies are firmware-generated JSON codes, never echoed request content,
+            // so logging them cannot leak a PIN or a config payload.
+            const bool json_body = res.get_header_value("Content-Type").rfind("application/json", 0) == 0;
+            if (json_body && res.body.empty() == false && res.body.size() <= kMaxLoggedErrorBody) {
+                PLOG_ERROR << req.method << " " << req.path << " " << res.status
+                           << " " << res.body;
+                return;
+            }
+
             PLOG_ERROR << req.method << " " << req.path << " " << res.status;
             return;
         }
 
-        if (req.method == "GET" && req.path == "/api/status") {
+        if ((req.method == "GET" && req.path == "/api/status")
+                || (req.method == "POST" && req.path == "/api/heartbeat")) {
             return;
         }
 

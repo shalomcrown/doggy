@@ -28,25 +28,97 @@
     #power button { margin-right: 0.5rem; }
     .pin-field { display: block; margin: 0.4rem 0; }
     .drive-field { display: block; margin: 0.6rem 0; }
+    .drive-layout {
+      display: grid;
+      grid-template-columns: minmax(14rem, 1fr) minmax(12rem, 2fr) auto;
+      gap: 1rem;
+      align-items: stretch;
+    }
+    .drive-video {
+      min-height: 10rem;
+      background: #1b1b1b;
+      color: #ccc;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 1rem;
+    }
+    .drive-stick {
+      justify-self: center;
+    }
+    #joystick {
+      position: relative;
+      width: 10rem;
+      height: 10rem;
+      border: 2px solid #444;
+      border-radius: 50%;
+      background: #f4f4f4;
+      touch-action: none;
+      user-select: none;
+    }
+    #joystick-dead {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 30%;
+      height: 30%;
+      transform: translate(-50%, -50%);
+      border: 1px dashed #999;
+      border-radius: 50%;
+      pointer-events: none;
+    }
+    #joystick-knob {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 2.4rem;
+      height: 2.4rem;
+      margin: -1.2rem 0 0 -1.2rem;
+      border-radius: 50%;
+      background: #333;
+      pointer-events: none;
+    }
+    @media (max-width: 700px) {
+      .drive-layout { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
   <h1 id="page-title">Doggy</h1>
+  <p>Linux time (UTC): <time id="linux-time">—</time></p>
+  <p id="gcs-status" role="status"></p>
   <p id="errors" role="alert"></p>
   <p id="status" role="status"></p>
   <section id="drive" aria-labelledby="drive-heading">
     <h2 id="drive-heading">Drive</h2>
-    <label class="drive-field" for="steering">Steering
-      <input type="range" id="steering" min="-1" max="1" step="0.01" value="0" aria-label="Steering">
-      <span id="steering-value">0.000</span>
-    </label>
-    <label class="drive-field" for="speed">Speed
-      <input type="range" id="speed" min="-1" max="1" step="0.01" value="0" aria-label="Speed">
-      <span id="speed-value">0.000</span>
-    </label>
-    <div class="drive-field">
-      <button type="button" id="drive-stop">Stop</button>
-      <button type="button" id="drive-brake">Brake</button>
+    <div class="drive-layout">
+      <div class="drive-sliders">
+        <label class="drive-field" for="steering">Steering
+          <input type="range" id="steering" min="-1" max="1" step="0.01" value="0" aria-label="Steering">
+          <span id="steering-value">0.000</span>
+        </label>
+        <label class="drive-field" for="speed">Speed
+          <input type="range" id="speed" min="-1" max="1" step="0.01" value="0" aria-label="Speed">
+          <span id="speed-value">0.000</span>
+        </label>
+        <div class="drive-field">
+          <button type="button" id="drive-stop">Stop</button>
+          <button type="button" id="drive-brake">Brake</button>
+        </div>
+      </div>
+      <div class="drive-video" id="drive-video" aria-label="Camera, coming soon">
+        Camera coming soon
+      </div>
+      <div class="drive-stick">
+        <p id="joystick-label">Joystick</p>
+        <p id="joystick-hint">Inner circle: no steer, speed zero.</p>
+        <div id="joystick" role="application" tabindex="0" aria-labelledby="joystick-label"
+             aria-describedby="joystick-hint">
+          <div id="joystick-dead" aria-hidden="true"></div>
+          <div id="joystick-knob" aria-hidden="true"></div>
+        </div>
+      </div>
     </div>
   </section>
   <section id="imu" aria-labelledby="imu-heading">
@@ -149,6 +221,8 @@
   <script>
     const IDLE_MS = 100;
     const POLL_MS = 200;
+    const HEARTBEAT_MS = 750;
+    const JOYSTICK_DEADZONE = 0.15;
 
     const statusEl = document.getElementById("status");
     const errorsEl = document.getElementById("errors");
@@ -164,6 +238,8 @@
     const batteryOkEl = document.getElementById("battery-ok");
     const batteryVEl = document.getElementById("battery-v");
     const titleEl = document.getElementById("page-title");
+    const linuxTimeEl = document.getElementById("linux-time");
+    const gcsStatusEl = document.getElementById("gcs-status");
     const configBodyEl = document.getElementById("config-body");
     const configRefreshEl = document.getElementById("config-refresh");
     const configSaveEl = document.getElementById("config-save");
@@ -177,7 +253,11 @@
     const speedEl = document.getElementById("speed");
     const steeringValueEl = document.getElementById("steering-value");
     const speedValueEl = document.getElementById("speed-value");
+    const joystickEl = document.getElementById("joystick");
+    const joystickKnobEl = document.getElementById("joystick-knob");
     let statusPollBusy = false;
+    let heartbeatBusy = false;
+    let heartbeatFailures = 0;
     let shownVersion = "";
     let draggingDrive = false;
     let configDraft = null;
@@ -185,10 +265,16 @@
     let configBusy = false;
     let loraAirKeyDraft = "";
     let driveTimer = null;
+    let joystickHeld = false;
+    let pendingDrive = null;
+
+    // ================================================================================
 
     function setStatus(text) {
       statusEl.textContent = text;
     }
+
+    // ================================================================================
 
     function formatNum(n) {
       if (typeof n !== "number" || Number.isFinite(n) == false) {
@@ -198,6 +284,52 @@
       return n.toFixed(3);
     }
 
+    // ================================================================================
+
+    // Uses the server's own explanation when it sent one, so a rejected field is named.
+    async function failureText(res, fallback) {
+      try {
+        const body = await res.json();
+        if (body.message) {
+          return fallback + ": " + body.message;
+        }
+
+        if (body.error) {
+          return fallback + ": " + body.error;
+        }
+      } catch (err) {
+        return fallback;
+      }
+
+      return fallback;
+    }
+
+    // ================================================================================
+
+    function zeroSpeedSlider(input, valueEl) {
+      input.value = "0";
+      valueEl.textContent = formatNum(0);
+    }
+
+    // ================================================================================
+
+    function zeroMotorSpeedSlider(speedInput, speedVal) {
+      zeroSpeedSlider(speedInput, speedVal);
+    }
+
+    // ================================================================================
+
+    function zeroAllMotorSpeedSliders() {
+      bodyEl.querySelectorAll('input[type="range"][aria-label="motor speed"]').forEach((input) => {
+        const valueEl = input.nextElementSibling;
+        if (valueEl) {
+          zeroSpeedSlider(input, valueEl);
+        }
+      });
+    }
+
+    // ================================================================================
+
     function applyErrors(errors) {
       if (errors === undefined || errors.length === 0) {
         errorsEl.textContent = "";
@@ -206,6 +338,8 @@
 
       errorsEl.textContent = errors.map((err) => err.message || err.code).join("\n");
     }
+
+    // ================================================================================
 
     function applyImu(imu) {
       if (imu === undefined || imu === null) {
@@ -228,6 +362,8 @@
       imuGzEl.textContent = formatNum(imu.gyro && imu.gyro.z);
     }
 
+    // ================================================================================
+
     function applyBattery(battery) {
       if (battery === undefined || battery === null) {
         batteryOkEl.textContent = "Battery: unavailable";
@@ -242,6 +378,8 @@
 
       batteryVEl.textContent = formatNum(battery.voltage_v);
     }
+
+    // ================================================================================
 
     function applyVersion(version) {
       if (typeof version !== "string" || version.length === 0) {
@@ -258,10 +396,14 @@
       document.title = label;
     }
 
+    // ================================================================================
+
     function applyMotors(items) {
       if (items === undefined) {
         return;
       }
+
+      // ================================================================================
 
       function makeControls(motorId) {
         const controls = document.createElement("div");
@@ -324,6 +466,7 @@
               setStatus("Motor coast failed");
               return;
             }
+            zeroMotorSpeedSlider(speedInput, speedVal);
             setStatus("");
           } catch (err) {
             setStatus("Motor coast failed");
@@ -345,6 +488,7 @@
               setStatus("Motor brake failed");
               return;
             }
+            zeroMotorSpeedSlider(speedInput, speedVal);
             setStatus("");
           } catch (err) {
             setStatus("Motor brake failed");
@@ -405,6 +549,8 @@
       }
     }
 
+    // ================================================================================
+
     async function loadRoverStatus() {
       if (statusPollBusy) {
         return;
@@ -431,11 +577,17 @@
 
         const data = await res.json();
         applyVersion(data.version);
+        applyLinuxTime(data.unix_time);
         applyErrors(data.errors || []);
         applyImu(data.imu);
         applyBattery(data.battery);
         applyMotors(data.motors && data.motors.items);
-        if (draggingDrive == false) {
+        // Never adopt reported speed/turn while the user is driving or a command is
+        // still in flight: doing so would re-send the stale value we just replaced.
+        const driveSettled =
+                draggingDrive == false && joystickHeld == false
+                && pendingDrive === null && driveTimer === null;
+        if (driveSettled) {
           if (typeof data.turn === "number") {
             steeringEl.value = String(data.turn);
             steeringValueEl.textContent = formatNum(data.turn);
@@ -444,6 +596,7 @@
             speedEl.value = String(data.speed);
             speedValueEl.textContent = formatNum(data.speed);
           }
+          setJoystickKnob(Number(speedEl.value), Number(steeringEl.value));
         }
       } catch (err) {
         applyErrors([{ message: "Failed to load status" }]);
@@ -452,34 +605,174 @@
       }
     }
 
-    async function sendDrive() {
-      const speed = Number(speedEl.value);
-      const turn = Number(steeringEl.value);
-      const res = await fetch("/api/drive", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ speed: speed, turn: turn })
-      });
-      if (res.status === 409) {
-        setStatus("Busy — try again");
+    // ================================================================================
+
+    function applyLinuxTime(unixTime) {
+      const seconds = Number(unixTime);
+      const date = new Date(seconds * 1000);
+      if (Number.isFinite(seconds) == false || Number.isNaN(date.getTime())) {
+        linuxTimeEl.textContent = "—";
+        linuxTimeEl.removeAttribute("datetime");
         return;
       }
-      if (res.ok == false) {
-        setStatus("Drive failed");
-        return;
-      }
-      setStatus("");
+      const iso = date.toISOString();
+      linuxTimeEl.textContent = iso;
+      linuxTimeEl.dateTime = iso;
     }
 
+    // ================================================================================
+
+    async function sendHeartbeat() {
+      if (heartbeatBusy) {
+        return;
+      }
+      heartbeatBusy = true;
+      try {
+        const res = await fetch("/api/heartbeat", { method: "POST" });
+        if (res.ok == false) {
+          throw new Error("heartbeat rejected");
+        }
+        heartbeatFailures = 0;
+        gcsStatusEl.textContent = "";
+      } catch (err) {
+        heartbeatFailures += 1;
+        if (heartbeatFailures >= 2) {
+          gcsStatusEl.textContent = "GCS heartbeat is not reaching the rover.";
+        }
+      } finally {
+        heartbeatBusy = false;
+      }
+    }
+
+    // ================================================================================
+
+    // Takes the command by value: the status poll must not be able to swap in an
+    // older speed/turn between queueing and sending.
+    async function sendDrive(command) {
+      try {
+        const res = await fetch("/api/drive", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ speed: command.speed, turn: command.turn })
+        });
+        if (res.status === 409) {
+          setStatus("Busy — try again");
+          return;
+        }
+        if (res.ok == false) {
+          setStatus("Drive failed");
+          return;
+        }
+        setStatus("");
+      } catch (err) {
+        setStatus("Drive failed");
+      } finally {
+        if (pendingDrive === command) {
+          pendingDrive = null;
+        }
+      }
+    }
+
+    // ================================================================================
+
+    function readDriveCommand() {
+      const command = {
+        speed: Number(speedEl.value),
+        turn: Number(steeringEl.value)
+      };
+      steeringValueEl.textContent = formatNum(command.turn);
+      speedValueEl.textContent = formatNum(command.speed);
+      return command;
+    }
+
+    // ================================================================================
+
     function queueDrive() {
-      steeringValueEl.textContent = formatNum(Number(steeringEl.value));
-      speedValueEl.textContent = formatNum(Number(speedEl.value));
+      const command = readDriveCommand();
+      pendingDrive = command;
       if (driveTimer !== null) {
         clearTimeout(driveTimer);
       }
       driveTimer = setTimeout(() => {
-        sendDrive();
+        driveTimer = null;
+        sendDrive(command);
       }, IDLE_MS);
+    }
+
+    // ================================================================================
+
+    // Releasing the stick must stop the rover now, not one debounce later.
+    function sendDriveNow() {
+      const command = readDriveCommand();
+      pendingDrive = command;
+      if (driveTimer !== null) {
+        clearTimeout(driveTimer);
+        driveTimer = null;
+      }
+      sendDrive(command);
+    }
+
+    // ================================================================================
+
+    function applyAxisDeadzone(value, dead) {
+      const magnitude = Math.abs(value);
+      if (magnitude <= dead) {
+        return 0;
+      }
+
+      const sign = value < 0 ? -1 : 1;
+      return sign * (magnitude - dead) / (1 - dead);
+    }
+
+    // ================================================================================
+
+    function setJoystickKnob(speed, turn) {
+      if (joystickEl === null || joystickKnobEl === null) {
+        return;
+      }
+
+      const radius = joystickEl.clientWidth / 2;
+      const knobRadius = joystickKnobEl.offsetWidth / 2;
+      const travel = Math.max(radius - knobRadius, 1);
+      joystickKnobEl.style.transform =
+          "translate(" + (turn * travel) + "px," + (-speed * travel) + "px)";
+    }
+
+    // ================================================================================
+
+    // Spring return: the stick only holds a command while it is actually held.
+    function releaseJoystick() {
+      if (joystickHeld == false) {
+        return;
+      }
+
+      joystickHeld = false;
+      draggingDrive = false;
+      steeringEl.value = "0";
+      speedEl.value = "0";
+      setJoystickKnob(0, 0);
+      sendDriveNow();
+    }
+
+    // ================================================================================
+
+    function applyJoystickPoint(clientX, clientY) {
+      const rect = joystickEl.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const travel = Math.max(Math.min(rect.width, rect.height) / 2, 1);
+      let nx = (clientX - cx) / travel;
+      let ny = (cy - clientY) / travel;
+      const mag = Math.hypot(nx, ny);
+      if (mag > 1) {
+        nx /= mag;
+        ny /= mag;
+      }
+
+      steeringEl.value = String(applyAxisDeadzone(nx, JOYSTICK_DEADZONE));
+      speedEl.value = String(applyAxisDeadzone(ny, JOYSTICK_DEADZONE));
+      setJoystickKnob(ny, nx);
+      queueDrive();
     }
 
     steeringEl.addEventListener("pointerdown", () => {
@@ -494,8 +787,65 @@
     speedEl.addEventListener("pointerup", () => {
       draggingDrive = false;
     });
-    steeringEl.addEventListener("input", queueDrive);
-    speedEl.addEventListener("input", queueDrive);
+    steeringEl.addEventListener("input", () => {
+      setJoystickKnob(Number(speedEl.value), Number(steeringEl.value));
+      queueDrive();
+    });
+    speedEl.addEventListener("input", () => {
+      setJoystickKnob(Number(speedEl.value), Number(steeringEl.value));
+      queueDrive();
+    });
+    if (joystickEl !== null) {
+      joystickEl.addEventListener("pointerdown", (event) => {
+        joystickHeld = true;
+        draggingDrive = true;
+        joystickEl.setPointerCapture(event.pointerId);
+        applyJoystickPoint(event.clientX, event.clientY);
+      });
+      joystickEl.addEventListener("pointermove", (event) => {
+        if (joystickHeld == false) {
+          return;
+        }
+        applyJoystickPoint(event.clientX, event.clientY);
+      });
+      joystickEl.addEventListener("pointerup", releaseJoystick);
+      joystickEl.addEventListener("pointercancel", releaseJoystick);
+      joystickEl.addEventListener("lostpointercapture", releaseJoystick);
+      // A button released off-element, a lost capture, or a hidden tab must all
+      // spring the stick back rather than leave the rover driving.
+      window.addEventListener("pointerup", releaseJoystick);
+      window.addEventListener("blur", releaseJoystick);
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+          releaseJoystick();
+        }
+      });
+      joystickEl.addEventListener("keydown", (event) => {
+        const step = 0.1;
+        let speed = Number(speedEl.value);
+        let turn = Number(steeringEl.value);
+        if (event.key === "ArrowUp") {
+          speed = Math.min(1, speed + step);
+        } else if (event.key === "ArrowDown") {
+          speed = Math.max(-1, speed - step);
+        } else if (event.key === "ArrowRight") {
+          turn = Math.min(1, turn + step);
+        } else if (event.key === "ArrowLeft") {
+          turn = Math.max(-1, turn - step);
+        } else {
+          return;
+        }
+        event.preventDefault();
+        joystickHeld = true;
+        draggingDrive = true;
+        speedEl.value = String(speed);
+        steeringEl.value = String(turn);
+        setJoystickKnob(speed, turn);
+        queueDrive();
+      });
+      joystickEl.addEventListener("keyup", releaseJoystick);
+      joystickEl.addEventListener("blur", releaseJoystick);
+    }
     const driveStopEl = document.getElementById("drive-stop");
     if (driveStopEl !== null) {
       driveStopEl.addEventListener("click", async () => {
@@ -509,6 +859,14 @@
           steeringEl.value = "0";
           speedValueEl.textContent = formatNum(0);
           steeringValueEl.textContent = formatNum(0);
+          setJoystickKnob(0, 0);
+          if (driveTimer !== null) {
+            clearTimeout(driveTimer);
+            driveTimer = null;
+          }
+          joystickHeld = false;
+          pendingDrive = null;
+          zeroAllMotorSpeedSliders();
           setStatus("");
         } catch (err) {
           setStatus("Stop failed");
@@ -525,13 +883,24 @@
             setStatus("Brake failed");
             return;
           }
-          // Do not change slider positions; brake engages hardware while leaving UI state
+          speedEl.value = "0";
+          speedValueEl.textContent = formatNum(0);
+          setJoystickKnob(0, Number(steeringEl.value));
+          if (driveTimer !== null) {
+            clearTimeout(driveTimer);
+            driveTimer = null;
+          }
+          joystickHeld = false;
+          pendingDrive = null;
+          zeroAllMotorSpeedSliders();
           setStatus("");
         } catch (err) {
           setStatus("Brake failed");
         }
       });
     }
+
+    // ================================================================================
 
     function displayName(key) {
       const spaced = String(key).replaceAll("_", " ");
@@ -541,6 +910,8 @@
 
       return spaced.charAt(0).toUpperCase() + spaced.slice(1);
     }
+
+    // ================================================================================
 
     function setDraftValue(path, value) {
       if (configDraft === null) {
@@ -557,6 +928,8 @@
 
       cur[path[path.length - 1]] = value;
     }
+
+    // ================================================================================
 
     function makeValueInput(path, value, kind) {
       const input = document.createElement("input");
@@ -623,7 +996,13 @@
       if (kind === "int") {
         input.type = "number";
         input.step = "1";
-        input.min = "0";
+        if (path[path.length - 1] === "gcs_timeout_s") {
+          input.min = "2";
+          input.max = "60";
+          input.setAttribute("aria-label", "GCS timeout, 2 to 60 seconds");
+        } else {
+          input.min = "0";
+        }
         if (path[path.length - 1] === "txch" || path[path.length - 1] === "rxch") {
           input.max = "80";
         }
@@ -654,6 +1033,8 @@
       return input;
     }
 
+    // ================================================================================
+
     function appendPair(tr, path, value, kind) {
       const nameTd = document.createElement("td");
       nameTd.textContent = displayName(path[path.length - 1]);
@@ -662,11 +1043,15 @@
       tr.append(nameTd, valueTd);
     }
 
+    // ================================================================================
+
     function appendEmptyPairs(tr, count) {
       for (let i = 0; i < count; i += 1) {
         tr.append(document.createElement("td"), document.createElement("td"));
       }
     }
+
+    // ================================================================================
 
     function renderConfig(config) {
       configDraft = config;
@@ -680,6 +1065,22 @@
       }
       loadedRobotType = configDraft.robot.type || "ROVER";
       robotTypeEl.value = loadedRobotType;
+
+      const robotTr = document.createElement("tr");
+      const robotClass = document.createElement("th");
+      robotClass.scope = "row";
+      robotClass.textContent = displayName("robot");
+      robotTr.appendChild(robotClass);
+      const robotGroup = document.createElement("td");
+      robotTr.appendChild(robotGroup);
+      appendPair(
+              robotTr,
+              ["robot", "gcs_timeout_s"],
+              configDraft.robot.gcs_timeout_s === undefined
+                      ? 3 : configDraft.robot.gcs_timeout_s,
+              "int");
+      appendEmptyPairs(robotTr, 2);
+      configBodyEl.appendChild(robotTr);
 
       const i2c = config.i2c || {};
       const i2cKeys = ["servo_board", "imu", "ads"];
@@ -762,6 +1163,8 @@
       configBodyEl.appendChild(loraTr3);
     }
 
+    // ================================================================================
+
     async function loadConfig() {
       if (configBusy) {
         return;
@@ -788,6 +1191,8 @@
         configBusy = false;
       }
     }
+
+    // ================================================================================
 
     async function saveConfig() {
       if (configBusy || configDraft === null) {
@@ -832,7 +1237,7 @@
         }
 
         if (res.ok == false && res.status !== 202) {
-          setStatus("Save failed");
+          setStatus(await failureText(res, "Save failed"));
           return;
         }
 
@@ -861,6 +1266,8 @@
       saveConfig();
     });
 
+    // ================================================================================
+
     function applyPinState(system) {
       if (system && system.pin_set) {
         pinStateEl.textContent = "PIN is set.";
@@ -869,6 +1276,8 @@
 
       pinStateEl.textContent = "PIN is not set. Set one before power actions will work.";
     }
+
+    // ================================================================================
 
     async function savePin() {
       const pin = pinNewEl.value;
@@ -903,6 +1312,8 @@
       pinNewEl.value = "";
       setStatus("PIN saved");
     }
+
+    // ================================================================================
 
     async function sendSystemAction(action) {
       if (action === "shutdown") {
@@ -971,7 +1382,9 @@
 
     loadConfig();
     loadRoverStatus();
+    sendHeartbeat();
     setInterval(loadRoverStatus, POLL_MS);
+    setInterval(sendHeartbeat, HEARTBEAT_MS);
   </script>
 </body>
 </html>

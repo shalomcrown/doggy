@@ -1,11 +1,14 @@
 #include "rover.h"
 #include "motor_math.h"
 
+#include <plog/Log.h>
+
 #include <cmath>
 #include <system_error>
 #include <utility>
 
 static constexpr double kMotorPwmFrequencyHz = 1526.0;
+static constexpr int kGcsWatchdogPeriodMs = 100;
 
 // ================================================================================
 
@@ -25,6 +28,30 @@ static void add_i2c_error(DogStatus &status, const std::string &message) {
     doggy::v1::Error *err = status.add_errors();
     err->set_code(doggy::v1::i2c);
     err->set_message(message);
+}
+
+// ================================================================================
+
+static void remove_gcs_errors(DogStatus &status) {
+    for (int i = status.errors_size() - 1; i >= 0; --i) {
+        if (status.errors(i).code() == doggy::v1::gcs) {
+            status.mutable_errors()->DeleteSubrange(i, 1);
+        }
+    }
+}
+
+// ================================================================================
+
+static bool add_gcs_error(DogStatus &status) {
+    for (const doggy::v1::Error &existing : status.errors()) {
+        if (existing.code() == doggy::v1::gcs) {
+            return false;
+        }
+    }
+    doggy::v1::Error *error = status.add_errors();
+    error->set_code(doggy::v1::gcs);
+    error->set_message("GCS heartbeat timed out; stopping rover");
+    return true;
 }
 
 // ================================================================================
@@ -139,6 +166,17 @@ Rover::Rover(const Config &config, std::string config_path,
     if (ads.isOpen() == false) {
         add_i2c_error(status_, "Could not open rover ADC");
     }
+
+    // ================================================================================
+
+    watchdog_thread_ = std::jthread([this](std::stop_token stop_token) {
+        while (stop_token.stop_requested() == false) {
+            std::this_thread::sleep_for(
+                    std::chrono::milliseconds(kGcsWatchdogPeriodMs));
+            std::lock_guard<std::mutex> lock(mutex_);
+            expireGcsUnlocked(std::chrono::steady_clock::now());
+        }
+    });
 }
 
 // ================================================================================
@@ -160,16 +198,71 @@ std::vector<MotorSnapshot> Rover::snapshotUnlocked() const {
 
 // ================================================================================
 
-void Rover::applyMotorOutputsUnlocked(double speed) {
+bool Rover::outputsActiveUnlocked() const {
+    if (status_.speed() != 0.0 || status_.turn() != 0.0) {
+        return true;
+    }
+    for (int pwm : motor_pwm_) {
+        if (pwm != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// ================================================================================
+
+void Rover::refreshGcsUnlocked() {
+    last_gcs_ = std::chrono::steady_clock::now();
+    remove_gcs_errors(status_);
+}
+
+// ================================================================================
+
+void Rover::expireGcsUnlocked(std::chrono::steady_clock::time_point now) {
+    if (outputsActiveUnlocked() == false
+            || gcs_watchdog_expired(
+                    last_gcs_, now, config_.robot().gcs_timeout_s()) == false) {
+        return;
+    }
+
+    bool stopped = false;
+    try {
+        coastMotorOutputsUnlocked();
+        stopped = true;
+    } catch (const std::system_error &) {
+        try {
+            motor_board_.set_all_pwm(0, kPca9685FullOff);
+            motor_pwm_.fill(0);
+            stopped = true;
+        } catch (const std::system_error &) {
+            add_i2c_error(status_, "Could not coast rover after GCS timeout");
+        }
+    }
+    if (add_gcs_error(status_)) {
+        PLOG_WARNING << "GCS heartbeat timed out; stopping rover";
+    }
+    if (stopped == false) {
+        return;
+    }
+    status_.set_speed(0.0);
+    status_.set_turn(0.0);
+    last_gcs_.reset();
+}
+
+// ================================================================================
+
+void Rover::applyMotorOutputsUnlocked(double speed, double turn) {
+    const ArcadeMix mix = mix_arcade(speed, turn);
     std::array<int, 4> next{};
     next[0] = apply_motor_output(
-            motor_board_, config_.motors().front_left(), speed);
+            motor_board_, config_.motors().front_left(), mix.left);
     next[1] = apply_motor_output(
-            motor_board_, config_.motors().front_right(), speed);
+            motor_board_, config_.motors().front_right(), mix.right);
     next[2] = apply_motor_output(
-            motor_board_, config_.motors().rear_left(), speed);
+            motor_board_, config_.motors().rear_left(), mix.left);
     next[3] = apply_motor_output(
-            motor_board_, config_.motors().rear_right(), speed);
+            motor_board_, config_.motors().rear_right(), mix.right);
     motor_pwm_ = next;
 }
 
@@ -214,7 +307,7 @@ CommandResult Rover::setDrive(double speed, double turn) {
     }
 
     try {
-        applyMotorOutputsUnlocked(speed);
+        applyMotorOutputsUnlocked(speed, turn);
     } catch (const std::system_error &) {
         try {
             motor_board_.set_all_pwm(0, kPca9685FullOff);
@@ -227,6 +320,18 @@ CommandResult Rover::setDrive(double speed, double turn) {
     }
     status_.set_speed(speed);
     status_.set_turn(turn);
+    refreshGcsUnlocked();
+    return CommandResult::ok;
+}
+
+// ================================================================================
+
+CommandResult Rover::heartbeat() {
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+    if (lock.owns_lock() == false) {
+        return CommandResult::busy;
+    }
+    refreshGcsUnlocked();
     return CommandResult::ok;
 }
 
@@ -246,6 +351,7 @@ CommandResult Rover::stop() {
     }
     status_.set_speed(0.0);
     status_.set_turn(0.0);
+    last_gcs_.reset();
     return CommandResult::ok;
 }
 
@@ -265,10 +371,11 @@ CommandResult Rover::brake() {
     }
     status_.set_speed(0.0);
     status_.set_turn(0.0);
+    last_gcs_.reset();
     return CommandResult::ok;
 }
 
-// ==============================================================================
+// ================================================================================
 
 CommandResult Rover::runMotor(int id, double speed) {
     if (std::isfinite(speed) == false || speed < -1.0 || speed > 1.0) {
@@ -306,10 +413,11 @@ CommandResult Rover::runMotor(int id, double speed) {
         return CommandResult::failed;
     }
 
+    refreshGcsUnlocked();
     return CommandResult::ok;
 }
 
-// ==============================================================================
+// ================================================================================
 
 CommandResult Rover::coastMotor(int id) {
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
@@ -346,7 +454,7 @@ CommandResult Rover::coastMotor(int id) {
     return CommandResult::ok;
 }
 
-// ==============================================================================
+// ================================================================================
 
 CommandResult Rover::brakeMotor(int id) {
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
@@ -424,7 +532,7 @@ CommandResult Rover::replaceConfig(const Config &config, const std::string &pin)
     const CommandResult saved = saveConfigUnlocked(config);
     if (saved != CommandResult::ok) {
         try {
-            applyMotorOutputsUnlocked(status_.speed());
+            applyMotorOutputsUnlocked(status_.speed(), status_.turn());
         } catch (const std::system_error &) {
             motor_pwm_.fill(0);
             add_i2c_error(status_, "Could not restore rover motors after configuration failure");
@@ -437,7 +545,7 @@ CommandResult Rover::replaceConfig(const Config &config, const std::string &pin)
     }
 
     try {
-        applyMotorOutputsUnlocked(status_.speed());
+        applyMotorOutputsUnlocked(status_.speed(), status_.turn());
     } catch (const std::system_error &) {
         motor_pwm_.fill(0);
         add_i2c_error(status_, "Could not apply rover motor configuration");
@@ -449,40 +557,44 @@ CommandResult Rover::replaceConfig(const Config &config, const std::string &pin)
 
 // ================================================================================
 
-void Rover::pollImuUnlocked() {
-    doggy::v1::Imu *reading = status_.mutable_imu();
-    reading->set_ok(imu.isOpen());
-    if (reading->ok() == false) {
+void Rover::pollImu(doggy::v1::Imu &reading) {
+    reading.set_ok(imu.isOpen());
+    if (reading.ok() == false) {
         return;
     }
     try {
-        copy_vec3(reading->mutable_accel(), imu.readAccelerometer());
-        copy_vec3(reading->mutable_gyro(), imu.readGyro());
-        reading->set_temperature_c(imu.readTemperature());
+        copy_vec3(reading.mutable_accel(), imu.readAccelerometer());
+        copy_vec3(reading.mutable_gyro(), imu.readGyro());
+        reading.set_temperature_c(imu.readTemperature());
     } catch (const std::system_error &) {
-        reading->set_ok(false);
+        reading.set_ok(false);
     }
 }
 
 // ================================================================================
 
-void Rover::pollBatteryUnlocked() {
-    doggy::v1::Battery *reading = status_.mutable_battery();
-    reading->set_ok(ads.isOpen());
-    if (reading->ok() == false) {
+void Rover::pollBattery(doggy::v1::Battery &reading) {
+    reading.set_ok(ads.isOpen());
+    if (reading.ok() == false) {
         return;
     }
     try {
-        reading->set_voltage_v(ads.readBatteryVoltage());
+        reading.set_voltage_v(ads.readBatteryVoltage());
     } catch (const std::system_error &) {
-        reading->set_ok(false);
+        reading.set_ok(false);
     }
 }
 
 // ================================================================================
 
 void Rover::poll() {
+    doggy::v1::Imu imu_reading;
+    doggy::v1::Battery battery_reading;
+    pollImu(imu_reading);
+    pollBattery(battery_reading);
+
     std::lock_guard<std::mutex> lock(mutex_);
-    pollImuUnlocked();
-    pollBatteryUnlocked();
+    expireGcsUnlocked(std::chrono::steady_clock::now());
+    *status_.mutable_imu() = std::move(imu_reading);
+    *status_.mutable_battery() = std::move(battery_reading);
 }

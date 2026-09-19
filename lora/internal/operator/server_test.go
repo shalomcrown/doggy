@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,7 +10,52 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"doggy-lora/internal/pb"
+
+	"google.golang.org/protobuf/proto"
 )
+
+// ================================================================================
+
+type countingRoundTripper struct {
+	count int
+}
+
+// ================================================================================
+
+func (f *countingRoundTripper) RoundTrip(
+	_ context.Context,
+	_ *pb.AirRequest,
+) (*pb.AirResponse, error) {
+	f.count += 1
+	return &pb.AirResponse{
+		Status:      proto.Int32(http.StatusOK),
+		ContentType: proto.String("application/json"),
+		Payload: &pb.AirResponse_StatusBody{
+			StatusBody: &pb.Status{},
+		},
+	}, nil
+}
+
+// ================================================================================
+
+func TestHeartbeatBypassesStatusCache(t *testing.T) {
+	rt := &countingRoundTripper{}
+	server := &Server{rt: rt}
+	for i := 0; i < 2; i += 1 {
+		request := httptest.NewRequest(
+			http.MethodPost, "/api/heartbeat", http.NoBody)
+		response := httptest.NewRecorder()
+		server.proxy(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("heartbeat status %d", response.Code)
+		}
+	}
+	if rt.count != 2 {
+		t.Fatalf("two heartbeats made %d air round trips", rt.count)
+	}
+}
 
 // ================================================================================
 

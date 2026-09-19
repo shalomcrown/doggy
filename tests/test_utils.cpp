@@ -32,6 +32,13 @@ int main() {
     expect(is_hex_digits("AaFf09"), "is_hex_digits accepts hex");
     expect(is_hex_digits("zz") == false, "is_hex_digits rejects other letters");
 
+    expect(json_escape("plain text") == "plain text", "json_escape keeps plain text");
+    expect(json_escape("say \"hi\"") == "say \\\"hi\\\"", "json_escape escapes quotes");
+    expect(json_escape("a\\b") == "a\\\\b", "json_escape escapes backslash");
+    expect(json_escape("line\nbreak") == "line\\nbreak", "json_escape escapes newline");
+    expect(json_escape(std::string("bell\x07")) == "bell\\u0007",
+           "json_escape escapes other control characters");
+
     if (failures != 0) {
         return 1;
     }

@@ -32,6 +32,7 @@
 </head>
 <body>
   <h1 id="page-title">Doggy</h1>
+  <p>Linux time (UTC): <time id="linux-time">—</time></p>
   <p id="errors" role="alert"></p>
   <button type="button" id="home">Home</button>
   <p id="status" role="status"></p>
@@ -149,6 +150,7 @@
     const batteryOkEl = document.getElementById("battery-ok");
     const batteryVEl = document.getElementById("battery-v");
     const titleEl = document.getElementById("page-title");
+    const linuxTimeEl = document.getElementById("linux-time");
     const configBodyEl = document.getElementById("config-body");
     const configRefreshEl = document.getElementById("config-refresh");
     const configSaveEl = document.getElementById("config-save");
@@ -166,9 +168,13 @@
     let configBusy = false;
     let loraAirKeyDraft = "";
 
+    // ================================================================================
+
     function setStatus(text) {
       statusEl.textContent = text;
     }
+
+    // ================================================================================
 
     function formatNum(n) {
       if (typeof n !== "number" || Number.isFinite(n) === false) {
@@ -178,6 +184,28 @@
       return n.toFixed(3);
     }
 
+    // ================================================================================
+
+    // Uses the server's own explanation when it sent one, so a rejected field is named.
+    async function failureText(res, fallback) {
+      try {
+        const body = await res.json();
+        if (body.message) {
+          return fallback + ": " + body.message;
+        }
+
+        if (body.error) {
+          return fallback + ": " + body.error;
+        }
+      } catch (err) {
+        return fallback;
+      }
+
+      return fallback;
+    }
+
+    // ================================================================================
+
     function applyErrors(errors) {
       if (errors === undefined || errors.length === 0) {
         errorsEl.textContent = "";
@@ -186,6 +214,8 @@
 
       errorsEl.textContent = errors.map((err) => err.message || err.code).join("\n");
     }
+
+    // ================================================================================
 
     function applyImu(imu) {
       if (imu === undefined || imu === null) {
@@ -208,6 +238,8 @@
       imuGzEl.textContent = formatNum(imu.gyro && imu.gyro.z);
     }
 
+    // ================================================================================
+
     function applyBattery(battery) {
       if (battery === undefined || battery === null) {
         batteryOkEl.textContent = "Battery: unavailable";
@@ -223,9 +255,13 @@
       batteryVEl.textContent = formatNum(battery.voltage_v);
     }
 
+    // ================================================================================
+
     function knownAngle(angle) {
       return typeof angle === "number" && Number.isFinite(angle);
     }
+
+    // ================================================================================
 
     function formatAngle(angle) {
       if (knownAngle(angle) === false) {
@@ -234,6 +270,8 @@
 
       return String(angle);
     }
+
+    // ================================================================================
 
     function applyVersion(version) {
       if (typeof version !== "string" || version.length === 0) {
@@ -250,6 +288,8 @@
       document.title = label;
     }
 
+    // ================================================================================
+
     async function loadDogStatus() {
       if (statusPollBusy) {
         return;
@@ -265,6 +305,7 @@
 
         const data = await res.json();
         applyVersion(data.version);
+        applyLinuxTime(data.unix_time);
         applyErrors(data.errors || []);
         applyImu(data.imu);
         applyBattery(data.battery);
@@ -282,6 +323,23 @@
         statusPollBusy = false;
       }
     }
+
+    // ================================================================================
+
+    function applyLinuxTime(unixTime) {
+      const seconds = Number(unixTime);
+      const date = new Date(seconds * 1000);
+      if (Number.isFinite(seconds) == false || Number.isNaN(date.getTime())) {
+        linuxTimeEl.textContent = "—";
+        linuxTimeEl.removeAttribute("datetime");
+        return;
+      }
+      const iso = date.toISOString();
+      linuxTimeEl.textContent = iso;
+      linuxTimeEl.dateTime = iso;
+    }
+
+    // ================================================================================
 
     function applyItems(items) {
       bodyEl.replaceChildren();
@@ -344,6 +402,8 @@
       }
     }
 
+    // ================================================================================
+
     function applyServoReadings(items) {
       for (const servo of items) {
         const tr = bodyEl.querySelector('[data-servo-id="' + servo.id + '"]');
@@ -364,6 +424,8 @@
       }
     }
 
+    // ================================================================================
+
     async function loadServos() {
       const res = await fetch("/api/servos");
       if (res.ok === false) {
@@ -373,6 +435,8 @@
       const data = await res.json();
       applyItems(data.items || []);
     }
+
+    // ================================================================================
 
     async function sendAngle(id, angle) {
       const res = await fetch("/api/servos/" + id, {
@@ -393,6 +457,8 @@
       applyItems(data.items || []);
     }
 
+    // ================================================================================
+
     async function sendOff(id) {
       const res = await fetch("/api/servos/" + id, {
         method: "POST",
@@ -412,6 +478,8 @@
       applyItems(data.items || []);
     }
 
+    // ================================================================================
+
     function displayName(key) {
       const spaced = String(key).replaceAll("_", " ");
       if (spaced.length === 0) {
@@ -420,6 +488,8 @@
 
       return spaced.charAt(0).toUpperCase() + spaced.slice(1);
     }
+
+    // ================================================================================
 
     function setDraftValue(path, value) {
       if (configDraft === null) {
@@ -433,6 +503,8 @@
 
       cur[path[path.length - 1]] = value;
     }
+
+    // ================================================================================
 
     function makeValueInput(path, value, kind) {
       const input = document.createElement("input");
@@ -487,7 +559,13 @@
       if (kind === "int") {
         input.type = "number";
         input.step = "1";
-        input.min = "0";
+        if (path[path.length - 1] === "gcs_timeout_s") {
+          input.min = "2";
+          input.max = "60";
+          input.setAttribute("aria-label", "GCS timeout, 2 to 60 seconds");
+        } else {
+          input.min = "0";
+        }
         if (path[path.length - 1] === "txch" || path[path.length - 1] === "rxch") {
           input.max = "80";
         }
@@ -515,6 +593,8 @@
       return input;
     }
 
+    // ================================================================================
+
     function appendPair(tr, path, value, kind) {
       const nameTd = document.createElement("td");
       nameTd.textContent = displayName(path[path.length - 1]);
@@ -523,11 +603,15 @@
       tr.append(nameTd, valueTd);
     }
 
+    // ================================================================================
+
     function appendEmptyPairs(tr, count) {
       for (let i = 0; i < count; i += 1) {
         tr.append(document.createElement("td"), document.createElement("td"));
       }
     }
+
+    // ================================================================================
 
     function renderConfig(config) {
       configDraft = config;
@@ -541,6 +625,22 @@
       }
       loadedRobotType = configDraft.robot.type || "DOG";
       robotTypeEl.value = loadedRobotType;
+
+      const robotTr = document.createElement("tr");
+      const robotClass = document.createElement("th");
+      robotClass.scope = "row";
+      robotClass.textContent = displayName("robot");
+      robotTr.appendChild(robotClass);
+      const robotGroup = document.createElement("td");
+      robotTr.appendChild(robotGroup);
+      appendPair(
+              robotTr,
+              ["robot", "gcs_timeout_s"],
+              configDraft.robot.gcs_timeout_s === undefined
+                      ? 3 : configDraft.robot.gcs_timeout_s,
+              "int");
+      appendEmptyPairs(robotTr, 2);
+      configBodyEl.appendChild(robotTr);
 
       const i2c = config.i2c || {};
       const i2cKeys = ["servo_board", "imu", "ads"];
@@ -619,6 +719,8 @@
       });
     }
 
+    // ================================================================================
+
     async function loadConfig() {
       if (configBusy) {
         return;
@@ -645,6 +747,8 @@
         configBusy = false;
       }
     }
+
+    // ================================================================================
 
     async function saveConfig() {
       if (configBusy || configDraft === null) {
@@ -689,7 +793,7 @@
         }
 
         if (res.ok === false && res.status !== 202) {
-          setStatus("Save failed");
+          setStatus(await failureText(res, "Save failed"));
           return;
         }
 
@@ -734,6 +838,8 @@
       saveConfig();
     });
 
+    // ================================================================================
+
     function applyPinState(system) {
       if (system && system.pin_set) {
         pinStateEl.textContent = "PIN is set.";
@@ -742,6 +848,8 @@
 
       pinStateEl.textContent = "PIN is not set. Set one before power actions will work.";
     }
+
+    // ================================================================================
 
     async function savePin() {
       const pin = pinNewEl.value;
@@ -776,6 +884,8 @@
       pinNewEl.value = "";
       setStatus("PIN saved");
     }
+
+    // ================================================================================
 
     async function sendSystemAction(action) {
       if (action === "shutdown") {

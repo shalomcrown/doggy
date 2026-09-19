@@ -84,6 +84,25 @@ func TestAirRequestRoundTrip(t *testing.T) {
 
 // ================================================================================
 
+func TestHeartbeatRequestRoundTrip(t *testing.T) {
+	req, err := HTTPToAir("POST", "/api/heartbeat", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.GetHeartbeat() == nil {
+		t.Fatal("HTTP heartbeat did not map to an air heartbeat")
+	}
+	httpReq, err := AirToHTTP(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if httpReq.Method != "POST" || httpReq.Path != "/api/heartbeat" {
+		t.Fatalf("heartbeat mapped to %s %s", httpReq.Method, httpReq.Path)
+	}
+}
+
+// ================================================================================
+
 func TestDeriveKey(t *testing.T) {
 	if KeyOK("") == false {
 		t.Fatal("empty ok")

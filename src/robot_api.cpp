@@ -2,6 +2,8 @@
 
 #include "system_control.h"
 
+#include <plog/Log.h>
+
 #include <thread>
 #include <utility>
 
@@ -68,7 +70,9 @@ CommandResult RobotApi::saveConfigUnlocked(const Config &config) {
         if (config_path_.empty() == false) {
             config_save_file(next, config_path_);
         }
-    } catch (const ConfigError &) {
+    } catch (const ConfigError &ex) {
+        // The reason names the config file, so it is logged rather than returned to the caller.
+        PLOG_ERROR << "config save failed: " << ex.what();
         return CommandResult::failed;
     }
 
@@ -131,7 +135,8 @@ CommandResult RobotApi::setSystemPin(const std::string &pin,
             config_save_file(next, config_path_);
         }
         config_ = std::move(next);
-    } catch (const ConfigError &) {
+    } catch (const ConfigError &ex) {
+        PLOG_ERROR << "PIN save failed: " << ex.what();
         return CommandResult::failed;
     }
 

@@ -4,6 +4,7 @@
 #include "config.h"
 #include "robot_api.h"
 
+#include <chrono>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -12,6 +13,8 @@
 
 inline std::string status_to_json(DogStatus status, const char *version) {
     status.set_version(version);
+    status.set_unix_time(std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
     if (status.has_type() == false) {
         status.set_type(doggy::v1::DOG);
     }

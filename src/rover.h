@@ -8,8 +8,11 @@
 #include "system_control.h"
 
 #include <array>
+#include <chrono>
 #include <memory>
+#include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 // ================================================================================
@@ -19,13 +22,18 @@ private:
     ServoBoard motor_board_;
     std::array<int, 4> motor_pwm_{};
     DogStatus status_;
+    std::optional<std::chrono::steady_clock::time_point> last_gcs_;
+    std::jthread watchdog_thread_;
 
     std::vector<MotorSnapshot> snapshotUnlocked() const;
-    void applyMotorOutputsUnlocked(double speed);
+    bool outputsActiveUnlocked() const;
+    void refreshGcsUnlocked();
+    void expireGcsUnlocked(std::chrono::steady_clock::time_point now);
+    void applyMotorOutputsUnlocked(double speed, double turn);
     void coastMotorOutputsUnlocked();
     void brakeMotorOutputsUnlocked();
-    void pollImuUnlocked();
-    void pollBatteryUnlocked();
+    void pollImu(doggy::v1::Imu &reading);
+    void pollBattery(doggy::v1::Battery &reading);
 
 public:
     Imu imu;
@@ -40,6 +48,7 @@ public:
     RobotType robotType() const override;
     std::vector<MotorSnapshot> listMotors() override;
     CommandResult setDrive(double speed, double turn) override;
+    CommandResult heartbeat() override;
     CommandResult stop();
     CommandResult brake();
     CommandResult runMotor(int id, double speed) override;

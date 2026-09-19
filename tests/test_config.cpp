@@ -27,6 +27,8 @@ static void expect(bool cond, const char *name) {
 int main() {
     Config defaults = default_config();
     expect(defaults.robot().type() == doggy::v1::DOG, "missing robot type defaults to DOG");
+    expect(defaults.robot().gcs_timeout_s() == 3,
+           "GCS timeout defaults to three seconds");
     expect(defaults.motors().front_left().pwm() == 2
                     && defaults.motors().front_left().in2() == 3
                     && defaults.motors().front_left().in1() == 4,
@@ -93,6 +95,8 @@ int main() {
     const Config from_text = config_from_json(
             R"({"robot":{"type":"ROVER"},"motors":{"front_left":{"pwm":0,"in2":1,"in1":2,"enabled":false,"direction":"reverse"}},"lora":{"enabled":true,"band":"LF","txch":23,"rxch":23,"lbt":255},"servos":{"head_neck":14},"i2c":{"imu":{"address":"0x69"}}})");
     expect(from_text.robot().type() == doggy::v1::ROVER, "from_json_string reads ROVER");
+    expect(from_text.robot().gcs_timeout_s() == 3,
+           "ROVER config receives the default GCS timeout");
     expect(from_text.motors().front_left().pwm() == 0
                     && from_text.motors().front_left().in2() == 1
                     && from_text.motors().front_left().in1() == 2,
@@ -124,6 +128,35 @@ int main() {
            "overlay keeps existing motor PWM channel");
     expect(overlaid_rover.motors().front_right().pwm() == 14,
            "overlay updates named motor PWM channel");
+
+    const Config timeout_overlay = config_overlay_json(
+            rover_base, R"({"robot":{"gcs_timeout_s":5}})");
+    expect(timeout_overlay.robot().gcs_timeout_s() == 5,
+           "overlay updates GCS timeout");
+    expect(config_from_json(R"({"robot":{"gcs_timeout_s":2}})")
+                   .robot().gcs_timeout_s() == 2,
+           "GCS timeout accepts lower boundary");
+    expect(config_from_json(R"({"robot":{"gcs_timeout_s":60}})")
+                   .robot().gcs_timeout_s() == 60,
+           "GCS timeout accepts upper boundary");
+
+    bool short_gcs_timeout_threw = false;
+    try {
+        config_from_json(R"({"robot":{"gcs_timeout_s":1}})");
+    } catch (const ConfigError &) {
+        short_gcs_timeout_threw = true;
+    }
+    expect(short_gcs_timeout_threw,
+           "GCS timeout below two seconds throws ConfigError");
+
+    bool long_gcs_timeout_threw = false;
+    try {
+        config_from_json(R"({"robot":{"gcs_timeout_s":61}})");
+    } catch (const ConfigError &) {
+        long_gcs_timeout_threw = true;
+    }
+    expect(long_gcs_timeout_threw,
+           "GCS timeout above sixty seconds throws ConfigError");
 
     bool from_text_threw = false;
     try {

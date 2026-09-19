@@ -128,6 +128,10 @@ static void validate_motor(
 // ================================================================================
 
 static void validate_config(const Config &config) {
+    if (config.robot().gcs_timeout_s() < 2
+            || config.robot().gcs_timeout_s() > 60) {
+        throw ConfigError("config robot.gcs_timeout_s out of range");
+    }
     validate_i2c_device(config.i2c().servo_board(), "servo_board");
     validate_i2c_device(config.i2c().imu(), "imu");
     validate_i2c_device(config.i2c().ads(), "ads");
@@ -181,6 +185,9 @@ static void set_motor_defaults(
 void fill_config_defaults(Config &config) {
     if (config.robot().has_type() == false) {
         config.mutable_robot()->set_type(doggy::v1::DOG);
+    }
+    if (config.robot().has_gcs_timeout_s() == false) {
+        config.mutable_robot()->set_gcs_timeout_s(3);
     }
     doggy::v1::I2cConfig *i2c = config.mutable_i2c();
     if (i2c->servo_board().has_bus() == false) {

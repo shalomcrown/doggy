@@ -13,6 +13,7 @@ public:
     virtual ~RoverApi() = default;
     virtual std::vector<MotorSnapshot> listMotors() = 0;
     virtual CommandResult setDrive(double speed, double turn) = 0;
+    virtual CommandResult heartbeat() = 0;
     // Request the rover to stop (clear drive state and set motors to coast/stop semantics)
     virtual CommandResult stop() = 0;
     // Request the rover to apply an active brake (drive outputs forced into brake state)

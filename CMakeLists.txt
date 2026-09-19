@@ -383,7 +383,7 @@ target_include_directories(test_rover_drive PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_BINARY_DIR}/generated"
 )
-target_link_libraries(test_rover_drive PRIVATE pthread nlohmann_json::nlohmann_json mbedcrypto protobuf::libprotobuf)
+target_link_libraries(test_rover_drive PRIVATE pthread nlohmann_json::nlohmann_json mbedcrypto protobuf::libprotobuf plog::plog)
 add_dependencies(test_rover_drive doggy_proto)
 add_test(NAME rover_drive COMMAND test_rover_drive)
 
@@ -413,7 +413,7 @@ target_include_directories(test_dog_poll PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_BINARY_DIR}/generated"
 )
-target_link_libraries(test_dog_poll PRIVATE pthread nlohmann_json::nlohmann_json mbedcrypto protobuf::libprotobuf)
+target_link_libraries(test_dog_poll PRIVATE pthread nlohmann_json::nlohmann_json mbedcrypto protobuf::libprotobuf plog::plog)
 add_dependencies(test_dog_poll doggy_proto)
 add_test(NAME dog_poll COMMAND test_dog_poll)
 

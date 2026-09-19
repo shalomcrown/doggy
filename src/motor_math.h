@@ -1,10 +1,13 @@
 #ifndef MOTOR_MATH_H
 #define MOTOR_MATH_H
 
+#include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 inline constexpr uint16_t kPca9685FullOn = 4096;
 inline constexpr uint16_t kPca9685FullOff = 4096;
@@ -34,6 +37,46 @@ struct MotorWritePlan {
 
 // ================================================================================
 
+struct ArcadeMix {
+    double left = 0.0;
+    double right = 0.0;
+};
+
+// ================================================================================
+
+inline bool gcs_watchdog_expired(
+        const std::optional<std::chrono::steady_clock::time_point> &last_gcs,
+        std::chrono::steady_clock::time_point now,
+        int timeout_s) {
+    if (last_gcs.has_value() == false) {
+        return false;
+    }
+    return now - *last_gcs >= std::chrono::seconds(timeout_s);
+}
+
+// ================================================================================
+
+// Arcade mix: add turn to the left side and subtract it from the right, then
+// scale both wheels by the same factor if either would leave [-1, 1]. At rest
+// a full turn is an in-place spin; at full speed the same stick only slows
+// the inside wheels, so steering authority falls as |speed| rises.
+inline ArcadeMix mix_arcade(double speed, double turn) {
+    if (std::isfinite(speed) == false || std::isfinite(turn) == false) {
+        return {};
+    }
+
+    double left = speed + turn;
+    double right = speed - turn;
+    const double peak = std::max(std::abs(left), std::abs(right));
+    if (peak > 1.0) {
+        left /= peak;
+        right /= peak;
+    }
+    return {left, right};
+}
+
+// ================================================================================
+
 inline MotorSignal motor_signal(double speed, bool enabled, bool reverse_wiring) {
     if (enabled == false || std::isfinite(speed) == false || speed == 0.0) {
         return {};
@@ -52,7 +95,7 @@ inline MotorSignal motor_signal(double speed, bool enabled, bool reverse_wiring)
     return signal;
 }
 
-// ==============================================================================
+// ================================================================================
 
 inline MotorSignal motor_brake_signal() {
     MotorSignal signal;

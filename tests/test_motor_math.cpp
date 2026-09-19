@@ -1,5 +1,6 @@
 #include "motor_math.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -73,6 +74,45 @@ int main() {
     const MotorSignal invalid = motor_signal(NAN, true, false);
     expect(invalid.pwm == 0 && invalid.in1 == false && invalid.in2 == false,
            "non-finite speed coasts");
+
+    const ArcadeMix straight = mix_arcade(0.5, 0.0);
+    expect(straight.left == 0.5 && straight.right == 0.5,
+           "zero turn leaves both sides at speed");
+
+    const ArcadeMix pivot = mix_arcade(0.0, 1.0);
+    expect(pivot.left == 1.0 && pivot.right == -1.0,
+           "full turn at rest is an in-place spin");
+
+    const ArcadeMix reverse_pivot = mix_arcade(0.0, -1.0);
+    expect(reverse_pivot.left == -1.0 && reverse_pivot.right == 1.0,
+           "negative turn at rest spins the other way");
+
+    const ArcadeMix cruise = mix_arcade(1.0, 1.0);
+    expect(cruise.left == 1.0 && cruise.right == 0.0,
+           "full speed and full turn desaturates to inside-wheel stop");
+
+    const ArcadeMix reverse_cruise = mix_arcade(-1.0, 1.0);
+    expect(reverse_cruise.left == 0.0 && reverse_cruise.right == -1.0,
+           "full reverse and full turn desaturates to inside-wheel stop");
+
+    const ArcadeMix curve = mix_arcade(0.5, 0.75);
+    expect(curve.left == 1.0 && std::abs(curve.right + 0.2) < 1e-12,
+           "overspeed mix keeps the left/right ratio");
+
+    const ArcadeMix nan_mix = mix_arcade(NAN, 1.0);
+    expect(nan_mix.left == 0.0 && nan_mix.right == 0.0,
+           "non-finite mix coasts");
+
+    const auto now = std::chrono::steady_clock::time_point{
+        std::chrono::seconds(10)
+    };
+    expect(gcs_watchdog_expired({}, now, 3) == false,
+           "unarmed GCS watchdog does not expire");
+    expect(gcs_watchdog_expired(now - std::chrono::milliseconds(2999), now, 3)
+                   == false,
+           "GCS watchdog remains live inside its timeout");
+    expect(gcs_watchdog_expired(now - std::chrono::seconds(3), now, 3),
+           "GCS watchdog expires at its timeout boundary");
 
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
