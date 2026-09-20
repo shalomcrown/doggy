@@ -13,6 +13,9 @@ trap 'rm -rf "$TMPDIR"' EXIT
 CMAKE="$ROOT/CMakeLists.txt"
 UNIT="$ROOT/packaging/doggy.service"
 LORA_UNIT="$ROOT/packaging/doggy-lora.service"
+MEDIAMTX_UNIT="$ROOT/packaging/mediamtx.service"
+MEDIAMTX_CONFIG="$ROOT/packaging/mediamtx.yml"
+MEDIAMTX_INSTALL="$ROOT/packaging/install-mediamtx.sh"
 POSTINST="$ROOT/packaging/debian/postinst"
 PRERM="$ROOT/packaging/debian/prerm"
 POSTRM="$ROOT/packaging/debian/postrm"
@@ -254,7 +257,7 @@ else
     fail "CMake installs doggy-lora unit and lora.html"
 fi
 
-if [ -f "$UNIT" ] && grep -q '^SupplementaryGroups=i2c$' "$UNIT"; then
+if [ -f "$UNIT" ] && grep -Eq '^SupplementaryGroups=i2c( |$)' "$UNIT"; then
     pass "unit SupplementaryGroups includes i2c"
 else
     fail "unit SupplementaryGroups includes i2c"
@@ -365,7 +368,23 @@ printf 'chown %s\n' "$*" >>"$DOGGY_MOCK_LOG"
 exit 0
 EOF
 
-chmod +x "$MOCK_BIN/getent" "$MOCK_BIN/useradd" "$MOCK_BIN/usermod" "$MOCK_BIN/systemctl" "$MOCK_BIN/chown"
+cat >"$MOCK_BIN/curl" <<'EOF'
+#!/bin/sh
+printf 'curl %s\n' "$*" >>"$DOGGY_MOCK_LOG"
+exit 1
+EOF
+
+cat >"$MOCK_BIN/dpkg" <<'EOF'
+#!/bin/sh
+printf 'dpkg %s\n' "$*" >>"$DOGGY_MOCK_LOG"
+if [ "$1" = --print-architecture ]; then
+    echo amd64
+    exit 0
+fi
+exit 0
+EOF
+
+chmod +x "$MOCK_BIN/getent" "$MOCK_BIN/useradd" "$MOCK_BIN/usermod" "$MOCK_BIN/systemctl" "$MOCK_BIN/chown" "$MOCK_BIN/curl" "$MOCK_BIN/dpkg"
 
 BOOT_ON="$TMPDIR/boot-on.txt"
 printf 'dtparam=i2c_arm=on\n' >"$BOOT_ON"
@@ -384,6 +403,10 @@ run_script() {
     DOGGY_MODULES_LOAD_DIR="$TMPDIR/modules-load" \
     DOGGY_LOG_DIR="$TMPDIR/var-log-doggy" \
     DOGGY_CONFIG_DIR="$TMPDIR/etc-doggy" \
+    DOGGY_RECORDINGS_DIR="$TMPDIR/var-lib-doggy/recordings" \
+    DOGGY_SNAPSHOTS_DIR="$TMPDIR/var-lib-doggy/snapshots" \
+    DOGGY_SKIP_MEDIAMTX_INSTALL=1 \
+    DOGGY_SKIP_TLS=1 \
     PATH="$MOCK_BIN:$PATH" \
         "$script" "$@"
 }
@@ -573,6 +596,137 @@ if [ -x "$POSTRM" ] && run_script "$POSTRM" purge; then
     fi
 else
     fail "postrm purge disables the unit and does not userdel"
+fi
+
+if [ -f "$MEDIAMTX_UNIT" ] \
+        && grep -q '^User=doggy$' "$MEDIAMTX_UNIT" \
+        && grep -q '/usr/lib/doggy/mediamtx' "$MEDIAMTX_UNIT"; then
+    pass "MediaMTX service runs pinned doggy installation as doggy"
+else
+    fail "MediaMTX service runs pinned doggy installation as doggy"
+fi
+
+if [ -f "$MEDIAMTX_CONFIG" ] \
+        && grep -q '^rtspAddress: 127.0.0.1:8554$' "$MEDIAMTX_CONFIG" \
+        && grep -q '^apiAddress: 127.0.0.1:8887$' "$MEDIAMTX_CONFIG" \
+        && grep -q '^webrtcAddress: :8889$' "$MEDIAMTX_CONFIG" \
+        && grep -q '^webrtcLocalUDPAddress: :8189$' "$MEDIAMTX_CONFIG" \
+        && grep -q '^webrtcEncryption: true$' "$MEDIAMTX_CONFIG"; then
+    pass "MediaMTX keeps control local and exposes encrypted WebRTC"
+else
+    fail "MediaMTX keeps control local and exposes encrypted WebRTC"
+fi
+
+if [ -x "$MEDIAMTX_INSTALL" ] \
+        && grep -q 'v1.21.0' "$MEDIAMTX_INSTALL" \
+        && grep -q 'dpkg --print-architecture' "$MEDIAMTX_INSTALL" \
+        && grep -q -- '--version' "$MEDIAMTX_INSTALL"; then
+    pass "MediaMTX installer pins version and selects Debian architecture"
+else
+    fail "MediaMTX installer pins version and selects Debian architecture"
+fi
+
+MEDIAMTX_BIN="$TMPDIR/lib/doggy/mediamtx"
+MEDIAMTX_VERSION_FILE="$TMPDIR/lib/doggy/mediamtx.version"
+mkdir -p "$(dirname "$MEDIAMTX_BIN")"
+cat >"$MEDIAMTX_BIN" <<'EOF'
+#!/bin/sh
+printf 'v1.21.0\n'
+EOF
+chmod +x "$MEDIAMTX_BIN"
+: >"$MOCK_LOG/commands"
+if DOGGY_MOCK_LOG="$MOCK_LOG/commands" \
+        DOGGY_MEDIAMTX_BIN="$MEDIAMTX_BIN" \
+        DOGGY_MEDIAMTX_VERSION_FILE="$MEDIAMTX_VERSION_FILE" \
+        PATH="$MOCK_BIN:$PATH" \
+        "$MEDIAMTX_INSTALL"; then
+    if grep -q curl "$MOCK_LOG/commands"; then
+        fail "MediaMTX installer skips download when the pinned version is present"
+    elif grep -q '^v1.21.0$' "$MEDIAMTX_VERSION_FILE"; then
+        pass "MediaMTX installer skips download when the pinned version is present"
+    else
+        fail "MediaMTX installer skips download when the pinned version is present"
+    fi
+else
+    fail "MediaMTX installer skips download when the pinned version is present"
+fi
+
+cat >"$MEDIAMTX_BIN" <<'EOF'
+#!/bin/sh
+printf 'v1.15.6\n'
+EOF
+chmod +x "$MEDIAMTX_BIN"
+: >"$MOCK_LOG/commands"
+if DOGGY_MOCK_LOG="$MOCK_LOG/commands" \
+        DOGGY_MEDIAMTX_BIN="$MEDIAMTX_BIN" \
+        DOGGY_MEDIAMTX_VERSION_FILE="$MEDIAMTX_VERSION_FILE" \
+        PATH="$MOCK_BIN:$PATH" \
+        "$MEDIAMTX_INSTALL"; then
+    fail "MediaMTX installer downloads when an older version is installed"
+elif grep -q curl "$MOCK_LOG/commands"; then
+    pass "MediaMTX installer downloads when an older version is installed"
+else
+    fail "MediaMTX installer downloads when an older version is installed"
+fi
+
+if grep -q '^SupplementaryGroups=i2c video$' "$UNIT" \
+        && grep -q 'mediamtx.service' "$UNIT" \
+        && grep -q 'ReadWritePaths=/var/lib/doggy' "$UNIT"; then
+    pass "doggy service has video access and starts after MediaMTX"
+else
+    fail "doggy service has video access and starts after MediaMTX"
+fi
+
+if grep -q '^pathDefaults:$' "$MEDIAMTX_CONFIG" \
+        && grep -q '^  record: true$' "$MEDIAMTX_CONFIG" \
+        && grep -q '^  recordFormat: mpegts$' "$MEDIAMTX_CONFIG" \
+        && grep -q '^  recordSegmentDuration: 1h$' "$MEDIAMTX_CONFIG" \
+        && grep -q '^  recordDeleteAfter: 0s$' "$MEDIAMTX_CONFIG" \
+        && grep -q '^  recordPath: .*__HOSTNAME__.*%path' "$MEDIAMTX_CONFIG"; then
+    pass "MediaMTX records hourly MPEG-TS under pathDefaults with %path"
+else
+    fail "MediaMTX records hourly MPEG-TS under pathDefaults with %path"
+fi
+
+if grep -q '^record:' "$MEDIAMTX_CONFIG" \
+        || grep -q '^recordPath:' "$MEDIAMTX_CONFIG"; then
+    fail "MediaMTX config avoids deprecated top-level record keys"
+else
+    pass "MediaMTX config avoids deprecated top-level record keys"
+fi
+
+if grep -q 'render-mediamtx-config.sh' "$MEDIAMTX_UNIT" \
+        && grep -q 'ReadWritePaths=/var/lib/doggy' "$MEDIAMTX_UNIT" \
+        && grep -q '/run/doggy/mediamtx.yml' "$MEDIAMTX_UNIT"; then
+    pass "MediaMTX renders hostname into recordPath under ProtectSystem"
+else
+    fail "MediaMTX renders hostname into recordPath under ProtectSystem"
+fi
+
+CLEANUP_TIMER="$ROOT/packaging/doggy-cleanup-media.timer"
+CLEANUP_UNIT="$ROOT/packaging/doggy-cleanup-media.service"
+CLEANUP_SCRIPT="$ROOT/packaging/cleanup-media.sh"
+RENDER_SCRIPT="$ROOT/packaging/render-mediamtx-config.sh"
+if [ -f "$CLEANUP_TIMER" ] && grep -q '^OnCalendar=hourly$' "$CLEANUP_TIMER" \
+        && grep -q 'cleanup-media.sh' "$CLEANUP_UNIT" \
+        && grep -q 'doggy-cleanup-media.timer' "$POSTINST" \
+        && grep -q 'ensure_media_dirs' "$POSTINST"; then
+    pass "hourly media cleanup timer is packaged and enabled"
+else
+    fail "hourly media cleanup timer is packaged and enabled"
+fi
+
+RENDER_OUT="$TMPDIR/mediamtx-rendered.yml"
+if DOGGY_HOSTNAME=pi-test \
+        DOGGY_MEDIAMTX_TEMPLATE="$MEDIAMTX_CONFIG" \
+        DOGGY_MEDIAMTX_RENDERED="$RENDER_OUT" \
+        DOGGY_RECORDINGS_DIR="$TMPDIR/recordings" \
+        DOGGY_SNAPSHOTS_DIR="$TMPDIR/snapshots" \
+        sh "$RENDER_SCRIPT" \
+        && grep -q 'pi-test-%path-%Y-%m-%d-%H%M%S' "$RENDER_OUT"; then
+    pass "MediaMTX config render substitutes the hostname"
+else
+    fail "MediaMTX config render substitutes the hostname"
 fi
 
 if [ "$FAILS" -ne 0 ]; then

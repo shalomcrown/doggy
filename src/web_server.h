@@ -6,6 +6,9 @@
 #include <memory>
 #include <string>
 
+class CameraPipeline;
+class MediaStore;
+
 // ================================================================================
 
 class WebListen {
@@ -21,8 +24,12 @@ public:
 
 class WebServer {
 public:
-    WebServer(RobotApi &api, std::string index_html_path, std::string bind_host, int port);
-    WebServer(RobotApi &api, std::string index_html_path, WebListen listen);
+    WebServer(RobotApi &api, std::string index_html_path, std::string bind_host,
+              int port, CameraPipeline *camera_pipeline = nullptr,
+              MediaStore *media_store = nullptr);
+    WebServer(RobotApi &api, std::string index_html_path, WebListen listen,
+              CameraPipeline *camera_pipeline = nullptr,
+              MediaStore *media_store = nullptr);
     ~WebServer();
 
     bool start();

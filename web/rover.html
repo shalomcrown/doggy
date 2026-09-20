@@ -28,24 +28,46 @@
     #power button { margin-right: 0.5rem; }
     .pin-field { display: block; margin: 0.4rem 0; }
     .drive-field { display: block; margin: 0.6rem 0; }
+    /* Sized so the camera keeps the width on a 1080p window: a narrow slider
+       column, the video taking the slack, and a fixed-width stick/media rail. */
     .drive-layout {
       display: grid;
-      grid-template-columns: minmax(14rem, 1fr) minmax(12rem, 2fr) auto;
+      grid-template-columns: 13rem minmax(18rem, 52rem) 15rem;
       gap: 1rem;
-      align-items: stretch;
+      align-items: start;
     }
+    .drive-sliders input[type="range"] { width: 100%; }
     .drive-video {
       min-height: 10rem;
+      max-height: 60vh;
       background: #1b1b1b;
       color: #ccc;
       display: flex;
+      flex-direction: column;
+      position: relative;
       align-items: center;
       justify-content: center;
       text-align: center;
       padding: 1rem;
     }
+    .drive-video video { width: 100%; min-height: 10rem; max-height: 52vh; object-fit: contain; }
+    .camera-status { margin: 0; padding: 0.35rem; text-align: center; }
     .drive-stick {
       justify-self: center;
+    }
+    .drive-media { margin-top: 1rem; }
+    .drive-media h3 { margin: 0.6rem 0 0.2rem; font-size: 1rem; }
+    .drive-media ul {
+      margin: 0;
+      padding-left: 1.1rem;
+      max-height: 7rem;
+      overflow-y: auto;
+      overflow-wrap: anywhere;
+    }
+    .section-rule {
+      border: none;
+      border-top: 6px solid #1b1b1b;
+      margin: 2.5rem 0 1rem;
     }
     #joystick {
       position: relative;
@@ -79,8 +101,10 @@
       background: #333;
       pointer-events: none;
     }
-    @media (max-width: 700px) {
+    @media (max-width: 1100px) {
       .drive-layout { grid-template-columns: 1fr; }
+      .drive-stick { justify-self: start; }
+      .drive-media ul { max-height: none; }
     }
   </style>
 </head>
@@ -107,8 +131,9 @@
           <button type="button" id="drive-brake">Brake</button>
         </div>
       </div>
-      <div class="drive-video" id="drive-video" aria-label="Camera, coming soon">
-        Camera coming soon
+      <div class="drive-video" id="drive-video" aria-label="Live camera">
+        <video id="camera-video" autoplay muted playsinline aria-label="Live robot camera"></video>
+        <p class="camera-status" id="camera-status" role="status">Loading camera…</p>
       </div>
       <div class="drive-stick">
         <p id="joystick-label">Joystick</p>
@@ -117,6 +142,16 @@
              aria-describedby="joystick-hint">
           <div id="joystick-dead" aria-hidden="true"></div>
           <div id="joystick-knob" aria-hidden="true"></div>
+        </div>
+        <div class="drive-media">
+          <p>
+            <button type="button" id="camera-snapshot">Snapshot</button>
+          </p>
+          <p id="snapshot-status" role="status"></p>
+          <h3>Snapshots</h3>
+          <ul id="snapshot-list"></ul>
+          <h3>Recordings</h3>
+          <ul id="recording-list"></ul>
         </div>
       </div>
     </div>
@@ -168,6 +203,7 @@
     </thead>
     <tbody id="motors"></tbody>
   </table>
+  <hr class="section-rule">
   <section id="config" aria-labelledby="config-heading">
     <h2 id="config-heading">Configuration</h2>
     <p id="config-note">I2C bus and address changes apply after restart. Motor PWM, IN1, IN2, enable, and direction changes apply immediately. Changing robot type requires the system PIN and restarts the service — refresh the page afterwards.</p>
@@ -218,6 +254,7 @@
     <button type="button" id="system-reboot">Reboot</button>
     <button type="button" id="system-shutdown">Shut down Pi</button>
   </section>
+  <script src="/mediamtx-webrtc-reader.js"></script>
   <script>
     const IDLE_MS = 100;
     const POLL_MS = 200;
@@ -255,10 +292,17 @@
     const speedValueEl = document.getElementById("speed-value");
     const joystickEl = document.getElementById("joystick");
     const joystickKnobEl = document.getElementById("joystick-knob");
+    const cameraVideoEl = document.getElementById("camera-video");
+    const cameraStatusEl = document.getElementById("camera-status");
+    const cameraSnapshotEl = document.getElementById("camera-snapshot");
+    const snapshotStatusEl = document.getElementById("snapshot-status");
+    const snapshotListEl = document.getElementById("snapshot-list");
+    const recordingListEl = document.getElementById("recording-list");
     let statusPollBusy = false;
     let heartbeatBusy = false;
     let heartbeatFailures = 0;
     let shownVersion = "";
+    let cameraReader = null;
     let draggingDrive = false;
     let configDraft = null;
     let loadedRobotType = "ROVER";
@@ -934,6 +978,36 @@
     function makeValueInput(path, value, kind) {
       const input = document.createElement("input");
       input.setAttribute("aria-label", path.map(displayName).join(" "));
+      if (kind === "camera-source") {
+        const select = document.createElement("select");
+        select.setAttribute("aria-label", path.map(displayName).join(" "));
+        ["auto", "rpi", "v4l2"].forEach((source) => {
+          const option = document.createElement("option");
+          option.value = source;
+          option.textContent = source;
+          select.appendChild(option);
+        });
+        select.value = value || "auto";
+        select.addEventListener("change", () => {
+          setDraftValue(path, select.value);
+        });
+        return select;
+      }
+      if (kind === "camera-rotation") {
+        const select = document.createElement("select");
+        select.setAttribute("aria-label", path.map(displayName).join(" "));
+        [0, 180].forEach((degrees) => {
+          const option = document.createElement("option");
+          option.value = String(degrees);
+          option.textContent = degrees + "°";
+          select.appendChild(option);
+        });
+        select.value = String(value === undefined ? 180 : value);
+        select.addEventListener("change", () => {
+          setDraftValue(path, Number(select.value));
+        });
+        return select;
+      }
       if (kind === "lora-band") {
         const select = document.createElement("select");
         select.setAttribute("aria-label", path.map(displayName).join(" "));
@@ -993,6 +1067,18 @@
         });
         return select;
       }
+      if (kind === "float") {
+        input.type = "number";
+        input.step = "0.05";
+        input.min = "0";
+        input.max = "1";
+        input.setAttribute("aria-label", "Low-speed turn gain, 0 to 1");
+        input.value = String(value);
+        input.addEventListener("input", () => {
+          setDraftValue(path, Number(input.value));
+        });
+        return input;
+      }
       if (kind === "int") {
         input.type = "number";
         input.step = "1";
@@ -1000,6 +1086,10 @@
           input.min = "2";
           input.max = "60";
           input.setAttribute("aria-label", "GCS timeout, 2 to 60 seconds");
+        } else if (path[path.length - 1] === "retain_hours") {
+          input.min = "1";
+          input.max = "168";
+          input.setAttribute("aria-label", "Media retain hours, 1 to 168");
         } else {
           input.min = "0";
         }
@@ -1079,8 +1169,69 @@
               configDraft.robot.gcs_timeout_s === undefined
                       ? 3 : configDraft.robot.gcs_timeout_s,
               "int");
-      appendEmptyPairs(robotTr, 2);
+      appendPair(
+              robotTr,
+              ["robot", "turn_gain_min"],
+              configDraft.robot.turn_gain_min === undefined
+                      ? 0.25 : configDraft.robot.turn_gain_min,
+              "float");
+      appendEmptyPairs(robotTr, 1);
       configBodyEl.appendChild(robotTr);
+
+      if (configDraft.media === undefined || configDraft.media === null) {
+        configDraft.media = { retain_hours: 24 };
+      }
+      const mediaTr = document.createElement("tr");
+      const mediaClass = document.createElement("th");
+      mediaClass.scope = "row";
+      mediaClass.textContent = displayName("media");
+      mediaTr.appendChild(mediaClass);
+      const mediaGroup = document.createElement("td");
+      mediaTr.appendChild(mediaGroup);
+      appendPair(
+              mediaTr,
+              ["media", "retain_hours"],
+              configDraft.media.retain_hours === undefined
+                      ? 24 : configDraft.media.retain_hours,
+              "int");
+      appendEmptyPairs(mediaTr, 2);
+      configBodyEl.appendChild(mediaTr);
+
+      const cameras = config.cameras && Array.isArray(config.cameras.items)
+          ? config.cameras.items : [];
+      cameras.forEach((camera, index) => {
+        const first = document.createElement("tr");
+        const classTh = document.createElement("th");
+        classTh.scope = "rowgroup";
+        classTh.rowSpan = 3;
+        classTh.textContent = "camera";
+        first.appendChild(classTh);
+        const groupTh = document.createElement("th");
+        groupTh.scope = "rowgroup";
+        groupTh.rowSpan = 3;
+        groupTh.textContent = camera.name || camera.id || ("camera " + (index + 1));
+        first.appendChild(groupTh);
+        appendPair(first, ["cameras", "items", index, "id"], camera.id, "text");
+        appendPair(first, ["cameras", "items", index, "name"], camera.name, "text");
+        appendPair(first, ["cameras", "items", index, "source"], camera.source, "camera-source");
+        configBodyEl.appendChild(first);
+
+        const second = document.createElement("tr");
+        appendPair(second, ["cameras", "items", index, "device"], camera.device || "", "text");
+        appendPair(second, ["cameras", "items", index, "width"], camera.width, "int");
+        appendPair(second, ["cameras", "items", index, "height"], camera.height, "int");
+        configBodyEl.appendChild(second);
+
+        const third = document.createElement("tr");
+        appendPair(third, ["cameras", "items", index, "fps"], camera.fps, "int");
+        appendPair(
+                third,
+                ["cameras", "items", index, "rotation_deg"],
+                camera.rotation_deg === undefined ? 180 : camera.rotation_deg,
+                "camera-rotation");
+        appendPair(third, ["cameras", "items", index, "enabled"], camera.enabled, "bool");
+        configBodyEl.appendChild(third);
+      });
 
       const i2c = config.i2c || {};
       const i2cKeys = ["servo_board", "imu", "ads"];
@@ -1380,11 +1531,107 @@
       sendSystemAction("shutdown");
     });
 
+    // ================================================================================
+
+    function fillMediaList(listEl, items, prefix) {
+      listEl.replaceChildren();
+      if (Array.isArray(items) == false || items.length === 0) {
+        const empty = document.createElement("li");
+        empty.textContent = "None";
+        listEl.appendChild(empty);
+        return;
+      }
+      items.forEach((item) => {
+        if (item === null || item.name === undefined) {
+          return;
+        }
+        const row = document.createElement("li");
+        const link = document.createElement("a");
+        link.href = prefix + encodeURIComponent(item.name);
+        link.textContent = item.name;
+        row.appendChild(link);
+        listEl.appendChild(row);
+      });
+    }
+
+    // ================================================================================
+
+    async function loadMedia() {
+      try {
+        const recordings = await fetch("/api/recordings");
+        if (recordings.ok) {
+          const body = await recordings.json();
+          fillMediaList(recordingListEl, body.items, "/api/recordings/");
+        }
+        const snapshots = await fetch("/api/snapshots");
+        if (snapshots.ok) {
+          const body = await snapshots.json();
+          fillMediaList(snapshotListEl, body.items, "/api/snapshots/");
+        }
+      } catch (error) {
+        snapshotStatusEl.textContent = "Media list unavailable";
+      }
+    }
+
+    // ================================================================================
+
+    async function loadCamera() {
+      try {
+        const response = await fetch("/api/cameras");
+        if (response.status === 404) {
+          cameraStatusEl.textContent = "Camera unavailable";
+          return;
+        }
+        if (response.ok == false) {
+          throw new Error("camera discovery failed");
+        }
+        const body = await response.json();
+        const camera = Array.isArray(body.items) ? body.items[0] : null;
+        if (camera === null || camera.webrtc_url === undefined) {
+          cameraStatusEl.textContent = "Camera unavailable";
+          return;
+        }
+        cameraStatusEl.textContent = "Connecting camera…";
+        cameraReader = new MediaMTXWebRTCReader({
+          url: camera.webrtc_url,
+          onError: (message) => {
+            cameraStatusEl.textContent = "Camera error: " + message;
+          },
+          onTrack: (event) => {
+            cameraVideoEl.srcObject = event.streams[0];
+            cameraVideoEl.play().catch(() => {});
+            cameraStatusEl.textContent = camera.name || "Live camera";
+          }
+        });
+      } catch (error) {
+        cameraStatusEl.textContent = "Camera unavailable";
+      }
+    }
+
+    cameraSnapshotEl.addEventListener("click", async () => {
+      snapshotStatusEl.textContent = "Taking snapshot…";
+      try {
+        const response = await fetch("/api/snapshots", { method: "POST" });
+        if (response.ok == false) {
+          snapshotStatusEl.textContent = "Snapshot failed";
+          return;
+        }
+        snapshotStatusEl.textContent = "Snapshot saved";
+        await loadMedia();
+      } catch (error) {
+        snapshotStatusEl.textContent = "Snapshot failed";
+      }
+    });
+
+    // Liveness is armed before anything optional, so camera work can never
+    // delay or prevent the heartbeat that keeps the rover drivable.
+    sendHeartbeat();
+    setInterval(sendHeartbeat, HEARTBEAT_MS);
     loadConfig();
     loadRoverStatus();
-    sendHeartbeat();
     setInterval(loadRoverStatus, POLL_MS);
-    setInterval(sendHeartbeat, HEARTBEAT_MS);
+    loadCamera();
+    loadMedia();
   </script>
 </body>
 </html>

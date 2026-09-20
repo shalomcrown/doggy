@@ -60,13 +60,25 @@ inline bool gcs_watchdog_expired(
 // scale both wheels by the same factor if either would leave [-1, 1]. At rest
 // a full turn is an in-place spin; at full speed the same stick only slows
 // the inside wheels, so steering authority falls as |speed| rises.
-inline ArcadeMix mix_arcade(double speed, double turn) {
+// turn_gain_min (0–1) scales that rest spin: 1.0 keeps full pivot authority,
+// smaller values tame low-speed steering while full speed still uses full turn.
+inline ArcadeMix mix_arcade(
+        double speed,
+        double turn,
+        double turn_gain_min = 1.0) {
     if (std::isfinite(speed) == false || std::isfinite(turn) == false) {
         return {};
     }
+    if (std::isfinite(turn_gain_min) == false
+            || turn_gain_min < 0.0
+            || turn_gain_min > 1.0) {
+        turn_gain_min = 1.0;
+    }
 
-    double left = speed + turn;
-    double right = speed - turn;
+    const double turn_eff =
+            turn * (turn_gain_min + (1.0 - turn_gain_min) * std::abs(speed));
+    double left = speed + turn_eff;
+    double right = speed - turn_eff;
     const double peak = std::max(std::abs(left), std::abs(right));
     if (peak > 1.0) {
         left /= peak;

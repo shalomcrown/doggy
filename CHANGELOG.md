@@ -12,7 +12,11 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 > Work merged but not yet shipped. Move entries to a versioned section on release.
 
 ### Added
-- Rover page drive row: sliders on the left, reserved camera panel in the middle, on-screen joystick on the right. The stick has a 15% per-axis dead zone (no steer / zero speed) and springs to center on release.
+- Always-on MPEG-TS camera recording (hourly MediaMTX segments), JPEG snapshots, list/download APIs, and hourly retention from `media.retain_hours` (default 24). File names are `<hostname>-<camera id>-YYYY-MM-DD-HHMMSS.{ts,jpg}`.
+- `robot.turn_gain_min` (default 0.25) so low-speed steering is less twitchy while full-speed turns stay authoritative.
+
+### Changed
+- Rover **Drive** arcade-mixes steering: turn is added on the left and subtracted from the right, then both sides are scaled if either would leave `[-1, 1]`. Rest spin is scaled by `turn_gain_min`; at full speed the stick still uses full turn.
 - Rover GCS heartbeat over Wi-Fi or LoRa: the rover page posts every 750 ms, `robot.gcs_timeout_s` is configurable from 2–60 seconds (default 3), and loss of the page or channel coasts every motor.
 - `GET /api/status` now includes current Linux Unix time; both pages display it in UTC.
 

@@ -99,6 +99,13 @@ int main() {
     expect(curve.left == 1.0 && std::abs(curve.right + 0.2) < 1e-12,
            "overspeed mix keeps the left/right ratio");
 
+    const ArcadeMix tame = mix_arcade(0.0, 1.0, 0.25);
+    expect(tame.left == 0.25 && tame.right == -0.25,
+           "reduced rest gain tames in-place spin");
+    const ArcadeMix full_speed = mix_arcade(1.0, 1.0, 0.25);
+    expect(full_speed.left == 1.0 && full_speed.right == 0.0,
+           "reduced rest gain still uses full turn at full speed");
+
     const ArcadeMix nan_mix = mix_arcade(NAN, 1.0);
     expect(nan_mix.left == 0.0 && nan_mix.right == 0.0,
            "non-finite mix coasts");

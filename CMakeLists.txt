@@ -97,6 +97,11 @@ set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
 set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
 set(DISABLE_PACKAGE_CONFIG_AND_INSTALL ON CACHE BOOL "" FORCE)
+# Mbed TLS contexts are shared across httplib worker threads, so its locking
+# must be compiled in. The definition is PUBLIC on the mbed targets, which
+# keeps httplib and doggy on the same struct layouts.
+set(MBEDTLS_USER_CONFIG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/cmake/mbedtls-user-config.h"
+    CACHE FILEPATH "" FORCE)
 FetchContent_MakeAvailable(mbedtls)
 if(NOT TARGET mbedcrypto OR NOT TARGET mbedx509 OR NOT TARGET mbedtls)
     message(FATAL_ERROR "FetchContent mbedtls did not create mbedtls/mbedx509/mbedcrypto")
@@ -180,6 +185,8 @@ target_link_libraries(doggy_log PUBLIC plog::plog ${DOGGY_ZLIB})
 # ==============================================================================
 
 add_library(doggy_web STATIC
+    src/camera_pipeline.cpp
+    src/media_store.cpp
     src/web_server.cpp
     src/robot_api.cpp
     src/system_control.cpp
@@ -285,9 +292,16 @@ target_compile_definitions(doggy
 )
 
 install(TARGETS doggy RUNTIME DESTINATION bin)
-install(FILES web/index.html web/rover.html web/lora.html DESTINATION share/doggy)
+install(FILES web/index.html web/rover.html web/lora.html
+        web/mediamtx-webrtc-reader.js DESTINATION share/doggy)
 install(FILES packaging/doggy.service packaging/doggy-lora.service
-        packaging/doggy-lora-operator.service DESTINATION /etc/systemd/system)
+        packaging/doggy-lora-operator.service packaging/mediamtx.service
+        packaging/doggy-cleanup-media.service packaging/doggy-cleanup-media.timer
+        DESTINATION /etc/systemd/system)
+install(FILES packaging/mediamtx.yml DESTINATION /etc/doggy)
+install(PROGRAMS packaging/install-mediamtx.sh
+        packaging/render-mediamtx-config.sh
+        packaging/cleanup-media.sh DESTINATION lib/doggy)
 install(FILES packaging/doggy-lora.desktop DESTINATION share/applications)
 install(FILES packaging/50-shaloms-doggy.rules DESTINATION share/polkit-1/rules.d)
 
@@ -394,6 +408,14 @@ set_tests_properties(web_server PROPERTIES
     ENVIRONMENT "DOGGY_TEST_INDEX=${CMAKE_SOURCE_DIR}/web/index.html"
 )
 
+add_executable(test_camera_pipeline tests/test_camera_pipeline.cpp)
+target_link_libraries(test_camera_pipeline PRIVATE doggy_web)
+add_test(NAME camera_pipeline COMMAND test_camera_pipeline)
+
+add_executable(test_media_store tests/test_media_store.cpp)
+target_link_libraries(test_media_store PRIVATE doggy_web)
+add_test(NAME media_store COMMAND test_media_store)
+
 add_executable(test_dog_poll
     tests/test_dog_poll.cpp
     src/doggy.cpp
@@ -463,6 +485,12 @@ add_test(
 )
 
 add_test(
+    NAME cleanup-media
+    COMMAND bash "${CMAKE_SOURCE_DIR}/tests/cleanup-media.test.sh"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
+add_test(
     NAME build-operator-script
     COMMAND bash "${CMAKE_SOURCE_DIR}/tests/build-operator-script.test.sh"
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
@@ -482,7 +510,7 @@ set(CPACK_DEBIAN_PACKAGE_DESCRIPTION "Freenove doggy software")
 set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
 set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Shalom Crown <shalomcrown@cmail.com>")
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "i2c-tools, zssh, lrzsz, vim, systemd, debconf, ffmpeg")
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "i2c-tools, zssh, lrzsz, vim, systemd, debconf, ffmpeg, curl, ca-certificates, openssl, rpicam-apps | libcamera-apps")
 set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
     "${CMAKE_SOURCE_DIR}/packaging/debian/postinst;${CMAKE_SOURCE_DIR}/packaging/debian/prerm;${CMAKE_SOURCE_DIR}/packaging/debian/postrm;${CMAKE_SOURCE_DIR}/packaging/debian/config;${CMAKE_SOURCE_DIR}/packaging/debian/templates"
 )

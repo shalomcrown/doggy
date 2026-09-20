@@ -253,7 +253,7 @@ void Rover::expireGcsUnlocked(std::chrono::steady_clock::time_point now) {
 // ================================================================================
 
 void Rover::applyMotorOutputsUnlocked(double speed, double turn) {
-    const ArcadeMix mix = mix_arcade(speed, turn);
+    const ArcadeMix mix = mix_arcade(speed, turn, config_.robot().turn_gain_min());
     std::array<int, 4> next{};
     next[0] = apply_motor_output(
             motor_board_, config_.motors().front_left(), mix.left);

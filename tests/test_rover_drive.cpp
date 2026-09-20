@@ -21,7 +21,8 @@ static void expect(bool cond, const char *name) {
 // ================================================================================
 
 int main() {
-    const Config config = config_from_json(R"({"robot":{"type":"ROVER"}})");
+    const Config config = config_from_json(
+            R"({"robot":{"type":"ROVER","turn_gain_min":1.0}})");
     expect(config.i2c().servo_board().address() == "0x60",
            "rover bonnet defaults to address 0x60");
     expect(config.motors().front_left().pwm() == 2
@@ -124,6 +125,14 @@ int main() {
     }
     expect(has_gcs_timeout,
            "expired GCS watchdog reports a distinct GCS error");
+
+    Config tame = config_from_json(R"({"robot":{"type":"ROVER"}})");
+    Rover tame_rover(tame);
+    expect(tame_rover.setDrive(0.0, 1.0) == CommandResult::ok,
+           "default gain pivot succeeds");
+    expect(tame_rover.getStatus().motors().items(0).pwm() == 1024
+                    && tame_rover.getStatus().motors().items(1).pwm() == 1024,
+           "default turn_gain_min 0.25 quarters rest-spin PWM");
 
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

@@ -5,11 +5,14 @@
 #include <mbedtls/sha256.h>
 
 #include <array>
+#include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
@@ -127,10 +130,60 @@ static void validate_motor(
 
 // ================================================================================
 
+static void validate_cameras(const doggy::v1::Cameras &cameras) {
+    std::set<std::string> ids;
+    for (const doggy::v1::Camera &camera : cameras.items()) {
+        if (camera.id().empty() || camera.id().size() > 64) {
+            throw ConfigError("config camera id must be 1 to 64 characters");
+        }
+        for (char ch : camera.id()) {
+            const unsigned char c = static_cast<unsigned char>(ch);
+            if (std::isalnum(c) == 0 && ch != '.' && ch != '-') {
+                throw ConfigError("config camera id contains an invalid character");
+            }
+        }
+        if (ids.insert(camera.id()).second == false) {
+            throw ConfigError("config duplicate camera id: " + camera.id());
+        }
+        if (camera.source() != "auto"
+                && camera.source() != "rpi"
+                && camera.source() != "v4l2") {
+            throw ConfigError("config camera source must be auto, rpi, or v4l2");
+        }
+        if (camera.device().find('\n') != std::string::npos
+                || camera.device().find('\r') != std::string::npos) {
+            throw ConfigError("config camera device must not contain a newline");
+        }
+        if (camera.width() < 160 || camera.width() > 3840
+                || camera.height() < 120 || camera.height() > 2160
+                || camera.fps() < 1 || camera.fps() > 60) {
+            throw ConfigError("config camera dimensions or fps out of range");
+        }
+        if (camera.rotation_deg() != 0 && camera.rotation_deg() != 180) {
+            throw ConfigError("config camera rotation_deg must be 0 or 180");
+        }
+    }
+}
+
+// ================================================================================
+
+static void validate_media(const doggy::v1::Media &media) {
+    if (media.retain_hours() < 1 || media.retain_hours() > 168) {
+        throw ConfigError("config media.retain_hours out of range");
+    }
+}
+
+// ================================================================================
+
 static void validate_config(const Config &config) {
     if (config.robot().gcs_timeout_s() < 2
             || config.robot().gcs_timeout_s() > 60) {
         throw ConfigError("config robot.gcs_timeout_s out of range");
+    }
+    if (std::isfinite(config.robot().turn_gain_min()) == false
+            || config.robot().turn_gain_min() < 0.0
+            || config.robot().turn_gain_min() > 1.0) {
+        throw ConfigError("config robot.turn_gain_min out of range");
     }
     validate_i2c_device(config.i2c().servo_board(), "servo_board");
     validate_i2c_device(config.i2c().imu(), "imu");
@@ -154,6 +207,8 @@ static void validate_config(const Config &config) {
     validate_motor(config.motors().rear_right(), "rear_right", used_motor_channels);
     validate_motor(config.motors().rear_left(), "rear_left", used_motor_channels);
     validate_lora(config.lora());
+    validate_cameras(config.cameras());
+    validate_media(config.media());
 }
 
 // ================================================================================
@@ -188,6 +243,42 @@ void fill_config_defaults(Config &config) {
     }
     if (config.robot().has_gcs_timeout_s() == false) {
         config.mutable_robot()->set_gcs_timeout_s(3);
+    }
+    if (config.robot().has_turn_gain_min() == false) {
+        config.mutable_robot()->set_turn_gain_min(0.25);
+    }
+    if (config.media().has_retain_hours() == false) {
+        config.mutable_media()->set_retain_hours(24);
+    }
+    if (config.cameras().items_size() == 0) {
+        config.mutable_cameras()->add_items();
+    }
+    for (int i = 0; i < config.mutable_cameras()->items_size(); ++i) {
+        doggy::v1::Camera *camera = config.mutable_cameras()->mutable_items(i);
+        if (camera->has_id() == false) {
+            camera->set_id("cam" + std::to_string(i));
+        }
+        if (camera->has_name() == false) {
+            camera->set_name("Camera " + std::to_string(i + 1));
+        }
+        if (camera->has_source() == false) {
+            camera->set_source("auto");
+        }
+        if (camera->has_width() == false) {
+            camera->set_width(1280);
+        }
+        if (camera->has_height() == false) {
+            camera->set_height(720);
+        }
+        if (camera->has_fps() == false) {
+            camera->set_fps(15);
+        }
+        if (camera->has_rotation_deg() == false) {
+            camera->set_rotation_deg(180);
+        }
+        if (camera->has_enabled() == false) {
+            camera->set_enabled(true);
+        }
     }
     doggy::v1::I2cConfig *i2c = config.mutable_i2c();
     if (i2c->servo_board().has_bus() == false) {
@@ -455,6 +546,9 @@ Config config_overlay_json(const Config &base, const std::string &text) {
     }
     Config next = base;
     const std::string kept_key = next.lora().air_key();
+    if (overlay.has_cameras()) {
+        next.clear_cameras();
+    }
     next.MergeFrom(overlay);
     if (overlay.lora().air_key().empty()) {
         next.mutable_lora()->set_air_key(kept_key);

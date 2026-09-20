@@ -1,5 +1,7 @@
 #include "web_server.h"
+#include "camera_pipeline.h"
 #include "dog_api.h"
+#include "media_store.h"
 #include "rover_api.h"
 #include "utils.h"
 #include "web_json.h"
@@ -14,8 +16,10 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <thread>
+#include <unistd.h>
 #include <utility>
 
 namespace fs = std::filesystem;
@@ -160,7 +164,9 @@ bool host_name_ok(const std::string &name) {
 }
 
 void register_api(httplib::Server &server, RobotApi &api,
-                  const std::string &index_html_path) {
+                  const std::string &index_html_path,
+                  CameraPipeline *camera_pipeline,
+                  MediaStore *media_store) {
     server.set_payload_max_length(4096);
     server.Get("/", [&index_html_path](const httplib::Request &, httplib::Response &res) {
         const std::string html = read_file(index_html_path);
@@ -173,12 +179,154 @@ void register_api(httplib::Server &server, RobotApi &api,
         res.set_content(html, "text/html; charset=utf-8");
     });
 
+    server.Get("/mediamtx-webrtc-reader.js", [&index_html_path](
+            const httplib::Request &, httplib::Response &res) {
+        const std::string script = read_file(
+                (fs::path(index_html_path).parent_path()
+                 / "mediamtx-webrtc-reader.js").string());
+        if (script.empty()) {
+            res.status = 404;
+            return;
+        }
+        res.set_content(script, "text/javascript; charset=utf-8");
+    });
+
     server.Get("/api/status", [&api](const httplib::Request &, httplib::Response &res) {
         res.set_content(status_to_json(api.getStatus(), DOGGY_VERSION), "application/json");
     });
 
     server.Get("/api/config", [&api](const httplib::Request &, httplib::Response &res) {
         res.set_content(config_to_public_json(api.getConfig()), "application/json");
+    });
+
+    server.Get("/api/cameras", [&api, camera_pipeline](
+            const httplib::Request &req, httplib::Response &res) {
+        if (camera_pipeline == nullptr) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        const std::string host = host_without_port(
+                req.get_header_value("Host"));
+        if (host_name_ok(host) == false) {
+            res.status = 400;
+            res.set_content(error_json("bad_host"), "application/json");
+            return;
+        }
+        const CameraQueryResult result =
+                camera_pipeline->query(api.getConfig(), host);
+        if (result.result == CameraResult::not_found) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        if (result.result == CameraResult::failed) {
+            res.status = 500;
+            res.set_content(error_json("camera_io"), "application/json");
+            return;
+        }
+        res.set_content(proto_to_json(result.streams), "application/json");
+    });
+
+    server.Get("/api/recordings", [media_store](
+            const httplib::Request &, httplib::Response &res) {
+        if (media_store == nullptr) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        res.set_content(proto_to_json(media_store->listRecordings()),
+                "application/json");
+    });
+
+    server.Get("/api/snapshots", [media_store](
+            const httplib::Request &, httplib::Response &res) {
+        if (media_store == nullptr) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        res.set_content(proto_to_json(media_store->listSnapshots()),
+                "application/json");
+    });
+
+    server.Get(R"(/api/recordings/([^/]+))", [media_store](
+            const httplib::Request &req, httplib::Response &res) {
+        if (media_store == nullptr) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        const std::optional<std::string> path =
+                media_store->copyRecording(req.matches[1]);
+        if (path.has_value() == false) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        res.set_header(
+                "Content-Disposition",
+                "attachment; filename=\"" + json_escape(req.matches[1]) + "\"");
+        res.set_file_content(*path, "video/mp2t");
+    });
+
+    server.Get(R"(/api/snapshots/([^/]+))", [media_store](
+            const httplib::Request &req, httplib::Response &res) {
+        if (media_store == nullptr) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        const std::optional<std::string> path =
+                media_store->snapshotFile(req.matches[1]);
+        if (path.has_value() == false) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        res.set_header(
+                "Content-Disposition",
+                "attachment; filename=\"" + json_escape(req.matches[1]) + "\"");
+        res.set_file_content(*path, "image/jpeg");
+    });
+
+    server.Post("/api/snapshots", [&api, media_store](
+            const httplib::Request &, httplib::Response &res) {
+        if (media_store == nullptr) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        const doggy::v1::Camera *selected = nullptr;
+        const Config config = api.getConfig();
+        for (const doggy::v1::Camera &camera : config.cameras().items()) {
+            if (camera.enabled()) {
+                selected = &camera;
+                break;
+            }
+        }
+        if (selected == nullptr) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        char host[256];
+        if (gethostname(host, sizeof(host)) != 0) {
+            host[0] = '\0';
+        } else {
+            host[sizeof(host) - 1] = '\0';
+        }
+        const CommandResult captured = media_store->takeSnapshot(
+                std::string("rtsp://127.0.0.1:8554/") + selected->id(),
+                host,
+                selected->id());
+        if (captured != CommandResult::ok) {
+            res.status = 500;
+            res.set_content(error_json("camera_io"), "application/json");
+            return;
+        }
+        res.set_content(proto_to_json(media_store->listSnapshots()),
+                "application/json");
     });
 
     server.Put("/api/config", [&api](const httplib::Request &req, httplib::Response &res) {
@@ -583,7 +731,8 @@ public:
     std::thread https_worker;
     std::thread http_worker;
 
-    Impl(RobotApi &api, std::string index_html_path, WebListen listen) :
+    Impl(RobotApi &api, std::string index_html_path, WebListen listen,
+         CameraPipeline *camera_pipeline, MediaStore *media_store) :
         api(api),
         index_html_path(std::move(index_html_path)),
         listen(std::move(listen)) {
@@ -591,7 +740,9 @@ public:
             https = std::make_unique<httplib::SSLServer>(
                     this->listen.cert_path.c_str(), this->listen.key_path.c_str());
             if (https->is_valid()) {
-                register_api(*https, this->api, this->index_html_path);
+                register_api(
+                        *https, this->api, this->index_html_path, camera_pipeline,
+                        media_store);
             } else {
                 https.reset();
             }
@@ -599,7 +750,9 @@ public:
 
         if (this->listen.https_port < 0) {
             http = std::make_unique<httplib::Server>();
-            register_api(*http, this->api, this->index_html_path);
+            register_api(
+                    *http, this->api, this->index_html_path, camera_pipeline,
+                    media_store);
             return;
         }
 
@@ -613,15 +766,20 @@ public:
 // ================================================================================
 
 WebServer::WebServer(RobotApi &api, std::string index_html_path, std::string bind_host,
-                     int port) :
+                     int port, CameraPipeline *camera_pipeline,
+                     MediaStore *media_store) :
     WebServer(api, std::move(index_html_path),
-              WebListen{std::move(bind_host), port, -1, {}, {}}) {
+              WebListen{std::move(bind_host), port, -1, {}, {}},
+              camera_pipeline, media_store) {
 }
 
 // ================================================================================
 
-WebServer::WebServer(RobotApi &api, std::string index_html_path, WebListen listen) :
-    impl(std::make_unique<Impl>(api, std::move(index_html_path), std::move(listen))) {
+WebServer::WebServer(RobotApi &api, std::string index_html_path, WebListen listen,
+                     CameraPipeline *camera_pipeline, MediaStore *media_store) :
+    impl(std::make_unique<Impl>(
+            api, std::move(index_html_path), std::move(listen), camera_pipeline,
+            media_store)) {
 }
 
 // ================================================================================

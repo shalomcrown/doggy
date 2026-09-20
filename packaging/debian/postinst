@@ -22,6 +22,40 @@ ensure_dialout_group() {
     fi
 }
 
+ensure_video_group() {
+    if getent group video >/dev/null 2>&1; then
+        usermod -aG video doggy
+    fi
+}
+
+install_mediamtx() {
+    installer="${DOGGY_MEDIAMTX_INSTALLER:-/usr/lib/doggy/install-mediamtx.sh}"
+    if [ "${DOGGY_SKIP_MEDIAMTX_INSTALL:-}" = 1 ]; then
+        return 0
+    fi
+    if [ -x "$installer" ]; then
+        "$installer"
+    fi
+}
+
+ensure_tls_files() {
+    if [ "${DOGGY_SKIP_TLS:-}" = 1 ]; then
+        return 0
+    fi
+    cfg_dir="${DOGGY_CONFIG_DIR:-/etc/doggy}"
+    cert="$cfg_dir/tls.crt"
+    key="$cfg_dir/tls.key"
+    if [ -s "$cert" ] && [ -s "$key" ]; then
+        return 0
+    fi
+    umask 077
+    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+        -subj /CN=doggy.local -keyout "$key" -out "$cert"
+    chown doggy:doggy "$cert" "$key"
+    chmod 0644 "$cert"
+    chmod 0600 "$key"
+}
+
 i2c_dtparam_enabled() {
     grep -Eq '^[[:space:]]*dtparam=i2c(_arm)?=on' "$1"
 }
@@ -124,6 +158,16 @@ ensure_log_dir() {
     chmod 0750 "$log_dir" || true
 }
 
+ensure_media_dirs() {
+    recordings="${DOGGY_RECORDINGS_DIR:-/var/lib/doggy/recordings}"
+    snapshots="${DOGGY_SNAPSHOTS_DIR:-/var/lib/doggy/snapshots}"
+    mkdir -p "$recordings" "$snapshots"
+    if getent passwd doggy >/dev/null 2>&1; then
+        chown doggy:doggy "$recordings" "$snapshots" || true
+    fi
+    chmod 0750 "$recordings" "$snapshots" || true
+}
+
 ensure_config_dir() {
     cfg_dir="${DOGGY_CONFIG_DIR:-/etc/doggy}"
     mkdir -p "$cfg_dir"
@@ -137,8 +181,17 @@ ensure_config_dir() {
 reload_and_start() {
     if command -v systemctl >/dev/null 2>&1; then
         systemctl daemon-reload
+        systemctl enable mediamtx.service
         systemctl enable doggy.service
         systemctl enable doggy-lora.service
+        systemctl enable doggy-cleanup-media.timer
+        if systemctl restart mediamtx.service; then
+            :
+        else
+            echo "warning: systemctl restart mediamtx.service failed" >&2
+            systemctl start mediamtx.service \
+                || echo "warning: systemctl start mediamtx.service failed" >&2
+        fi
         if systemctl restart doggy.service; then
             :
         else
@@ -153,6 +206,8 @@ reload_and_start() {
             systemctl start doggy-lora.service \
                 || echo "warning: systemctl start doggy-lora.service failed" >&2
         fi
+        systemctl start doggy-cleanup-media.timer \
+            || echo "warning: systemctl start doggy-cleanup-media.timer failed" >&2
     fi
 }
 
@@ -161,8 +216,12 @@ case "$1" in
         ensure_user
         ensure_i2c_group
         ensure_dialout_group
+        ensure_video_group
         ensure_log_dir
         ensure_config_dir
+        ensure_media_dirs
+        install_mediamtx
+        ensure_tls_files
         reload_and_start
         if enable_i2c_boot_config; then
             mark_reboot_required

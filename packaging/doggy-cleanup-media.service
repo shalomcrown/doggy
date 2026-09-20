@@ -1,0 +1,13 @@
+[Unit]
+Description=Delete expired doggy recordings and snapshots
+
+[Service]
+Type=oneshot
+User=doggy
+Group=doggy
+ExecStart=/usr/lib/doggy/cleanup-media.sh
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/doggy

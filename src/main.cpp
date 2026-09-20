@@ -5,6 +5,8 @@
 #include <thread>
 
 #include "config.h"
+#include "camera_pipeline.h"
+#include "media_store.h"
 #include "dog_status.h"
 #include "doggy.h"
 #include "doggy_log.h"
@@ -110,7 +112,9 @@ int main() {
     listen.cert_path = cert_path;
     listen.key_path = key_path;
 
-    WebServer server(*robot, index, listen);
+    CameraPipeline camera_pipeline;
+    MediaStore media_store;
+    WebServer server(*robot, index, listen, &camera_pipeline, &media_store);
     if (server.start() == false) {
         std::cerr << "Failed to listen on https://" << listen.bind_host << ":"
                   << https_port << std::endl;

@@ -1,0 +1,23 @@
+logLevel: info
+api: true
+apiAddress: 127.0.0.1:8887
+rtspAddress: 127.0.0.1:8554
+webrtc: true
+webrtcAddress: :8889
+webrtcEncryption: true
+webrtcServerKey: /etc/doggy/tls.key
+webrtcServerCert: /etc/doggy/tls.crt
+webrtcLocalUDPAddress: :8189
+
+pathDefaults:
+  record: true
+  # MediaMTX requires %path in recordPath; it is the camera id.
+  recordPath: /var/lib/doggy/recordings/__HOSTNAME__-%path-%Y-%m-%d-%H%M%S
+  recordFormat: mpegts
+  recordPartDuration: 1s
+  recordSegmentDuration: 1h
+  recordDeleteAfter: 0s
+
+paths:
+  all_others:
+    source: publisher

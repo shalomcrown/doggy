@@ -1,0 +1,24 @@
+[Unit]
+Description=MediaMTX server for doggy camera streams
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=doggy
+Group=doggy
+RuntimeDirectory=doggy
+RuntimeDirectoryMode=0755
+StateDirectory=doggy
+ExecStartPre=/usr/lib/doggy/render-mediamtx-config.sh
+ExecStart=/usr/lib/doggy/mediamtx /run/doggy/mediamtx.yml
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/doggy
+
+[Install]
+WantedBy=multi-user.target

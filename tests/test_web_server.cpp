@@ -1,8 +1,12 @@
+#include "camera_pipeline.h"
 #include "dog_api.h"
 #include "doggy_log.h"
 #include "doggy_version.h"
+#include "media_store.h"
 #include "rover_api.h"
 #include "tls_cert.h"
+
+#include <mbedtls/build_info.h>
 #include "web_server.h"
 
 #include "httplib.h"
@@ -16,6 +20,7 @@
 #include <iostream>
 #include <iterator>
 #include <string>
+#include <atomic>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -338,6 +343,36 @@ static httplib::Result get_retry(Client &cli, const char *path) {
     return res;
 }
 
+// ================================================================================
+
+class FakeCameraProcess final : public CameraProcess {
+public:
+    int starts = 0;
+    bool is_running = false;
+
+    // ================================================================================
+
+    bool start(const CameraProcessSpec &) override {
+        starts += 1;
+        is_running = true;
+        return true;
+    }
+
+    // ================================================================================
+
+    bool running() override {
+        return is_running;
+    }
+
+    // ================================================================================
+
+    void stop() override {
+        is_running = false;
+    }
+};
+
+// ================================================================================
+
 int main() {
     const char *index = std::getenv("DOGGY_TEST_INDEX");
     if (index == nullptr || index[0] == '\0') {
@@ -368,8 +403,33 @@ int main() {
     log_options.roll_on_start = false;
     init_doggy_log(log_options);
 
+    auto camera_process = std::make_unique<FakeCameraProcess>();
+    FakeCameraProcess *camera_process_ptr = camera_process.get();
+    CameraPipeline camera_pipeline(std::move(camera_process));
+    const std::filesystem::path media_root = std::filesystem::temp_directory_path()
+            / ("doggy-web-media-" + std::to_string(getpid()));
+    const std::filesystem::path recordings = media_root / "recordings";
+    const std::filesystem::path snapshots = media_root / "snapshots";
+    const std::filesystem::path ffmpeg = media_root / "ffmpeg";
+    std::filesystem::create_directories(recordings);
+    std::filesystem::create_directories(snapshots);
+    {
+        std::ofstream out(recordings / "pi-2026-09-20-093301.ts", std::ios::binary);
+        out << "mpegts-bytes";
+    }
+    {
+        std::ofstream out(ffmpeg);
+        out << "#!/bin/sh\n"
+            << "for a in \"$@\"; do\n"
+            << "  case \"$a\" in *.jpg) printf JPEG > \"$a\" ;; esac\n"
+            << "done\n";
+    }
+    std::filesystem::permissions(ffmpeg, std::filesystem::perms::owner_exec | std::filesystem::perms::owner_read);
+    MediaStore media_store(recordings.string(), snapshots.string(), ffmpeg.string());
     FakeDog dog;
-    WebServer server(dog, index, "127.0.0.1", 0);
+    dog.config.mutable_cameras()->mutable_items(0)->set_source("v4l2");
+    dog.config.mutable_cameras()->mutable_items(0)->set_device("/dev/video0");
+    WebServer server(dog, index, "127.0.0.1", 0, &camera_pipeline, &media_store);
     if (server.start() == false) {
         std::cerr << "server.start failed" << std::endl;
         return EXIT_FAILURE;
@@ -389,6 +449,23 @@ int main() {
            "page fetches /api/status");
     expect(page && page->body.find("id=\"linux-time\"") != std::string::npos,
            "dog page displays Linux time");
+    expect(page && page->body.find("id=\"camera-video\"") != std::string::npos
+                   && page->body.find("MediaMTXWebRTCReader") != std::string::npos,
+           "dog page has local WebRTC camera playback");
+    expect(page && page->body.find("id=\"camera-snapshot\"") != std::string::npos
+                   && page->body.find("/api/recordings/") != std::string::npos,
+           "dog page lists recordings and takes snapshots");
+    expect(page && page->body.find("class=\"camera-media\"") != std::string::npos
+                   && page->body.find("class=\"camera-media\"")
+                              > page->body.find("id=\"camera-video\""),
+           "dog page puts media controls beside the picture, not under it");
+    expect(page && page->body.find("<hr class=\"section-rule\">") != std::string::npos
+                   && page->body.find("<hr class=\"section-rule\">")
+                              < page->body.find("id=\"config\""),
+           "dog page rules off the configuration section");
+    expect(page && page->body.find("[\"robot\", \"turn_gain_min\"]") != std::string::npos
+                   && page->body.find("[\"media\", \"retain_hours\"]") != std::string::npos,
+           "dog page edits turn gain and media retention");
     expect(page && page->body.find("toISOString()") != std::string::npos,
            "dog page formats Linux time as UTC ISO-8601");
     expect(page && page->body.find("id=\"imu\"") != std::string::npos,
@@ -460,6 +537,11 @@ int main() {
     expect(page && page->body.find("[\"robot\", \"gcs_timeout_s\"]")
                    != std::string::npos,
            "dog page preserves the rover GCS timeout");
+    expect(page && page->body.find("camera-rotation") != std::string::npos
+                   && page->body.find(
+                              "[\"cameras\", \"items\", index, \"rotation_deg\"]")
+                              != std::string::npos,
+           "dog page edits camera rotation");
     expect(page && page->body.find("lora-air-key") != std::string::npos,
            "dog page can set lora air_key");
     expect(page && page->body.find("Refresh the page") != std::string::npos,
@@ -497,6 +579,36 @@ int main() {
     auto dog_heartbeat = cli.Post("/api/heartbeat", "", "text/plain");
     expect(dog_heartbeat && dog_heartbeat->status == 404,
            "POST /api/heartbeat on dog is 404");
+    auto dog_cameras = cli.Get("/api/cameras");
+    expect(dog_cameras && dog_cameras->status == 200
+                   && dog_cameras->body.find("\"id\":\"cam0\"") != std::string::npos
+                   && dog_cameras->body.find(
+                              "https://127.0.0.1:8889/cam0/whep")
+                              != std::string::npos,
+           "GET /api/cameras returns dog WHEP stream");
+    expect(camera_process_ptr->starts == 1,
+           "first camera GET starts one feeder");
+    auto recordings_list = cli.Get("/api/recordings");
+    expect(recordings_list && recordings_list->status == 200
+                   && recordings_list->body.find("pi-2026-09-20-093301.ts")
+                              != std::string::npos,
+           "GET /api/recordings lists MPEG-TS files");
+    auto recording_file = cli.Get("/api/recordings/pi-2026-09-20-093301.ts");
+    expect(recording_file && recording_file->status == 200
+                   && recording_file->body.find("mpegts-bytes") != std::string::npos,
+           "GET /api/recordings copies a live MPEG-TS file");
+    auto traversal = cli.Get("/api/recordings/..%2Fetc%2Fpasswd");
+    expect(traversal && traversal->status == 404,
+           "GET /api/recordings rejects traversal");
+    auto snapshot = cli.Post("/api/snapshots", "", "text/plain");
+    expect(snapshot && snapshot->status == 200
+                   && snapshot->body.find(".jpg") != std::string::npos,
+           "POST /api/snapshots writes a JPEG");
+    dog.config.mutable_cameras()->mutable_items(0)->set_enabled(false);
+    auto disabled_cameras = cli.Get("/api/cameras");
+    expect(disabled_cameras && disabled_cameras->status == 404,
+           "GET /api/cameras is 404 when cameras are disabled");
+    dog.config.mutable_cameras()->mutable_items(0)->set_enabled(true);
 
     dog.status.mutable_imu()->set_ok(true);
     dog.status.mutable_imu()->set_temperature_c(37.5);
@@ -742,7 +854,10 @@ int main() {
     const std::filesystem::path rover_index =
             std::filesystem::path(index).parent_path() / "rover.html";
     FakeRover rover;
-    WebServer rover_server(rover, rover_index.string(), "127.0.0.1", 0);
+    rover.config.mutable_cameras()->mutable_items(0)->set_source("v4l2");
+    rover.config.mutable_cameras()->mutable_items(0)->set_device("/dev/video0");
+    WebServer rover_server(
+            rover, rover_index.string(), "127.0.0.1", 0, &camera_pipeline);
     expect(rover_server.start(), "rover server starts");
     httplib::Client rover_cli("127.0.0.1", rover_server.port());
     auto rover_page = get_retry(rover_cli, "/");
@@ -758,6 +873,25 @@ int main() {
            "rover drive row lays out sliders, camera, and joystick");
     expect(rover_page && rover_page->body.find("id=\"drive-video\"") != std::string::npos,
            "rover page reserves the camera slot");
+    expect(rover_page && rover_page->body.find("<video id=\"camera-video\"")
+                   != std::string::npos
+                   && rover_page->body.find("MediaMTXWebRTCReader")
+                              != std::string::npos,
+           "rover camera slot plays WebRTC");
+    expect(rover_page && rover_page->body.find("id=\"camera-snapshot\"") != std::string::npos
+                   && rover_page->body.find("[\"robot\", \"turn_gain_min\"]")
+                              != std::string::npos,
+           "rover page snapshots and edits turn gain");
+    expect(rover_page && rover_page->body.find("class=\"drive-media\"") != std::string::npos
+                   && rover_page->body.find("class=\"drive-media\"")
+                              > rover_page->body.find("id=\"joystick\"")
+                   && rover_page->body.find("class=\"drive-media\"")
+                              > rover_page->body.find("id=\"drive-video\""),
+           "rover media controls sit under the joystick, not under the video");
+    expect(rover_page && rover_page->body.find("<hr class=\"section-rule\">") != std::string::npos
+                   && rover_page->body.find("<hr class=\"section-rule\">")
+                              < rover_page->body.find("id=\"config\""),
+           "rover page rules off the configuration section");
     expect(rover_page && rover_page->body.find("id=\"joystick\"") != std::string::npos,
            "rover page has a drive joystick");
     expect(rover_page && rover_page->body.find("HEARTBEAT_MS = 750") != std::string::npos
@@ -782,6 +916,13 @@ int main() {
                    && rover_page->body.find("[\"robot\", \"gcs_timeout_s\"]")
                               != std::string::npos,
            "rover page edits the GCS timeout");
+    expect(rover_page
+                   && rover_page->body.find("camera-rotation")
+                              != std::string::npos
+                   && rover_page->body.find(
+                              "[\"cameras\", \"items\", index, \"rotation_deg\"]")
+                              != std::string::npos,
+           "rover page edits camera rotation");
     expect(rover_page && rover_page->body.find("input.min = \"2\"") != std::string::npos
                    && rover_page->body.find("input.max = \"60\"") != std::string::npos,
            "rover page constrains GCS timeout to the API range");
@@ -856,6 +997,11 @@ int main() {
            "rover status includes motors");
     expect(rover_status && rover_status->body.find("\"servos\"") == std::string::npos,
            "rover status omits servos");
+    auto rover_cameras = rover_cli.Get("/api/cameras");
+    expect(rover_cameras && rover_cameras->status == 200,
+           "GET /api/cameras works on rover");
+    expect(camera_process_ptr->starts == 1,
+           "rover camera GET reuses the running feeder");
     auto heartbeat = rover_cli.Post("/api/heartbeat", "", "text/plain");
     expect(heartbeat && heartbeat->status == 200,
            "POST /api/heartbeat on rover is 200");
@@ -993,10 +1139,58 @@ int main() {
     expect(http_pin && http_pin->body.find("accepted") == std::string::npos,
            "HTTP POST /api/system does not accept a PIN");
 
+    // Concurrent handshakes share one Mbed TLS DRBG and key context. Without
+    // Mbed TLS locking they corrupt it, and every later handshake is signed
+    // invalidly until the process restarts.
+    const int handshake_threads = 16;
+    const int handshake_rounds = 4;
+    std::atomic<int> handshake_failures{0};
+    std::atomic<bool> handshake_go{false};
+    std::vector<std::thread> handshakers;
+    for (int i = 0; i < handshake_threads; ++i) {
+        handshakers.emplace_back([&tls, &handshake_failures, &handshake_go]() {
+            while (handshake_go.load() == false) {
+                std::this_thread::yield();
+            }
+            for (int round = 0; round < handshake_rounds; ++round) {
+                httplib::SSLClient client("127.0.0.1", tls.port());
+                client.set_connection_timeout(5, 0);
+                client.enable_server_certificate_verification(false);
+                client.enable_server_hostname_verification(false);
+                auto res = client.Get("/api/status");
+                if (res == nullptr || res->status != 200) {
+                    handshake_failures += 1;
+                }
+            }
+        });
+    }
+    handshake_go = true;
+    for (std::thread &worker : handshakers) {
+        worker.join();
+    }
+    expect(handshake_failures == 0, "concurrent HTTPS handshakes all succeed");
+
+    // The race above only reproduces on slower hardware, so the build option
+    // that makes the shared contexts safe is asserted directly.
+#if defined(MBEDTLS_THREADING_C)
+    expect(true, "Mbed TLS is built with threading support");
+#else
+    expect(false, "Mbed TLS is built with threading support");
+#endif
+
+    httplib::SSLClient after_burst("127.0.0.1", tls.port());
+    after_burst.set_connection_timeout(5, 0);
+    after_burst.enable_server_certificate_verification(false);
+    after_burst.enable_server_hostname_verification(false);
+    auto after = after_burst.Get("/api/status");
+    expect(after && after->status == 200,
+           "HTTPS still works after a burst of concurrent handshakes");
+
     tls.stop();
     std::filesystem::remove_all(tls_dir);
 
     std::filesystem::remove_all(log_dir);
+    std::filesystem::remove_all(media_root);
 
     if (failures != 0) {
         return EXIT_FAILURE;

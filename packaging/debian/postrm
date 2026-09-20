@@ -6,6 +6,8 @@ case "$1" in
         if command -v systemctl >/dev/null 2>&1; then
             systemctl disable doggy.service || true
             systemctl disable doggy-lora.service || true
+            systemctl disable mediamtx.service || true
+            systemctl disable doggy-cleanup-media.timer || true
             systemctl daemon-reload || true
         fi
         ;;

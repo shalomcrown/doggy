@@ -1,15 +1,17 @@
 [Unit]
 Description=shaloms-doggy robot dog web UI
-After=network-online.target
-Wants=network-online.target
+After=network-online.target mediamtx.service
+Wants=network-online.target mediamtx.service
 
 [Service]
 Type=simple
 User=doggy
 Group=doggy
-SupplementaryGroups=i2c
+SupplementaryGroups=i2c video
 LogsDirectory=doggy
 LogsDirectoryMode=0755
+StateDirectory=doggy
+ReadWritePaths=/var/lib/doggy
 ExecStart=/usr/bin/doggy
 Restart=on-failure
 RestartSec=2

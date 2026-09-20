@@ -32,6 +32,7 @@ enum LoraBand {
 enum ErrorCode {
   i2c = 0;
   gcs = 1;
+  camera = 2;
 }
 
 // ================================================================================
@@ -123,6 +124,7 @@ message Lora {
 message Robot {
   optional RobotType type = 1;
   optional int32 gcs_timeout_s = 2;
+  optional double turn_gain_min = 3;
 }
 
 // ================================================================================
@@ -130,6 +132,32 @@ message Robot {
 message System {
   optional string pin_hash = 1;
   optional bool pin_set = 2;
+}
+
+// ================================================================================
+
+message Camera {
+  optional string id = 1;
+  optional string name = 2;
+  optional string source = 3;
+  optional string device = 4;
+  optional int32 width = 5;
+  optional int32 height = 6;
+  optional int32 fps = 7;
+  optional bool enabled = 8;
+  optional int32 rotation_deg = 9;
+}
+
+// ================================================================================
+
+message Cameras {
+  repeated Camera items = 1;
+}
+
+// ================================================================================
+
+message Media {
+  optional uint32 retain_hours = 1;
 }
 
 // ================================================================================
@@ -142,6 +170,8 @@ message Config {
   optional Lora lora = 5;
   optional System system = 6;
   optional string pin = 7;
+  optional Cameras cameras = 8;
+  optional Media media = 9;
 }
 
 // ================================================================================
@@ -196,6 +226,35 @@ message ServoList {
 
 message MotorList {
   repeated MotorSnapshot items = 1;
+}
+
+// ================================================================================
+
+message CameraStream {
+  optional string id = 1;
+  optional string name = 2;
+  optional string webrtc_url = 3;
+  optional bool ready = 4;
+}
+
+// ================================================================================
+
+message CameraStreamList {
+  repeated CameraStream items = 1;
+}
+
+// ================================================================================
+
+message MediaFile {
+  optional string name = 1;
+  optional uint64 size = 2;
+  optional int64 mtime_unix = 3;
+}
+
+// ================================================================================
+
+message MediaFileList {
+  repeated MediaFile items = 1;
 }
 
 // ================================================================================

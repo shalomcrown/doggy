@@ -29,6 +29,19 @@ int main() {
     expect(defaults.robot().type() == doggy::v1::DOG, "missing robot type defaults to DOG");
     expect(defaults.robot().gcs_timeout_s() == 3,
            "GCS timeout defaults to three seconds");
+    expect(defaults.robot().turn_gain_min() == 0.25,
+           "low-speed turn gain defaults to 0.25");
+    expect(defaults.media().retain_hours() == 24,
+           "media retention defaults to 24 hours");
+    expect(defaults.cameras().items_size() == 1
+                    && defaults.cameras().items(0).id() == "cam0"
+                    && defaults.cameras().items(0).source() == "auto"
+                    && defaults.cameras().items(0).width() == 1280
+                    && defaults.cameras().items(0).height() == 720
+                    && defaults.cameras().items(0).fps() == 15
+                    && defaults.cameras().items(0).rotation_deg() == 180
+                    && defaults.cameras().items(0).enabled(),
+           "camera defaults to enabled cam0 auto at 1280x720 15fps rotated 180");
     expect(defaults.motors().front_left().pwm() == 2
                     && defaults.motors().front_left().in2() == 3
                     && defaults.motors().front_left().in1() == 4,
@@ -133,6 +146,37 @@ int main() {
             rover_base, R"({"robot":{"gcs_timeout_s":5}})");
     expect(timeout_overlay.robot().gcs_timeout_s() == 5,
            "overlay updates GCS timeout");
+
+    const Config camera_overlay = config_overlay_json(
+            rover_base,
+            R"({"cameras":{"items":[{"id":"front","name":"Front","source":"v4l2","device":"/dev/video2","width":640,"height":480,"fps":30,"rotation_deg":0,"enabled":true}]}})");
+    expect(camera_overlay.cameras().items_size() == 1
+                    && camera_overlay.cameras().items(0).id() == "front"
+                    && camera_overlay.cameras().items(0).source() == "v4l2"
+                    && camera_overlay.cameras().items(0).device() == "/dev/video2"
+                    && camera_overlay.cameras().items(0).fps() == 30
+                    && camera_overlay.cameras().items(0).rotation_deg() == 0,
+           "camera overlay reads configured V4L2 input");
+
+    bool bad_camera_source_threw = false;
+    try {
+        config_from_json(
+                R"({"cameras":{"items":[{"id":"cam0","source":"firewire"}]}})");
+    } catch (const ConfigError &) {
+        bad_camera_source_threw = true;
+    }
+    expect(bad_camera_source_threw,
+           "unknown camera source throws ConfigError");
+
+    bool bad_camera_rotation_threw = false;
+    try {
+        config_from_json(
+                R"({"cameras":{"items":[{"id":"cam0","rotation_deg":90}]}})");
+    } catch (const ConfigError &) {
+        bad_camera_rotation_threw = true;
+    }
+    expect(bad_camera_rotation_threw,
+           "camera rotation rejects unsupported 90 degrees");
     expect(config_from_json(R"({"robot":{"gcs_timeout_s":2}})")
                    .robot().gcs_timeout_s() == 2,
            "GCS timeout accepts lower boundary");
@@ -157,6 +201,32 @@ int main() {
     }
     expect(long_gcs_timeout_threw,
            "GCS timeout above sixty seconds throws ConfigError");
+
+    expect(config_from_json(R"({"robot":{"turn_gain_min":0}})")
+                   .robot().turn_gain_min() == 0.0,
+           "turn gain accepts zero");
+    expect(config_from_json(R"({"robot":{"turn_gain_min":1}})")
+                   .robot().turn_gain_min() == 1.0,
+           "turn gain accepts one");
+    bool high_turn_gain_threw = false;
+    try {
+        config_from_json(R"({"robot":{"turn_gain_min":1.1}})");
+    } catch (const ConfigError &) {
+        high_turn_gain_threw = true;
+    }
+    expect(high_turn_gain_threw,
+           "turn gain above one throws ConfigError");
+    expect(config_from_json(R"({"media":{"retain_hours":1}})")
+                   .media().retain_hours() == 1,
+           "media retain accepts one hour");
+    bool long_retain_threw = false;
+    try {
+        config_from_json(R"({"media":{"retain_hours":169}})");
+    } catch (const ConfigError &) {
+        long_retain_threw = true;
+    }
+    expect(long_retain_threw,
+           "media retain above one week throws ConfigError");
 
     bool from_text_threw = false;
     try {

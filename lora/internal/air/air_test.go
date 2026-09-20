@@ -103,6 +103,20 @@ func TestHeartbeatRequestRoundTrip(t *testing.T) {
 
 // ================================================================================
 
+func TestCameraAPIIsNotSupportedOverAir(t *testing.T) {
+	if _, err := HTTPToAir("GET", "/api/cameras", nil); err == nil {
+		t.Fatal("camera API unexpectedly mapped onto LoRa")
+	}
+	if _, err := HTTPToAir("GET", "/api/recordings", nil); err == nil {
+		t.Fatal("recordings API unexpectedly mapped onto LoRa")
+	}
+	if _, err := HTTPToAir("POST", "/api/snapshots", nil); err == nil {
+		t.Fatal("snapshot API unexpectedly mapped onto LoRa")
+	}
+}
+
+// ================================================================================
+
 func TestDeriveKey(t *testing.T) {
 	if KeyOK("") == false {
 		t.Fatal("empty ok")
