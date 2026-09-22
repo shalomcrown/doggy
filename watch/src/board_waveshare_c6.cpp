@@ -36,6 +36,7 @@ inline constexpr int kTouchInterrupt = 15;
 inline constexpr int kTouchReset = 10;
 inline constexpr uint8_t kTouchAddress = 0x38;
 inline constexpr uint8_t kTouchPointsRegister = 0x02;
+inline constexpr uint32_t kI2cFrequency = 400000;
 inline constexpr uint8_t kImuAddress = 0x6B;
 inline constexpr int kImuInt1 = 16;
 inline constexpr uint8_t kImuWakeThresholdMg = 250;
@@ -68,6 +69,7 @@ XPowersPMU power;
 SensorPCF85063 rtc;
 SensorQMI8658 imu;
 bool board_ready = false;
+bool shared_i2c_ready = false;
 bool pmu_ready = false;
 bool rtc_ready = false;
 bool imu_ready = false;
@@ -83,6 +85,9 @@ static uint32_t watch_millis() {
 // ================================================================================
 
 static bool touch_read(uint16_t &x, uint16_t &y) {
+    if (shared_i2c_ready == false) {
+        return false;
+    }
     Wire.beginTransmission(kTouchAddress);
     Wire.write(kTouchPointsRegister);
     if (Wire.endTransmission(false) != 0) {
@@ -158,8 +163,13 @@ bool watch_board_begin() {
     digitalWrite(kTouchReset, HIGH);
     delay(200);
     pinMode(kTouchInterrupt, INPUT_PULLUP);
-    Wire.begin(kTouchSda, kTouchScl);
-    Wire.setClock(400000);
+    shared_i2c_ready = Wire.begin(
+            kTouchSda,
+            kTouchScl,
+            kI2cFrequency);
+    if (shared_i2c_ready == false) {
+        Serial.println("I2C initialization failed");
+    }
 
     pmu_ready = power.begin(
             Wire,
@@ -256,7 +266,9 @@ void watch_board_service() {
 // ================================================================================
 
 bool watch_board_battery(int &percent, bool &charging) {
-    if (pmu_ready == false || power.isBatteryConnect() == false) {
+    if (shared_i2c_ready == false
+            || pmu_ready == false
+            || power.isBatteryConnect() == false) {
         return false;
     }
     const int reading = power.getBatteryPercent();
@@ -277,13 +289,14 @@ int watch_board_safe_inset() {
 // ================================================================================
 
 bool watch_board_has_rtc() {
-    return rtc_ready;
+    return shared_i2c_ready && rtc_ready;
 }
 
 // ================================================================================
 
 bool watch_board_rtc_read(std::time_t &utc) {
-    if (rtc_ready == false
+    if (shared_i2c_ready == false
+            || rtc_ready == false
             || rtc.isClockIntegrityGuaranteed() == false) {
         return false;
     }
@@ -299,7 +312,9 @@ bool watch_board_rtc_read(std::time_t &utc) {
 // ================================================================================
 
 bool watch_board_rtc_write(std::time_t utc) {
-    if (rtc_ready == false || utc < kWatchMinimumValidTime) {
+    if (shared_i2c_ready == false
+            || rtc_ready == false
+            || utc < kWatchMinimumValidTime) {
         return false;
     }
     std::tm broken_down{};
@@ -374,7 +389,21 @@ void watch_board_sleep() {
         }
         esp_sleep_enable_gpio_wakeup();
 
+        // Arduino-ESP32 documents end()/begin() as the supported way to release
+        // and restore Wire. Cycling it avoids retaining an IDF device handle
+        // that the C6 can reject after light sleep with ESP_ERR_INVALID_STATE.
+        if (Wire.end() == false) {
+            Serial.println("I2C shutdown before sleep failed");
+        }
+        shared_i2c_ready = false;
         esp_light_sleep_start();
+        shared_i2c_ready = Wire.begin(
+                kTouchSda,
+                kTouchScl,
+                kI2cFrequency);
+        if (shared_i2c_ready == false) {
+            Serial.println("I2C recovery after wake failed");
+        }
 
         // Names the pin that ended the sleep. A zero mask means something other
         // than these two lines woke the watch.
@@ -390,7 +419,7 @@ void watch_board_sleep() {
             gpio_wakeup_disable(static_cast<gpio_num_t>(kImuInt1));
         }
     }
-    if (imu_ready) {
+    if (shared_i2c_ready && imu_ready) {
         imu.getStatusRegister();
     }
     if (board_ready) {

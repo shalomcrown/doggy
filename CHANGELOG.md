@@ -28,6 +28,12 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 - `robot.turn_gain_min` (default 0.25) so low-speed steering is less twitchy while full-speed turns stay authoritative.
 
 ### Fixed
+- Watch time no longer accumulates ESP sleep-clock drift while the panel is
+  asleep. Both boards now restore system UTC from their PCF85063 immediately
+  after wake and before restarting Wi-Fi.
+- The Waveshare C6 now releases and restores its shared Arduino `Wire`
+  controller around light sleep, preventing post-wake
+  `ESP_ERR_INVALID_STATE` errors from RTC, IMU, touch, and battery reads.
 - Flashing a watch over USB no longer fails most of the time. An idle watch used
   to enter light sleep, which stops clocking the USB-Serial/JTAG peripheral while
   the host keeps the port enumerated, so the port was visible but answered

@@ -110,6 +110,34 @@ else
     fail "C6 reports which GPIO ended the sleep"
 fi
 
+# Arduino-ESP32's I2C master can return ESP_ERR_INVALID_STATE after C6 light
+# sleep. Release only for real sleep, then restore the shared bus before the
+# first post-wake IMU access.
+SLEEP_BODY="$(awk '/^void watch_board_sleep\(\)/,/^}/' "$BOARD")"
+WAIT_BODY="$(awk '/^static bool wait_for_wake_line\(\)/,/^}/' "$BOARD")"
+REAL_SLEEP_LINE="$(grep -n 'if (woke == false)' <<<"$SLEEP_BODY" \
+        | cut -d: -f1)"
+WIRE_END_LINE="$(grep -n 'Wire.end()' <<<"$SLEEP_BODY" | cut -d: -f1)"
+LIGHT_SLEEP_LINE="$(grep -n 'esp_light_sleep_start()' <<<"$SLEEP_BODY" \
+        | cut -d: -f1)"
+WIRE_BEGIN_LINE="$(grep -n 'kI2cFrequency' <<<"$SLEEP_BODY" | cut -d: -f1)"
+POST_WAKE_IMU_LINE="$(grep -n 'imu.getStatusRegister()' <<<"$SLEEP_BODY" \
+        | cut -d: -f1 | tail -n 1)"
+if [ -n "$WIRE_END_LINE" ] \
+        && [ -n "$REAL_SLEEP_LINE" ] \
+        && [ -n "$LIGHT_SLEEP_LINE" ] \
+        && [ -n "$WIRE_BEGIN_LINE" ] \
+        && [ -n "$POST_WAKE_IMU_LINE" ] \
+        && [ "$REAL_SLEEP_LINE" -lt "$WIRE_END_LINE" ] \
+        && [ "$WIRE_END_LINE" -lt "$LIGHT_SLEEP_LINE" ] \
+        && [ "$LIGHT_SLEEP_LINE" -lt "$WIRE_BEGIN_LINE" ] \
+        && [ "$WIRE_BEGIN_LINE" -lt "$POST_WAKE_IMU_LINE" ] \
+        && [ -z "$(grep 'Wire\.' <<<"$WAIT_BODY")" ]; then
+    pass "C6 recovers I2C before the first post-wake transaction"
+else
+    fail "C6 recovers I2C before the first post-wake transaction"
+fi
+
 if grep -A20 '^\[env:waveshare-c6\]' "$INI" | grep -q 'XPowersLib' \
         && grep -A20 '^\[env:waveshare-c6\]' "$INI" | grep -q 'SensorLib' \
         && grep -A20 '^\[env:waveshare-c6\]' "$INI" | grep -q 'XPOWERS_CHIP_AXP2101'; then

@@ -78,6 +78,29 @@ else
     fail "provisioning holds the radio through sleep"
 fi
 
+# The ESP sleep clock can drift by seconds per hour. Re-anchor it from the
+# battery-backed calendar before radio startup can delay the visible correction.
+RESUME_BODY="$(awk '/^void watch_network_resume\(\)/,/^}/' "$NETWORK")"
+RESTORE_BODY="$(awk '/^static void restore_clock_from_rtc\(\)/,/^}/' "$NETWORK")"
+RESTORE_LINE="$(grep -n 'restore_clock_from_rtc' <<<"$RESUME_BODY" \
+        | cut -d: -f1)"
+WIFI_LINE="$(grep -n 'WiFi.mode(WIFI_STA)' <<<"$RESUME_BODY" \
+        | cut -d: -f1)"
+RESTORE_HAS_GUARD=false
+if grep -q 'kWatchMinimumValidTime\|std::time(' <<<"$RESTORE_BODY"; then
+    RESTORE_HAS_GUARD=true
+fi
+if [ -n "$RESTORE_LINE" ] \
+        && [ -n "$WIFI_LINE" ] \
+        && [ "$RESTORE_LINE" -lt "$WIFI_LINE" ] \
+        && grep -q 'watch_board_rtc_read' <<<"$RESTORE_BODY" \
+        && grep -q 'settimeofday' <<<"$RESTORE_BODY" \
+        && [ "$RESTORE_HAS_GUARD" = false ]; then
+    pass "wake restores RTC time before restarting Wi-Fi"
+else
+    fail "wake restores RTC time before restarting Wi-Fi"
+fi
+
 if [ "$FAILS" -ne 0 ]; then
     printf '%d test(s) failed\n' "$FAILS" >&2
     exit 1

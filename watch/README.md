@@ -113,13 +113,18 @@ The timeout is set on the settings page — 15 s, 30 s, 1 min, 2 min, 5 min, or
 reconnects without ESP-Touch. Sleep is held off entirely while ESP-Touch is
 listening, since the phone needs both the screen and the radio up.
 
-The T-Watch S3 has a PCF8563 calendar chip; the Waveshare C6 has a PCF85063 on
-the same I2C bus as touch, the AXP2101, and the IMU (SDA GPIO8, SCL GPIO7).
-Every NTP sync is copied to the board's chip, and a cold boot seeds the clock
-from it, so both watches can show a real time before Wi-Fi comes up. The chip
+Both watches have a PCF85063 calendar chip. On the Waveshare C6 it shares I2C
+with touch, the AXP2101, and the IMU (SDA GPIO8, SCL GPIO7). Every NTP sync is
+copied to the board's chip, a cold boot seeds the clock from it, and every wake
+re-anchors the ESP system clock from it before Wi-Fi restarts. This avoids the
+ESP sleep clock accumulating seconds of error during a long sleep. The chip
 holds UTC regardless of the configured offset. The calendar write happens in
 `loop()` rather than in the SNTP callback because the chip shares that bus with
 the power gauge the UI polls.
+
+The C6 releases Arduino `Wire` immediately before real light sleep and restores
+it at 400 kHz immediately after wake. This prevents the first post-wake shared
+bus transaction from reaching an inactive ESP-IDF I2C driver.
 
 `timegm` is missing from the ESP32 C library and `mktime` would fold in the
 local zone, so `watch_utc_time_from_civil()` in `time_offset.cpp` does the
@@ -193,7 +198,10 @@ Hardware is not available to CI. Before relying on a build:
    and a touch must bring it back on the clock page with the screen fully
    redrawn. On the S3, also confirm a wrist raise wakes it and that walking does
    not. On the C6, a firm wrist flick should wake it via the QMI8658; walking
-   may also wake it.
+   may also wake it. After a one-hour sleep, compare the displayed time with a
+   synchronized clock; it should be within the PCF85063's one-second display
+   resolution. The C6 serial log must not contain post-wake
+   `ESP_ERR_INVALID_STATE` I2C errors.
 8. Set the timeout to **Never** and confirm the watch stays on.
 9. Move a roller, then leave the page three ways — Cancel, swipe, and letting it
    sleep — and confirm the stored offset never moved. Then move it again and
@@ -203,7 +211,7 @@ Hardware is not available to CI. Before relying on a build:
     tried first.
 11. Let NTP sync, then power the watch down completely and boot it with Wi-Fi
     unavailable — the clock must come up on RTC time rather than the waiting
-    state (PCF8563 on the S3, PCF85063 on the C6).
+    state (PCF85063 on both boards).
 
 Host CTest always covers UTC-offset math and `build-watch.sh`. Firmware compile
 is opt-in (`DOGGY_TEST_WATCH_FIRMWARE=1 ctest --preset native-debug -R watch-`)

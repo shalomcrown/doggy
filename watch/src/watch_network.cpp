@@ -149,12 +149,9 @@ static void advance_attempt() {
 
 // ================================================================================
 
-// The calendar chip carries the watch across a power cycle, so the clock page has
-// a time to show before NTP answers.
-static void seed_clock_from_rtc() {
-    if (std::time(nullptr) >= kWatchMinimumValidTime) {
-        return;
-    }
+// The calendar chip is more stable than the ESP's sleep clock, so this is used
+// after every wake as well as to carry UTC across a power cycle.
+static void restore_clock_from_rtc() {
     std::time_t stored = 0;
     if (watch_board_rtc_read(stored) == false) {
         return;
@@ -167,7 +164,9 @@ static void seed_clock_from_rtc() {
 // ================================================================================
 
 void watch_network_begin() {
-    seed_clock_from_rtc();
+    if (std::time(nullptr) < kWatchMinimumValidTime) {
+        restore_clock_from_rtc();
+    }
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
     WiFi.onEvent(provisioning_event, ARDUINO_EVENT_SC_GOT_SSID_PSWD);
@@ -264,6 +263,7 @@ void watch_network_resume() {
     if (radio_suspended == false) {
         return;
     }
+    restore_clock_from_rtc();
     radio_suspended = false;
     WiFi.mode(WIFI_STA);
     attempt_index = 0;
