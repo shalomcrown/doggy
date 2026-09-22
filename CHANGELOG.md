@@ -12,6 +12,15 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 > Work merged but not yet shipped. Move entries to a versioned section on release.
 
 ### Added
+- Dual-board PlatformIO watch project for LilyGO T-Watch S3 and Waveshare
+  ESP32-C6 Touch AMOLED 2.06. The first slice uses shared LVGL 9 screens,
+  ESP-Touch v2 Wi-Fi provisioning, NTP, and an NVS-backed fixed UTC offset
+  selected on the watch. `build-watch.sh` builds either or both boards without
+  adding ESP32 toolchains to the normal Pi package build. Native/cross
+  `install-prereqs.sh` installs PlatformIO Core >= 6.2.0 with `pipx` because
+  Debian/Ubuntu apt still ships an incompatible 4.x package.
+  `./install-watch-s3.sh` and `./install-watch-c6.sh` build and USB-flash
+  each board.
 - Always-on MPEG-TS camera recording (hourly MediaMTX segments), JPEG snapshots, list/download APIs, and hourly retention from `media.retain_hours` (default 24). File names are `<hostname>-<camera id>-YYYY-MM-DD-HHMMSS.{ts,jpg}`.
 - `robot.turn_gain_min` (default 0.25) so low-speed steering is less twitchy while full-speed turns stay authoritative.
 
@@ -25,7 +34,56 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 - **Breaking behavior:** one-shot rover drive and individual-motor commands no longer run indefinitely. API clients must call `POST /api/heartbeat` or reissue motion inside `robot.gcs_timeout_s`; telemetry status reads do not count as liveness.
 - Rover Stop/Brake (and per-motor Coast/Brake) zero the on-page speed sliders after the existing command; `POST /api/stop` and `POST /api/brake` report commanded `speed`/`turn` as 0.
 
+### Added
+- The watch sleeps to save battery. After a minute without a touch it blanks the
+  panel, drops the Wi-Fi radio, and halts the CPU; touching the screen wakes it,
+  and the T-Watch S3 also wakes on a wrist raise. The timeout is configurable on
+  the watch (15 s, 30 s, 1 min, 2 min, 5 min, or Never). Sleep is held off while
+  ESP-Touch is listening, since pairing needs both the screen and the radio.
+- The watch remembers its last five Wi-Fi networks and retries them newest
+  first on boot and after every wake, so it reconnects without a phone. Only
+  when all of them fail does it fall back to ESP-Touch v2. **Pair Wi-Fi** in
+  settings starts ESP-Touch immediately instead of waiting the roster out. The
+  roster lives in unencrypted NVS, the same exposure the ESP32 Wi-Fi stack's own
+  stored credentials already carry.
+- The T-Watch S3 keeps time across a power cycle using its PCF8563 calendar
+  chip. Every NTP sync is copied to it and a cold boot seeds the clock from it,
+  so the watch shows a real time before Wi-Fi comes up. The Waveshare C6 has no
+  such chip and still waits for NTP.
+
+### Changed
+- The watch settings page scrolls and no longer saves as you touch it. Moving a
+  roller edits a draft that reaches storage only on **Save**; **Cancel**,
+  **< Clock**, swiping back, and falling asleep all discard it, so a pocket
+  touch cannot quietly change the clock.
+- The watch clock page is now white on black, with a status bar showing the
+  joined Wi-Fi SSID, battery symbol and percentage, and a four-bar signal meter.
+  The date includes the weekday, and a new line reports
+  `Time synchronized HH:MM:SS ago` measured from the SNTP sync callback. The
+  T-Watch S3 reads its AXP2101 gauge; the Waveshare C6 shows `--` until its
+  battery path is confirmed.
+
 ### Fixed
+- The watch clock page no longer reports the same sync twice. The network
+  status line said `Time synchronized` while the line below it already read
+  `Time synchronized HH:MM:SS ago`. The status line now describes only the
+  network path and goes blank once the clock is good, so a later Wi-Fi drop
+  still shows `Connecting to Wi-Fi` while the elapsed time keeps counting.
+- The Waveshare C6 status bar is visible again. The bar was pinned to the top
+  edge across the full panel width, and that panel is a rounded rectangle, so
+  the SSID, battery, and signal meter sat under the corner mask. Each board now
+  declares how many pixels of every screen edge its panel can hide, and both
+  watch pages inset their content by that much: 48 px on the C6, 0 on the
+  square T-Watch S3 display.
+- ESP-Touch v2 provisioning now completes. `WiFi.beginSmartConfig()` enables
+  ESP-Touch v2 encryption with a NULL key, so the watch ignored every
+  provisioning packet and the phone app never found it. The watch starts
+  SmartConfig through the IDF API with encryption off; leave the app's AES key
+  field empty.
+- Watch USB flash no longer dies after connecting. PlatformIO's pioarduino
+  `esptool` 5.4.0 crashes in the progress bar (`_get_progress_print_file`);
+  both boards pin 5.3.1 until that release is fixed. USB-Serial/JTAG does not
+  need a BOOT-button sequence.
 - Releasing the joystick now actually stops the rover. The status poll could write the still-moving speed/turn back into the sliders in the gap between centering the stick and the debounced `POST /api/drive`, so the rover kept turning in place. Drive commands are now posted with the values captured when they were queued, the poll leaves the sliders alone while a command is pending, and releasing the stick sends the stop immediately instead of one debounce later. Losing pointer capture, releasing the button off the pad, hiding the tab, or leaving the window all spring the stick back too.
 - A rejected **Save** on the configuration page now says why. `PUT /api/config` adds an optional `message` to the error body naming the offending field (for example `config lora.txch out of range`), both pages show it instead of a bare "Save failed", and failed API calls are logged with their JSON error body instead of only the status code. Config-write failures still return a generic message because the reason contains the config file path — that reason goes to the log.
 

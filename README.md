@@ -12,6 +12,8 @@ Run the installer once before building. First-class hosts: **Debian / Raspberry 
 ./install-prereqs.sh --mode cross            # Ubuntu aarch64 cross toolchain
 ./install-prereqs.sh --mode all              # native + cross
 ./install-prereqs.sh --mode windows        # nsis + nsis-common + go (Windows operator installer)
+# Native and cross modes also install pipx and PlatformIO Core >= 6.2.0
+# for ./build-watch.sh (Debian/Ubuntu apt PlatformIO is too old).
 ./install-prereqs.sh --dry-run               # preview without making changes
 ```
 
@@ -99,6 +101,23 @@ Logs go to `/var/log/doggy/doggy.log` (override with `DOGGY_LOG_DIR`). The file 
 cmake --preset native-release
 cmake --build --preset native-release --target package
 ```
+
+## Watch firmware
+
+`watch/` is a separate PlatformIO project for the LilyGO T-Watch S3 and
+Waveshare ESP32-C6 Touch AMOLED 2.06. It is not packaged in the Pi DEB.
+
+```sh
+./build-watch.sh all
+./install-watch-s3.sh                 # flash LilyGO T-Watch S3
+./install-watch-c6.sh                 # flash Waveshare ESP32-C6
+```
+
+The first slice provides an LVGL clock, ESP-Touch v2 Wi-Fi provisioning, NTP,
+and a swipe-accessible fixed UTC-offset settings page (default UTC+3:00). See
+`watch/README.md` for flashing and hardware verification. Flash is pinned to
+esptool 5.3.1 (5.4.0 crashes mid-upload). Rover control and watch LoRa are
+deferred.
 
 The script copies the `.deb` to `/tmp` over SSH and runs `sudo apt-get install`. Copy and install share one SSH connection (ControlMaster), so the login password is asked once; `sudo` may still ask once if the account is not passwordless. The package creates system user `doggy` if needed, enables I2C in `/boot/firmware/config.txt` when missing, and may ask you to reboot. It then enables and **restarts** `doggy.service` and `doggy-lora.service` (`User=doggy`, I2C via the `i2c` group, USB serial via `dialout`) before any reboot prompt. An upgrade does not stop the unit in `prerm`, so a failed `postinst` cannot leave the dog down.
 
@@ -195,6 +214,7 @@ CMakeLists.txt                firmware, sidecar, generated models, tests, instal
 CMakePresets.json             native, cross, Linux operator, Windows operator
 build.sh / build-operator.sh  firmware and laptop package entry points
 install.sh                    newest firmware-DEB remote installer
+install-watch-s3.sh / -c6.sh  USB flash for each watch board
 ```
 
 CMake stays at the repository root. Generated files belong under `build/` or

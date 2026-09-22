@@ -76,6 +76,7 @@ CMakeLists.txt.user*
 /build/
 /cmake-build-*/
 compile_commands.json
+/watch/.pio/
 
 
 # Generated protobuf (protoc from proto/doggy.proto)

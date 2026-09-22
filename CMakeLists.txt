@@ -14,6 +14,19 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+add_custom_target(
+    watch-s3
+    COMMAND "${CMAKE_SOURCE_DIR}/build-watch.sh" twatch-s3
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    USES_TERMINAL
+)
+add_custom_target(
+    watch-c6
+    COMMAND "${CMAKE_SOURCE_DIR}/build-watch.sh" waveshare-c6
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    USES_TERMINAL
+)
+
 find_program(GO_EXECUTABLE go)
 if(NOT GO_EXECUTABLE)
     message(FATAL_ERROR "go not found; install golang-go (see ./install-prereqs.sh)")
@@ -495,6 +508,83 @@ add_test(
     COMMAND bash "${CMAKE_SOURCE_DIR}/tests/build-operator-script.test.sh"
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
+
+add_executable(
+    test_watch_time
+    tests/test_watch_time.cpp
+    watch/src/time_offset.cpp
+)
+target_include_directories(
+    test_watch_time
+    PRIVATE "${CMAKE_SOURCE_DIR}/watch/include"
+)
+add_test(NAME watch-time COMMAND test_watch_time)
+
+add_executable(
+    test_watch_status
+    tests/test_watch_status.cpp
+    watch/src/watch_status.cpp
+)
+target_include_directories(
+    test_watch_status
+    PRIVATE "${CMAKE_SOURCE_DIR}/watch/include"
+)
+add_test(NAME watch-status COMMAND test_watch_status)
+
+add_executable(
+    test_watch_sleep
+    tests/test_watch_sleep.cpp
+    watch/src/watch_sleep_policy.cpp
+)
+target_include_directories(
+    test_watch_sleep
+    PRIVATE "${CMAKE_SOURCE_DIR}/watch/include"
+)
+add_test(NAME watch-sleep COMMAND test_watch_sleep)
+
+add_executable(
+    test_watch_wifi_roster
+    tests/test_watch_wifi_roster.cpp
+    watch/src/watch_wifi_roster.cpp
+)
+target_include_directories(
+    test_watch_wifi_roster
+    PRIVATE "${CMAKE_SOURCE_DIR}/watch/include"
+)
+add_test(NAME watch-wifi-roster COMMAND test_watch_wifi_roster)
+
+add_test(
+    NAME build-watch-script
+    COMMAND bash "${CMAKE_SOURCE_DIR}/tests/build-watch-script.test.sh"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
+add_test(
+    NAME install-watch-script
+    COMMAND bash "${CMAKE_SOURCE_DIR}/tests/install-watch-script.test.sh"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
+add_test(
+    NAME watch-provisioning
+    COMMAND bash "${CMAKE_SOURCE_DIR}/tests/watch-provisioning.test.sh"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
+find_program(PLATFORMIO_EXECUTABLE pio)
+if(PLATFORMIO_EXECUTABLE AND DEFINED ENV{DOGGY_TEST_WATCH_FIRMWARE})
+    add_test(
+        NAME watch-s3-build
+        COMMAND "${CMAKE_SOURCE_DIR}/build-watch.sh" twatch-s3
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    add_test(
+        NAME watch-c6-build
+        COMMAND "${CMAKE_SOURCE_DIR}/build-watch.sh" waveshare-c6
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    set_tests_properties(watch-s3-build watch-c6-build PROPERTIES TIMEOUT 900)
+endif()
 
 # ==============================================================================
 

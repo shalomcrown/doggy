@@ -16,7 +16,9 @@
 # aarch64. golang-go is required to build the doggy-lora sidecar (and to
 # cross-compile it with GOARCH=arm64). Laptop operator clients are x86_64:
 # Ubuntu DEB and Windows NSIS (`--mode windows` installs nsis and
-# nsis-common stubs/plugins; no MinGW).
+# nsis-common stubs/plugins; no MinGW). Watch firmware (`./build-watch.sh`)
+# needs PlatformIO Core 6.2.0 or newer; Debian/Ubuntu apt still ships an
+# incompatible 4.x package, so native and cross modes install it with pipx.
 #
 # Usage:
 #   ./install-prereqs.sh [options]
@@ -153,6 +155,9 @@ cross_packages() {
 windows_packages() {
     printf '%s' "ca-certificates cmake ninja-build pkg-config git golang-go protobuf-compiler nsis nsis-common"
 }
+watch_packages() {
+    printf '%s' "python3 python3-venv python3-pip pipx"
+}
 print_plan() {
     printf 'os_id=%s\n' "$OS_ID"
     printf 'os_codename=%s\n' "$OS_CODENAME"
@@ -170,6 +175,8 @@ print_plan() {
     printf 'native_packages=%s\n' "$(native_packages)"
     printf 'cross_packages=%s\n' "$(cross_packages)"
     printf 'windows_packages=%s\n' "$(windows_packages)"
+    printf 'watch_packages=%s\n' "$(watch_packages)"
+    printf 'watch_tool=platformio>=6.2.0 via pipx\n'
     if [ "$OS_KNOWN" -eq 0 ]; then
         printf 'warning=untested distro; continuing best-effort\n'
     fi
@@ -212,6 +219,59 @@ apt_install_best_effort() {
     # shellcheck disable=SC2086
     run $SUDO apt-get install -y $avail \
         || warn "apt-get install failed (best-effort, continuing)"
+}
+platformio_version() {
+    pio --version 2>/dev/null | awk '{print $NF}'
+}
+platformio_version_ok() {
+    local version="$1"
+    [ -n "$version" ] || return 1
+    [ "$(printf '%s\n' 6.2.0 "$version" | sort -V | head -n 1)" = 6.2.0 ]
+}
+ensure_platformio() {
+    local version=""
+    export PATH="${HOME}/.local/bin:${PATH}"
+    step "apt-get install (Python + pipx for PlatformIO)"
+    # shellcheck disable=SC2046
+    apt_install_best_effort $(watch_packages)
+    if command -v pio >/dev/null 2>&1; then
+        version="$(platformio_version)"
+        if platformio_version_ok "$version"; then
+            ok "pio $version ($(command -v pio))"
+            return 0
+        fi
+        warn "pio $version is older than 6.2.0; upgrading with pipx"
+    fi
+    if [ "$DRY_RUN" -eq 1 ]; then
+        printf '%b[DRY-RUN]%b  pipx install --force %s\n' \
+            "$C_YELLOW" "$C_RESET" "'platformio>=6.2.0'"
+        return 0
+    fi
+    if command -v pipx >/dev/null 2>&1; then
+        step "pipx install platformio>=6.2.0"
+        if command -v pio >/dev/null 2>&1; then
+            run pipx upgrade platformio \
+                || run pipx install --force 'platformio>=6.2.0' \
+                || warn "pipx could not upgrade PlatformIO"
+        else
+            run pipx install 'platformio>=6.2.0' \
+                || warn "pipx could not install PlatformIO"
+        fi
+        run pipx ensurepath || true
+    else
+        warn "pipx not found; skip PlatformIO (needed for ./build-watch.sh)"
+    fi
+    hash -r 2>/dev/null || true
+    if command -v pio >/dev/null 2>&1; then
+        version="$(platformio_version)"
+        if platformio_version_ok "$version"; then
+            ok "pio $version ($(command -v pio))"
+            return 0
+        fi
+        fail "pio $version is older than 6.2.0"
+        return 1
+    fi
+    fail "pio (PlatformIO Core >= 6.2.0 required for ./build-watch.sh)"
 }
 verify_commands() {
     local cmd
@@ -266,6 +326,7 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "native" ]; then
     # shellcheck disable=SC2046
     apt_install_best_effort $(native_packages)
     verify_commands cmake ninja g++ pkg-config git go
+    ensure_platformio
     echo
 fi
 # ═════════════════════════════════════════════════════════════════════════════
@@ -280,6 +341,7 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "cross" ]; then
     # shellcheck disable=SC2046
     apt_install_best_effort $(cross_packages)
     verify_commands cmake ninja aarch64-linux-gnu-gcc aarch64-linux-gnu-g++ go protoc
+    ensure_platformio
     echo
 fi
 # ═════════════════════════════════════════════════════════════════════════════
@@ -305,6 +367,10 @@ if [ "$MISSING_COUNT" -eq 0 ]; then
     echo
     info "Then package firmware with:"
     printf '  ./build.sh\n'
+    info "Watch firmware (LilyGO S3 / Waveshare C6):"
+    printf '  ./build-watch.sh all\n'
+    printf '  ./install-watch-s3.sh\n'
+    printf '  ./install-watch-c6.sh\n'
     info "Laptop operator clients (amd64):"
     printf '  ./install-prereqs.sh --mode windows   # once, for NSIS\n'
     printf '  ./build-operator.sh                   # Ubuntu DEB + Windows NSIS\n'

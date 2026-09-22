@@ -82,6 +82,14 @@ for pkg in cmake ninja-build g++ golang-go qtcreator vim git zssh lrzsz i2c-tool
     fi
 done
 
+if grep -q 'watch_packages=.*python3 ' "$TMPDIR/plan-trixie" \
+        && grep -q 'watch_packages=.*pipx' "$TMPDIR/plan-trixie" \
+        && grep -q 'watch_tool=platformio>=6.2.0 via pipx' "$TMPDIR/plan-trixie"; then
+    pass "native plan installs PlatformIO with pipx"
+else
+    fail "native plan installs PlatformIO with pipx"
+fi
+
 for pkg in libi2c-dev libdlib-dev zlib1g-dev; do
     if grep -q "native_packages=.*${pkg}" "$TMPDIR/plan-trixie"; then
         fail "native plan does not include $pkg"
@@ -170,6 +178,13 @@ else
     fail "cross plan includes g++-aarch64-linux-gnu"
 fi
 
+if grep -q 'watch_packages=.*pipx' "$TMPDIR/plan-cross" \
+        && grep -q 'watch_tool=platformio>=6.2.0 via pipx' "$TMPDIR/plan-cross"; then
+    pass "cross plan installs PlatformIO with pipx"
+else
+    fail "cross plan installs PlatformIO with pipx"
+fi
+
 if grep -q 'golang-go' "$TMPDIR/plan-cross"; then
     pass "cross plan includes golang-go"
 else
@@ -203,6 +218,14 @@ if grep -q 'windows_packages=.*nsis-common' "$TMPDIR/plan-windows" \
     pass "--mode windows plans nsis and nsis-common without mingw"
 else
     fail "--mode windows plans nsis and nsis-common without mingw"
+fi
+
+if grep -q 'ensure_platformio' "$SCRIPT" \
+        && grep -q "pipx install 'platformio>=6.2.0'" "$SCRIPT" \
+        && grep -q 'python3-venv' "$SCRIPT"; then
+    pass "watch prereqs install PlatformIO 6.2+ with pipx"
+else
+    fail "watch prereqs install PlatformIO 6.2+ with pipx"
 fi
 
 if grep -q 'verify_nsis_extras' "$SCRIPT" \
