@@ -571,6 +571,12 @@ add_test(
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+add_test(
+    NAME watch-c6-peripherals
+    COMMAND bash "${CMAKE_SOURCE_DIR}/tests/watch-c6-peripherals.test.sh"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
 find_program(PLATFORMIO_EXECUTABLE pio)
 if(PLATFORMIO_EXECUTABLE AND DEFINED ENV{DOGGY_TEST_WATCH_FIRMWARE})
     add_test(

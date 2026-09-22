@@ -5,6 +5,7 @@
 WATCH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WATCH_DRY_RUN=0
 WATCH_PORT=""
+WATCH_BY_ID_DIR="${WATCH_BY_ID_DIR:-/dev/serial/by-id}"
 
 # ================================================================================
 
@@ -59,9 +60,39 @@ watch_parse_args() {
 
 # ================================================================================
 
+# /dev/ttyACM numbers are handed out in enumeration order, so with two watches
+# attached the number identifies nothing. Flashing reboots the chip into
+# download mode, which re-enumerates it and can move that number to the other
+# board. The by-id name is built from the chip's own serial number and survives
+# the reboot, so it is what the upload should be pinned to.
+watch_resolve_port() {
+    local -a attached=()
+    local entry
+    for entry in "$WATCH_BY_ID_DIR"/*USB_JTAG*-if00; do
+        [ -e "$entry" ] || continue
+        attached+=("$entry")
+    done
+    if [ "${#attached[@]}" -eq 0 ]; then
+        # Nothing with a JTAG serial name, so a plain USB-UART bridge is still
+        # possible. Leave the port unset and let PlatformIO detect it.
+        return 0
+    fi
+    if [ "${#attached[@]}" -gt 1 ]; then
+        printf '[ERROR] More than one watch is attached:\n' >&2
+        printf '  %s\n' "${attached[@]}" >&2
+        watch_die "Unplug the other watch or name one with --port"
+    fi
+    WATCH_PORT="${attached[0]}"
+}
+
+# ================================================================================
+
 watch_flash() {
     local environment="$1"
     local -a cmd
+    if [ -z "$WATCH_PORT" ]; then
+        watch_resolve_port
+    fi
     cmd=(
         pio run
         --project-dir "$WATCH_ROOT/watch"

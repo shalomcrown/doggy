@@ -2,9 +2,16 @@
 
 #if defined(DOGGY_WATCH_WAVESHARE_C6)
 
+#include "time_offset.h"
+#include "watch_sleep_policy.h"
+
 #include <Arduino.h>
 #include <Arduino_GFX_Library.h>
+#include <HWCDC.h>
+#include <SensorPCF85063.hpp>
+#include <SensorQMI8658.hpp>
 #include <Wire.h>
+#include <XPowersLib.h>
 #include <driver/gpio.h>
 #include <esp_sleep.h>
 #include <lvgl.h>
@@ -29,6 +36,10 @@ inline constexpr int kTouchInterrupt = 15;
 inline constexpr int kTouchReset = 10;
 inline constexpr uint8_t kTouchAddress = 0x38;
 inline constexpr uint8_t kTouchPointsRegister = 0x02;
+inline constexpr uint8_t kImuAddress = 0x6B;
+inline constexpr int kImuInt1 = 16;
+inline constexpr uint8_t kImuWakeThresholdMg = 250;
+inline constexpr int kWakePollMs = 50;
 inline constexpr std::size_t kDrawBufferLines = 20;
 // The panel is a rounded rectangle, so a corner of radius R hides everything
 // closer to the edge than R * (1 - 1 / sqrt(2)). 48 clears R up to about 160.
@@ -53,7 +64,13 @@ Arduino_GFX *graphics = new Arduino_CO5300(
         0);
 lv_display_t *display = nullptr;
 uint8_t *draw_buffer = nullptr;
+XPowersPMU power;
+SensorPCF85063 rtc;
+SensorQMI8658 imu;
 bool board_ready = false;
+bool pmu_ready = false;
+bool rtc_ready = false;
+bool imu_ready = false;
 
 }
 
@@ -144,6 +161,41 @@ bool watch_board_begin() {
     Wire.begin(kTouchSda, kTouchScl);
     Wire.setClock(400000);
 
+    pmu_ready = power.begin(
+            Wire,
+            AXP2101_SLAVE_ADDRESS,
+            kTouchSda,
+            kTouchScl);
+    if (pmu_ready) {
+        // Measurement only — do not retune DCDC/LDO maps; the panel already
+        // runs on the vendor default rails.
+        power.enableBattDetection();
+        power.enableBattVoltageMeasure();
+        power.enableSystemVoltageMeasure();
+    } else {
+        Serial.println("AXP2101 initialization failed");
+    }
+
+    rtc_ready = rtc.begin(Wire, kTouchSda, kTouchScl);
+    if (rtc_ready == false) {
+        Serial.println("PCF85063 initialization failed");
+    }
+
+    imu_ready = imu.begin(Wire, kImuAddress, kTouchSda, kTouchScl);
+    if (imu_ready) {
+        pinMode(kImuInt1, INPUT_PULLUP);
+        // 250 mg is a high WoM bar so a desk bump is less likely to wake the
+        // watch; walking still can, unlike the S3 tilt gesture.
+        imu_ready = imu.configWakeOnMotion(
+                kImuWakeThresholdMg,
+                SensorQMI8658::ACC_ODR_LOWPOWER_128Hz,
+                SensorQMI8658::INTERRUPT_PIN_1,
+                1) == 0;
+    }
+    if (imu_ready == false) {
+        Serial.println("QMI8658 initialization failed");
+    }
+
     if (graphics == nullptr || graphics->begin() == false) {
         Serial.println("Display initialization failed");
         return false;
@@ -203,10 +255,17 @@ void watch_board_service() {
 
 // ================================================================================
 
-// TODO: this board's battery sits behind an undocumented gauge; the UI shows the
-// unknown symbol until the charger/ADC path is confirmed against the schematic.
-bool watch_board_battery(int &, bool &) {
-    return false;
+bool watch_board_battery(int &percent, bool &charging) {
+    if (pmu_ready == false || power.isBatteryConnect() == false) {
+        return false;
+    }
+    const int reading = power.getBatteryPercent();
+    if (reading < 0) {
+        return false;
+    }
+    percent = reading;
+    charging = power.isCharging();
+    return true;
 }
 
 // ================================================================================
@@ -217,40 +276,123 @@ int watch_board_safe_inset() {
 
 // ================================================================================
 
-// This board has no battery-backed calendar chip, so the time comes from NTP on
-// every boot.
 bool watch_board_has_rtc() {
+    return rtc_ready;
+}
+
+// ================================================================================
+
+bool watch_board_rtc_read(std::time_t &utc) {
+    if (rtc_ready == false
+            || rtc.isClockIntegrityGuaranteed() == false) {
+        return false;
+    }
+    const std::tm stored = rtc.getDateTime().toUnixTime();
+    const std::time_t stamp = watch_utc_time_from_civil(stored);
+    if (stamp < kWatchMinimumValidTime) {
+        return false;
+    }
+    utc = stamp;
+    return true;
+}
+
+// ================================================================================
+
+bool watch_board_rtc_write(std::time_t utc) {
+    if (rtc_ready == false || utc < kWatchMinimumValidTime) {
+        return false;
+    }
+    std::tm broken_down{};
+    gmtime_r(&utc, &broken_down);
+    rtc.setDateTime(RTC_DateTime(broken_down));
+    return true;
+}
+
+// ================================================================================
+
+// Polls the same two wake lines light sleep would have armed. Returns false if
+// the host leaves the bus first, so the caller can fall back to real sleep
+// instead of burning battery in this loop.
+static bool wait_for_wake_line() {
+    const int imu_level = imu_ready ? digitalRead(kImuInt1) : HIGH;
+    while (HWCDC::isPlugged()) {
+        if (digitalRead(kTouchInterrupt) == LOW) {
+            return true;
+        }
+        if (imu_ready && digitalRead(kImuInt1) != imu_level) {
+            return true;
+        }
+        delay(kWakePollMs);
+    }
     return false;
 }
 
 // ================================================================================
 
-bool watch_board_rtc_read(std::time_t &) {
-    return false;
-}
-
-// ================================================================================
-
-bool watch_board_rtc_write(std::time_t) {
-    return false;
-}
-
-// ================================================================================
-
-// The touch controller pulls its interrupt line low on contact, and the board
-// carries no motion sensor, so touch is the only way back out of sleep.
+// Touch pulls INT low on contact, so that line has a real polarity. The QMI8658
+// wake-on-motion line does not: it toggles on every event, which is why
+// SensorLib's own example watches it for CHANGE rather than for a level.
 void watch_board_sleep() {
+    // Reading STATUS1 clears the motion event behind the last toggle. The pin
+    // level is whatever that toggle left, which is why it is sampled below
+    // rather than assumed.
+    if (imu_ready) {
+        imu.getStatusRegister();
+    }
+    if (watch_active_low_wake_armable(digitalRead(kTouchInterrupt) == HIGH) == false
+            && imu_ready == false) {
+        // Sleeping with no wake source would blank a watch nothing can bring
+        // back, and sleeping with an already-asserted line just flashes the
+        // panel. Stay awake and try again on the next idle deadline.
+        return;
+    }
+
     if (board_ready) {
         graphics->displayOff();
     }
-    gpio_wakeup_enable(
-            static_cast<gpio_num_t>(kTouchInterrupt),
-            GPIO_INTR_LOW_LEVEL);
-    esp_sleep_enable_gpio_wakeup();
 
-    esp_light_sleep_start();
+    bool woke = false;
+    if (watch_sleep_uses_light_sleep(HWCDC::isPlugged()) == false) {
+        woke = wait_for_wake_line();
+    }
+    if (woke == false) {
+        const bool touch_armable = watch_active_low_wake_armable(
+                digitalRead(kTouchInterrupt) == HIGH);
+        if (touch_armable) {
+            gpio_wakeup_enable(
+                    static_cast<gpio_num_t>(kTouchInterrupt),
+                    GPIO_INTR_LOW_LEVEL);
+        }
+        if (imu_ready) {
+            const WatchWakeLevel level = watch_toggling_wake_level(
+                    digitalRead(kImuInt1) == HIGH);
+            gpio_wakeup_enable(
+                    static_cast<gpio_num_t>(kImuInt1),
+                    level == kWatchWakeLevelHigh
+                            ? GPIO_INTR_HIGH_LEVEL
+                            : GPIO_INTR_LOW_LEVEL);
+        }
+        esp_sleep_enable_gpio_wakeup();
 
-    gpio_wakeup_disable(static_cast<gpio_num_t>(kTouchInterrupt));
+        esp_light_sleep_start();
+
+        // Names the pin that ended the sleep. A zero mask means something other
+        // than these two lines woke the watch.
+        Serial.printf(
+                "watch: wake gpio mask 0x%llx\n",
+                static_cast<unsigned long long>(
+                        esp_sleep_get_gpio_wakeup_status()));
+
+        if (touch_armable) {
+            gpio_wakeup_disable(static_cast<gpio_num_t>(kTouchInterrupt));
+        }
+        if (imu_ready) {
+            gpio_wakeup_disable(static_cast<gpio_num_t>(kImuInt1));
+        }
+    }
+    if (imu_ready) {
+        imu.getStatusRegister();
+    }
     if (board_ready) {
         graphics->displayOn();
     }

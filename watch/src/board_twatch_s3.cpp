@@ -3,10 +3,12 @@
 #if defined(DOGGY_WATCH_TWATCH_S3)
 
 #include "time_offset.h"
+#include "watch_sleep_policy.h"
 
 #include <Arduino.h>
 #include <LV_Helper.h>
 #include <LilyGoLib.h>
+#include <USB.h>
 #include <driver/gpio.h>
 #include <esp_sleep.h>
 #include <lvgl.h>
@@ -17,6 +19,7 @@ namespace {
 // needs level triggers instead, so the pins are put back afterwards.
 inline constexpr gpio_int_type_t kTouchAwakeTrigger = GPIO_INTR_NEGEDGE;
 inline constexpr gpio_int_type_t kSensorAwakeTrigger = GPIO_INTR_POSEDGE;
+inline constexpr int kWakePollMs = 50;
 
 }
 
@@ -101,6 +104,24 @@ bool watch_board_rtc_write(std::time_t utc) {
 
 // ================================================================================
 
+// Polls the same wake lines light sleep would have armed. Returns false if the
+// host leaves the bus first, so the caller can fall back to real sleep instead
+// of burning battery in this loop.
+static bool wait_for_wake_line(bool sensor_online) {
+    while (static_cast<bool>(USB)) {
+        if (digitalRead(TP_INT) == LOW) {
+            return true;
+        }
+        if (sensor_online && digitalRead(SENSOR_INT) == HIGH) {
+            return true;
+        }
+        delay(kWakePollMs);
+    }
+    return false;
+}
+
+// ================================================================================
+
 // LilyGoLib's own lightSleep() arms every wake pin as active-low, which can
 // never fire for the active-high sensor line, so the wake sources are built
 // here. Level-triggered GPIO wakeup also takes a per-pin polarity, which the
@@ -120,21 +141,33 @@ void watch_board_sleep() {
         instance.sensor.disableWakeupIRQ();
         instance.sensor.enableTiltIRQ();
         instance.sensor.readIrqStatus();
-        gpio_wakeup_enable(
-                static_cast<gpio_num_t>(SENSOR_INT),
-                GPIO_INTR_HIGH_LEVEL);
     }
-    gpio_wakeup_enable(
-            static_cast<gpio_num_t>(TP_INT),
-            GPIO_INTR_LOW_LEVEL);
-    esp_sleep_enable_gpio_wakeup();
 
-    esp_light_sleep_start();
+    bool woke = false;
+    if (watch_sleep_uses_light_sleep(static_cast<bool>(USB)) == false) {
+        woke = wait_for_wake_line(sensor_online);
+    }
+    if (woke == false) {
+        if (sensor_online) {
+            gpio_wakeup_enable(
+                    static_cast<gpio_num_t>(SENSOR_INT),
+                    GPIO_INTR_HIGH_LEVEL);
+        }
+        gpio_wakeup_enable(
+                static_cast<gpio_num_t>(TP_INT),
+                GPIO_INTR_LOW_LEVEL);
+        esp_sleep_enable_gpio_wakeup();
 
-    gpio_wakeup_disable(static_cast<gpio_num_t>(TP_INT));
+        esp_light_sleep_start();
+
+        gpio_wakeup_disable(static_cast<gpio_num_t>(TP_INT));
+        if (sensor_online) {
+            gpio_wakeup_disable(static_cast<gpio_num_t>(SENSOR_INT));
+        }
+    }
+
     gpio_set_intr_type(static_cast<gpio_num_t>(TP_INT), kTouchAwakeTrigger);
     if (sensor_online) {
-        gpio_wakeup_disable(static_cast<gpio_num_t>(SENSOR_INT));
         gpio_set_intr_type(
                 static_cast<gpio_num_t>(SENSOR_INT),
                 kSensorAwakeTrigger);

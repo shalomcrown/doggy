@@ -12,6 +12,9 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 > Work merged but not yet shipped. Move entries to a versioned section on release.
 
 ### Added
+- The Waveshare C6 watch now uses the chips on its pinout: AXP2101 battery
+  gauge, PCF85063 calendar (cold boot before NTP, like the S3), and QMI8658
+  wake-on-motion on INT1. The speaker/mic codec is still unused.
 - Dual-board PlatformIO watch project for LilyGO T-Watch S3 and Waveshare
   ESP32-C6 Touch AMOLED 2.06. The first slice uses shared LVGL 9 screens,
   ESP-Touch v2 Wi-Fi provisioning, NTP, and an NVS-backed fixed UTC offset
@@ -23,6 +26,24 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
   each board.
 - Always-on MPEG-TS camera recording (hourly MediaMTX segments), JPEG snapshots, list/download APIs, and hourly retention from `media.retain_hours` (default 24). File names are `<hostname>-<camera id>-YYYY-MM-DD-HHMMSS.{ts,jpg}`.
 - `robot.turn_gain_min` (default 0.25) so low-speed steering is less twitchy while full-speed turns stay authoritative.
+
+### Fixed
+- Flashing a watch over USB no longer fails most of the time. An idle watch used
+  to enter light sleep, which stops clocking the USB-Serial/JTAG peripheral while
+  the host keeps the port enumerated, so the port was visible but answered
+  nothing and the flash tool could not even reset the chip. A watch on a computer
+  now blanks its panel without light sleeping, so it stays flashable and
+  monitorable; on battery nothing changes.
+- `./install-watch-s3.sh` and `./install-watch-c6.sh` pin the upload to the
+  board's stable `/dev/serial/by-id` name instead of a `/dev/ttyACM` number that
+  moves between boards, and stop with both names listed when two watches are
+  attached rather than flashing whichever one enumerated first.
+- The Waveshare C6 no longer blanks for a second and wakes straight back up.
+  Its wake-on-motion line toggles per event instead of resting at a level, so
+  arming a fixed level ended the sleep as soon as it began; the watch now arms
+  the opposite of whatever the line currently shows and clears the motion event
+  from the register that actually holds it. Each wake logs the GPIO that caused
+  it over USB serial.
 
 ### Changed
 - Rover **Drive** arcade-mixes steering: turn is added on the left and subtracted from the right, then both sides are scaled if either would leave `[-1, 1]`. Rest spin is scaled by `turn_gain_min`; at full speed the stick still uses full turn.
@@ -37,7 +58,8 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 ### Added
 - The watch sleeps to save battery. After a minute without a touch it blanks the
   panel, drops the Wi-Fi radio, and halts the CPU; touching the screen wakes it,
-  and the T-Watch S3 also wakes on a wrist raise. The timeout is configurable on
+  and the T-Watch S3 also wakes on a wrist raise. The C6 wakes on QMI8658
+  wake-on-motion (not a tilt gesture). The timeout is configurable on
   the watch (15 s, 30 s, 1 min, 2 min, 5 min, or Never). Sleep is held off while
   ESP-Touch is listening, since pairing needs both the screen and the radio.
 - The watch remembers its last five Wi-Fi networks and retries them newest
@@ -48,8 +70,8 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
   stored credentials already carry.
 - The T-Watch S3 keeps time across a power cycle using its PCF8563 calendar
   chip. Every NTP sync is copied to it and a cold boot seeds the clock from it,
-  so the watch shows a real time before Wi-Fi comes up. The Waveshare C6 has no
-  such chip and still waits for NTP.
+  so the watch shows a real time before Wi-Fi comes up. The Waveshare C6 does
+  the same with its PCF85063.
 
 ### Changed
 - The watch settings page scrolls and no longer saves as you touch it. Moving a
@@ -60,8 +82,8 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
   joined Wi-Fi SSID, battery symbol and percentage, and a four-bar signal meter.
   The date includes the weekday, and a new line reports
   `Time synchronized HH:MM:SS ago` measured from the SNTP sync callback. The
-  T-Watch S3 reads its AXP2101 gauge; the Waveshare C6 shows `--` until its
-  battery path is confirmed.
+  T-Watch S3 reads its AXP2101 gauge; the Waveshare C6 now reads the same chip
+  on its shared I2C bus.
 
 ### Fixed
 - The watch clock page no longer reports the same sync twice. The network

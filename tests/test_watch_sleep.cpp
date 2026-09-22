@@ -80,9 +80,49 @@ static void test_idle_deadline() {
 
 // ================================================================================
 
+// The QMI8658 wake-on-motion line has no resting level, so arming the level it
+// already shows makes light sleep return the instant it is entered.
+static void test_toggling_wake_level() {
+    expect(
+            watch_toggling_wake_level(true) == kWatchWakeLevelLow,
+            "a high toggling line arms the low level");
+    expect(
+            watch_toggling_wake_level(false) == kWatchWakeLevelHigh,
+            "a low toggling line arms the high level");
+}
+
+// ================================================================================
+
+static void test_active_low_armable() {
+    expect(
+            watch_active_low_wake_armable(true),
+            "an idle active-low line can be armed");
+    expect(
+            watch_active_low_wake_armable(false) == false,
+            "an asserted active-low line is left unarmed");
+}
+
+// ================================================================================
+
+// A watch that light sleeps on a computer's cable takes its USB-Serial/JTAG
+// peripheral down with it, and flashing needs that link to reach the chip.
+static void test_usb_host_blocks_light_sleep() {
+    expect(
+            watch_sleep_uses_light_sleep(false),
+            "a watch on battery still light sleeps");
+    expect(
+            watch_sleep_uses_light_sleep(true) == false,
+            "a watch on a host stays reachable");
+}
+
+// ================================================================================
+
 int main() {
     test_timeout_options();
     test_labels_match_timeouts();
     test_idle_deadline();
+    test_toggling_wake_level();
+    test_active_low_armable();
+    test_usb_host_blocks_light_sleep();
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

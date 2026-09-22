@@ -56,3 +56,21 @@ bool watch_idle_should_sleep(
             static_cast<unsigned long>(timeout_seconds) * 1000UL;
     return now_ms - last_activity_ms >= timeout_ms;
 }
+
+// ================================================================================
+
+WatchWakeLevel watch_toggling_wake_level(bool line_high) {
+    return line_high ? kWatchWakeLevelLow : kWatchWakeLevelHigh;
+}
+
+// ================================================================================
+
+bool watch_active_low_wake_armable(bool line_high) {
+    return line_high;
+}
+
+// ================================================================================
+
+bool watch_sleep_uses_light_sleep(bool usb_host_attached) {
+    return usb_host_attached == false;
+}

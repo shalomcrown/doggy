@@ -41,8 +41,10 @@ bool watch_board_rtc_write(std::time_t utc);
 // ================================================================================
 
 // Blanks the panel and halts the CPU until the wearer touches the screen (or
-// raises their wrist, where the board has a motion sensor), then restores the
+// moves their wrist, where the board has a motion sensor), then restores the
 // panel. Returns only after the wake, so the caller resumes in the same place.
+// Returns without blanking anything when no wake line can be armed, since a
+// watch that sleeps with no way back is worse than one that stays awake.
 void watch_board_sleep();
 
 #endif

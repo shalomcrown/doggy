@@ -35,6 +35,19 @@ From the repository root:
 USB-Serial/JTAG boards (T-Watch S3 and the C6) enter the bootloader when
 esptool opens the port. Holding BOOT while plugging in USB is not required.
 
+With no `--port`, the installers pick the watch by its `/dev/serial/by-id` name,
+which is built from the chip's serial number and therefore survives the
+re-enumeration that entering the bootloader causes. A bare `/dev/ttyACM` number
+does not: the kernel assigns those in enumeration order, so with two watches
+attached the number can point at the other board after a reset. When both are
+attached the installer stops and prints both names — pass one to `--port`.
+
+A watch already running this firmware can be flashed at any time. Older
+firmware light sleeps after its idle timeout, and the flash will fail with
+`OSError: [Errno 71] Protocol error` until the screen is touched, because light
+sleep takes the USB-Serial/JTAG peripheral down while leaving the port
+enumerated.
+
 Watch flash is pinned to pioarduino `tool-esptoolpy` 5.3.1. Version 5.4.0
 raises `AttributeError: EsptoolLogger has no attribute _get_progress_print_file`
 after connecting, so the original firmware stays on the device.
@@ -75,22 +88,38 @@ encryption is the fix, and it is out of scope for this slice.
 ## Sleep and timekeeping
 
 After a minute without a touch the watch blanks its panel, drops the radio, and
-halts the CPU in light sleep. Touching the screen wakes it, and the T-Watch S3
-also wakes on a wrist raise (the BMA423 tilt gesture; the step, activity, and
-motion interrupts are masked during sleep so an arm swing does not wake it). The
-C6 has no motion sensor in this slice, so touch is its only wake.
+halts the CPU in light sleep. Touching the screen wakes it. The T-Watch S3 also
+wakes on a wrist raise (the BMA423 tilt gesture; the step, activity, and
+motion interrupts are masked during sleep so an arm swing does not wake it).
+The Waveshare C6 wakes on QMI8658 wake-on-motion (INT1, GPIO16) at a 250 mg
+threshold — that is not a tilt gesture, so walking can still wake it. That line
+toggles on each motion event rather than resting at a level, so the C6 samples
+it as sleep begins and arms the opposite level; arming a fixed level would end
+the sleep the moment it started. Each wake prints the GPIO mask that ended it to
+the USB serial monitor at 115200 baud, so a wake nobody asked for can be traced
+to a pin (a `0x0` mask means neither line woke it — suspect the attached USB
+monitor itself).
+
+A watch plugged into a computer blanks its panel at the same deadline but does
+not light sleep, because light sleep stops clocking the USB-Serial/JTAG
+peripheral: the port stays enumerated while nothing answers it, and neither
+`pio device monitor` nor a flash can reach the chip until someone touches the
+screen. The wake lines are polled instead, which costs run current the cable is
+already paying for. On battery, or on a charger with no host, the watch light
+sleeps exactly as before.
 
 The timeout is set on the settings page — 15 s, 30 s, 1 min, 2 min, 5 min, or
 **Never**. Waking restarts the network walk from the saved roster, so the watch
 reconnects without ESP-Touch. Sleep is held off entirely while ESP-Touch is
 listening, since the phone needs both the screen and the radio up.
 
-The T-Watch S3 has a PCF8563 calendar chip. Every NTP sync is copied to it, and
-a cold boot seeds the clock from it, so the watch shows a real time before Wi-Fi
-comes up. The chip holds UTC regardless of the configured offset. The C6 has no
-such chip and shows the waiting state until NTP answers. The calendar write
-happens in `loop()` rather than in the SNTP callback because the chip shares its
-I2C bus with the power gauge the UI polls.
+The T-Watch S3 has a PCF8563 calendar chip; the Waveshare C6 has a PCF85063 on
+the same I2C bus as touch, the AXP2101, and the IMU (SDA GPIO8, SCL GPIO7).
+Every NTP sync is copied to the board's chip, and a cold boot seeds the clock
+from it, so both watches can show a real time before Wi-Fi comes up. The chip
+holds UTC regardless of the configured offset. The calendar write happens in
+`loop()` rather than in the SNTP callback because the chip shares that bus with
+the power gauge the UI polls.
 
 `timegm` is missing from the ESP32 C library and `mktime` would fold in the
 local zone, so `watch_utc_time_from_civil()` in `time_offset.cpp` does the
@@ -126,10 +155,9 @@ A corner of radius R needs an inset of at least `R * (1 - 1 / sqrt(2))`, so 48
 covers a radius up to roughly 160 px. Retune that one constant if the C6 status
 bar still clips or the margin looks too generous.
 
-The T-Watch S3 reports a real battery percentage through the AXP2101 gauge, and
-shows a charging bolt while USB power is charging it. The Waveshare C6 has no
-confirmed gauge in this slice, so it shows `--` next to an empty battery symbol
-instead of a fabricated level.
+Both boards report battery percentage through an AXP2101 gauge and show a
+charging bolt while USB power is charging the pack. If the C6 cannot see a
+battery, the status bar still shows `--` rather than a fabricated level.
 
 The factory offset is UTC+3:00. Swipe left from the clock, or tap
 **Settings >**, to open settings. The page scrolls vertically: UTC offset
@@ -157,12 +185,15 @@ Hardware is not available to CI. Before relying on a build:
 5b. On the C6, confirm the whole status bar clears the rounded corner mask —
    the SSID on the left and the Wi-Fi bars on the right are the first things to
    disappear. Adjust `kSafeInset` in `board_waveshare_c6.cpp` if it still clips.
-6. On the S3, confirm the battery percentage tracks the charger (bolt appears on
-   USB) and that the Wi-Fi bars drop as you walk away from the access point.
+6. Confirm the battery percentage tracks the charger (bolt appears on USB) and
+   that the Wi-Fi bars drop as you walk away from the access point. On the C6
+   the gauge is the onboard AXP2101; `--` is only correct when no pack is
+   connected.
 7. Leave the watch untouched for the configured timeout: the panel must blank,
    and a touch must bring it back on the clock page with the screen fully
    redrawn. On the S3, also confirm a wrist raise wakes it and that walking does
-   not.
+   not. On the C6, a firm wrist flick should wake it via the QMI8658; walking
+   may also wake it.
 8. Set the timeout to **Never** and confirm the watch stays on.
 9. Move a roller, then leave the page three ways — Cancel, swipe, and letting it
    sleep — and confirm the stored offset never moved. Then move it again and
@@ -170,9 +201,9 @@ Hardware is not available to CI. Before relying on a build:
 10. Join a second access point, then power both off and on in turn: the watch
     must rejoin each without ESP-Touch, and the one joined most recently must be
     tried first.
-11. On the S3, let NTP sync, then power the watch down completely and boot it
-    with Wi-Fi unavailable — the clock must come up on RTC time rather than the
-    waiting state.
+11. Let NTP sync, then power the watch down completely and boot it with Wi-Fi
+    unavailable — the clock must come up on RTC time rather than the waiting
+    state (PCF8563 on the S3, PCF85063 on the C6).
 
 Host CTest always covers UTC-offset math and `build-watch.sh`. Firmware compile
 is opt-in (`DOGGY_TEST_WATCH_FIRMWARE=1 ctest --preset native-debug -R watch-`)
