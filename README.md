@@ -114,10 +114,12 @@ Waveshare ESP32-C6 Touch AMOLED 2.06. It is not packaged in the Pi DEB.
 ```
 
 The first slice provides an LVGL clock, ESP-Touch v2 Wi-Fi provisioning, NTP,
-and a swipe-accessible fixed UTC-offset settings page (default UTC+3:00). See
-`watch/README.md` for flashing and hardware verification. Flash is pinned to
-esptool 5.3.1 (5.4.0 crashes mid-upload). Rover control and watch LoRa are
-deferred.
+and a swipe-accessible fixed UTC-offset settings page (default UTC+3:00). A
+second swipe opens **Doggys**, where the watch browses Avahi `_doggy._tcp`
+advertisements and stores the selected robot identity. It does not yet send
+HTTPS control. See `watch/README.md` for flashing and hardware verification.
+Flash is pinned to esptool 5.3.1 (5.4.0 crashes mid-upload). Rover control and
+watch LoRa are deferred.
 
 The script copies the `.deb` to `/tmp` over SSH and runs `sudo apt-get install`. Copy and install share one SSH connection (ControlMaster), so the login password is asked once; `sudo` may still ask once if the account is not passwordless. The package creates system user `doggy` if needed, enables I2C in `/boot/firmware/config.txt` when missing, and may ask you to reboot. It then enables and **restarts** `doggy.service` and `doggy-lora.service` (`User=doggy`, I2C via the `i2c` group, USB serial via `dialout`) before any reboot prompt. An upgrade does not stop the unit in `prerm`, so a failed `postinst` cannot leave the dog down.
 
@@ -137,6 +139,7 @@ After `apt-get install` of `shaloms-doggy` the Pi has:
 /usr/share/doggy/lora.html             LoRa setup UI
 /etc/systemd/system/doggy.service      unit (User=doggy)
 /etc/systemd/system/doggy-lora.service sidecar unit (User=doggy, dialout)
+/etc/avahi/services/doggy.service      DNS-SD `_doggy._tcp` on HTTPS 443
 /etc/doggy/                            created at install (User=doggy, mode 0755)
 /etc/doggy/doggy.json                  firmware + robot-side LoRa configuration
 /etc/doggy/tls.crt                     self-signed cert (created on first start)

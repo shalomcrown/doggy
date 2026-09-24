@@ -312,6 +312,7 @@ install(FILES packaging/doggy.service packaging/doggy-lora.service
         packaging/doggy-cleanup-media.service packaging/doggy-cleanup-media.timer
         DESTINATION /etc/systemd/system)
 install(FILES packaging/mediamtx.yml DESTINATION /etc/doggy)
+install(FILES packaging/avahi/doggy.service DESTINATION /etc/avahi/services)
 install(PROGRAMS packaging/install-mediamtx.sh
         packaging/render-mediamtx-config.sh
         packaging/cleanup-media.sh DESTINATION lib/doggy)
@@ -553,6 +554,57 @@ target_include_directories(
 )
 add_test(NAME watch-wifi-roster COMMAND test_watch_wifi_roster)
 
+add_executable(
+    test_watch_doggy
+    tests/test_watch_doggy.cpp
+    watch/src/watch_doggy.cpp
+)
+target_include_directories(
+    test_watch_doggy
+    PRIVATE "${CMAKE_SOURCE_DIR}/watch/include"
+)
+add_test(NAME watch-doggy COMMAND test_watch_doggy)
+
+add_executable(
+    test_watch_discovery_policy
+    tests/test_watch_discovery_policy.cpp
+    watch/src/watch_discovery_policy.cpp
+)
+target_include_directories(
+    test_watch_discovery_policy
+    PRIVATE "${CMAKE_SOURCE_DIR}/watch/include"
+)
+add_test(NAME watch-discovery-policy COMMAND test_watch_discovery_policy)
+
+add_executable(
+    test_watch_joystick_policy
+    tests/test_watch_joystick_policy.cpp
+    watch/src/watch_joystick_policy.cpp
+)
+target_include_directories(
+    test_watch_joystick_policy
+    PRIVATE "${CMAKE_SOURCE_DIR}/watch/include"
+)
+target_link_libraries(test_watch_joystick_policy PRIVATE m)
+add_test(NAME watch-joystick-policy COMMAND test_watch_joystick_policy)
+
+add_executable(
+    test_watch_rover_status
+    tests/test_watch_rover_status.cpp
+    watch/src/watch_rover_status.cpp
+)
+target_include_directories(
+    test_watch_rover_status
+    PRIVATE "${CMAKE_SOURCE_DIR}/watch/include"
+)
+add_test(NAME watch-rover-status COMMAND test_watch_rover_status)
+
+add_test(
+    NAME watch-control
+    COMMAND bash "${CMAKE_SOURCE_DIR}/tests/watch-control.test.sh"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
 add_test(
     NAME build-watch-script
     COMMAND bash "${CMAKE_SOURCE_DIR}/tests/build-watch-script.test.sh"
@@ -574,6 +626,12 @@ add_test(
 add_test(
     NAME watch-c6-peripherals
     COMMAND bash "${CMAKE_SOURCE_DIR}/tests/watch-c6-peripherals.test.sh"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
+add_test(
+    NAME watch-discovery
+    COMMAND bash "${CMAKE_SOURCE_DIR}/tests/watch-discovery.test.sh"
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
@@ -606,7 +664,7 @@ set(CPACK_DEBIAN_PACKAGE_DESCRIPTION "Freenove doggy software")
 set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
 set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Shalom Crown <shalomcrown@cmail.com>")
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "i2c-tools, zssh, lrzsz, vim, systemd, debconf, ffmpeg, curl, ca-certificates, openssl, rpicam-apps | libcamera-apps")
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "i2c-tools, zssh, lrzsz, vim, systemd, avahi-daemon, debconf, ffmpeg, curl, ca-certificates, openssl, rpicam-apps | libcamera-apps")
 set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
     "${CMAKE_SOURCE_DIR}/packaging/debian/postinst;${CMAKE_SOURCE_DIR}/packaging/debian/prerm;${CMAKE_SOURCE_DIR}/packaging/debian/postrm;${CMAKE_SOURCE_DIR}/packaging/debian/config;${CMAKE_SOURCE_DIR}/packaging/debian/templates"
 )

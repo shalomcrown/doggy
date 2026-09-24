@@ -2,6 +2,7 @@
 #define DOGGY_WATCH_STATUS_H
 
 #include <cstddef>
+#include <ctime>
 
 inline constexpr int kWatchSignalBarCount = 4;
 inline constexpr long kWatchSyncAgeMaxSeconds = 359999;
@@ -44,6 +45,16 @@ void watch_format_ssid(
         const char *ssid,
         bool connected,
         std::size_t max_characters,
+        char *out,
+        std::size_t size);
+
+// ================================================================================
+
+// Local HH:MM:SS for compact status bars, or a placeholder before time is valid.
+void watch_format_status_time(
+        std::time_t utc,
+        bool valid,
+        int utc_offset_seconds,
         char *out,
         std::size_t size);
 

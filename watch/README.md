@@ -7,7 +7,8 @@ PlatformIO firmware for:
 
 Both environments compile the same LVGL 9 clock, settings, ESP-Touch v2, NTP,
 and NVS code. `src/board_*.cpp` is the hardware boundary for display and touch.
-LoRa and rover control are intentionally not part of this first slice.
+LoRa is not on the watch yet; rover control lives on the Control screen (see
+Navigation below).
 
 ## Build and flash
 
@@ -130,6 +131,33 @@ bus transaction from reaching an inactive ESP-IDF I2C driver.
 local zone, so `watch_utc_time_from_civil()` in `time_offset.cpp` does the
 calendar-to-epoch conversion and is host-tested against `gmtime_r`.
 
+## I2C map
+
+LilyGoLib's `instance.begin()` on the T-Watch S3 prints two bus scans at boot
+(and a `Listing directory: /` dump of the onboard filesystem). Those scans are
+not discovery. A live S3 capture on 2026-09-24:
+
+| Bus (boot order) | Address | Device |
+|------------------|---------|--------|
+| First (PMU / RTC / IMU / haptic) | `0x19` | BMA423 accelerometer |
+| First | `0x34` | AXP2101 PMIC |
+| First | `0x51` | PCF85063-class calendar |
+| First | `0x5A` | DRV2605 haptic |
+| Second (touch) | `0x38` | FT6336U touch |
+
+The Waveshare C6 shares one bus (SDA GPIO8, SCL GPIO7). Addresses come from the
+board HAL, not from that S3 log:
+
+| Address | Device |
+|---------|--------|
+| `0x34` | AXP2101 PMIC |
+| `0x38` | FT3168 touch |
+| `0x51` | PCF85063 calendar |
+| `0x6B` | QMI8658 IMU |
+
+`[E][Wire.cpp:135] setPins(): bus already initialized` is LilyGoLib probing a
+bus it already started. It is not an mDNS failure.
+
 `watch_network.cpp` calls `esp_smartconfig_start()` rather than
 `WiFi.beginSmartConfig()`: the Arduino wrapper turns on
 `esp_touch_v2_enable_crypt` with a NULL key whenever the type is v2, so the
@@ -164,10 +192,20 @@ Both boards report battery percentage through an AXP2101 gauge and show a
 charging bolt while USB power is charging the pack. If the C6 cannot see a
 battery, the status bar still shows `--` rather than a fabricated level.
 
-The factory offset is UTC+3:00. Swipe left from the clock, or tap
-**Settings >**, to open settings. The page scrolls vertically: UTC offset
-(whole hours from −12 through +14, minutes from 00, 15, 30, or 45), the sleep
-timeout, **Pair Wi-Fi**, then **Save** and **Cancel**.
+The factory offset is UTC+3:00. Swipe **right** from the clock (or tap
+**< Control**) for **Rover** control. Swipe **left**, or tap **Settings >**, for
+settings. The page scrolls vertically: UTC offset (whole hours from −12 through
++14, minutes from 00, 15, 30, or 45), the sleep timeout, **Pair Wi-Fi**, then
+**Save** and **Cancel**. Swipe left twice more for **Doggys**: **Refresh** runs
+a bounded LAN browse of `_doggy._tcp`, and tapping a result stores that robot
+for control. With no doggy selected, the control page says so. With a rover
+selected, the joystick matches the web page (15% dead zone, forward/back and
+left/right). While that page is visible the watch posts `POST /api/heartbeat`
+every 750 ms and `POST /api/drive` after 100 ms idle (immediately on release);
+leaving the page stops both and sends a zero drive. HTTPS uses the self-signed
+Pi cert via `setInsecure()` on the LAN only. Settings, Doggys, and Control keep
+SSID and battery in the status bar and put local `HH:MM:SS` in the middle so
+the clock stays visible while discovery or control runs.
 
 Nothing on that page reaches storage until **Save**. Moving a roller only edits
 a draft, and the draft is thrown away by **Cancel**, by **< Clock**, by swiping
@@ -212,6 +250,29 @@ Hardware is not available to CI. Before relying on a build:
 11. Let NTP sync, then power the watch down completely and boot it with Wi-Fi
     unavailable — the clock must come up on RTC time rather than the waiting
     state (PCF85063 on both boards).
+12. With a packaged doggy on the LAN, open **Doggys**, tap **Refresh**, and
+    confirm the large clock on the first page and the centered status-bar time
+    on Settings/Doggys keep advancing during the search. Select a result,
+    reboot, and confirm the same name still shows as selected. With Wi-Fi off,
+    the page must say to connect Wi-Fi rather than freeze.
+
+### Reading a failed discovery
+
+Every search reports itself over USB serial (`pio device monitor` at 115200).
+Each `discovery:` line ends with CR+LF so the monitor does not stair-step.
+Confirm the robot is advertising first — `avahi-browse -r _doggy._tcp` on a
+laptop on the same network must resolve a hostname, port 443, and the
+`proto=https` TXT record. Then tap **Refresh** and read the log:
+
+| Log line | Meaning |
+|----------|---------|
+| `mDNS begin … FAILED` | The mDNS stack did not start; nothing was ever sent. |
+| `query start FAILED` | mDNS is up but refused the query. |
+| `doggy search raw=0` `attempt=1/3` then later `accepted=1` | The first query raced `MDNS.begin()`. Retries are expected; this is not an empty LAN. |
+| `doggy search raw=0` on `attempt=3/3` then `probe raw=0` | No mDNS answers of any kind reach the watch after three tries. Suspect the access point (band steering between 2.4/5 GHz, client isolation, multicast/IGMP filtering), not the query parser. |
+| `doggy search raw=0` on `attempt=3/3` then `probe raw=N` listing `_doggy._tcp` | The watch hears the network and the robot advertises, but the doggy query itself came back empty. |
+| `doggy search raw=N accepted=0` | Answers arrived and were rejected. Read the `result …` lines: `port=0` or `hostname=(none)` means the SRV record did not arrive with the PTR answer. |
+| `search did not finish in time` | The query never completed inside its window plus grace period. |
 
 Host CTest always covers UTC-offset math and `build-watch.sh`. Firmware compile
 is opt-in (`DOGGY_TEST_WATCH_FIRMWARE=1 ctest --preset native-debug -R watch-`)

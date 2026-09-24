@@ -10,6 +10,7 @@
 namespace {
 
 inline constexpr char kWifiKey[] = "wifi";
+inline constexpr char kDoggyTargetKey[] = "doggy-target";
 
 Preferences preferences;
 int offset_hours = kWatchDefaultOffsetHours;
@@ -17,6 +18,8 @@ int offset_minutes = kWatchDefaultOffsetMinutes;
 int idle_timeout_seconds = kWatchDefaultIdleTimeoutSeconds;
 WatchWifiCredential wifi_entries[kWatchWifiRosterCapacity]{};
 std::size_t wifi_count = 0;
+WatchDoggyTarget selected_doggy{};
+bool selected_doggy_valid = false;
 bool preferences_ready = false;
 
 }
@@ -55,6 +58,26 @@ static void load_wifi_entries() {
 
 // ================================================================================
 
+static void load_selected_doggy() {
+    if (preferences.getBytesLength(kDoggyTargetKey)
+            != sizeof(selected_doggy)) {
+        return;
+    }
+    if (preferences.getBytes(
+            kDoggyTargetKey,
+            &selected_doggy,
+            sizeof(selected_doggy)) != sizeof(selected_doggy)) {
+        selected_doggy = {};
+        return;
+    }
+    selected_doggy_valid = watch_doggy_target_valid(selected_doggy);
+    if (selected_doggy_valid == false) {
+        selected_doggy = {};
+    }
+}
+
+// ================================================================================
+
 void watch_settings_begin() {
     if (preferences.begin("doggy-watch", false) == false) {
         return;
@@ -83,6 +106,7 @@ void watch_settings_begin() {
     idle_timeout_seconds = watch_idle_timeout_seconds(
             watch_idle_timeout_option(saved_timeout));
     load_wifi_entries();
+    load_selected_doggy();
 }
 
 // ================================================================================
@@ -131,6 +155,32 @@ void watch_settings_set_idle_timeout_seconds(int seconds) {
     idle_timeout_seconds = seconds;
     if (preferences_ready) {
         preferences.putInt("idle", idle_timeout_seconds);
+    }
+}
+
+// ================================================================================
+
+const WatchDoggyTarget *watch_settings_selected_doggy() {
+    return selected_doggy_valid ? &selected_doggy : nullptr;
+}
+
+// ================================================================================
+
+void watch_settings_set_selected_doggy(const WatchDoggyTarget &target) {
+    if (watch_doggy_target_valid(target) == false) {
+        return;
+    }
+    if (selected_doggy_valid
+            && watch_doggy_target_equal(selected_doggy, target)) {
+        return;
+    }
+    selected_doggy = target;
+    selected_doggy_valid = true;
+    if (preferences_ready) {
+        preferences.putBytes(
+                kDoggyTargetKey,
+                &selected_doggy,
+                sizeof(selected_doggy));
     }
 }
 

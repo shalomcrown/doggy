@@ -16,6 +16,7 @@ LORA_UNIT="$ROOT/packaging/doggy-lora.service"
 MEDIAMTX_UNIT="$ROOT/packaging/mediamtx.service"
 MEDIAMTX_CONFIG="$ROOT/packaging/mediamtx.yml"
 MEDIAMTX_INSTALL="$ROOT/packaging/install-mediamtx.sh"
+AVAHI_SERVICE="$ROOT/packaging/avahi/doggy.service"
 POSTINST="$ROOT/packaging/debian/postinst"
 PRERM="$ROOT/packaging/debian/prerm"
 POSTRM="$ROOT/packaging/debian/postrm"
@@ -187,6 +188,25 @@ if grep -q 'doggy.service' "$CMAKE" \
     pass "CMake installs doggy.service to /etc/systemd/system"
 else
     fail "CMake installs doggy.service to /etc/systemd/system"
+fi
+
+if grep -q 'packaging/avahi/doggy.service' "$CMAKE" \
+        && grep -q '/etc/avahi/services' "$CMAKE" \
+        && grep -q 'avahi-daemon' "$CMAKE"; then
+    pass "package installs and depends on Avahi doggy discovery"
+else
+    fail "package installs and depends on Avahi doggy discovery"
+fi
+
+if [ -f "$AVAHI_SERVICE" ] \
+        && grep -q '<name replace-wildcards="yes">%h</name>' "$AVAHI_SERVICE" \
+        && grep -q '<type>_doggy._tcp</type>' "$AVAHI_SERVICE" \
+        && grep -q '<port>443</port>' "$AVAHI_SERVICE" \
+        && grep -q '<txt-record>txtvers=1</txt-record>' "$AVAHI_SERVICE" \
+        && grep -q '<txt-record>proto=https</txt-record>' "$AVAHI_SERVICE"; then
+    pass "Avahi advertises the versioned doggy HTTPS service"
+else
+    fail "Avahi advertises the versioned doggy HTTPS service"
 fi
 
 if grep -q '50-shaloms-doggy.rules' "$CMAKE" \
@@ -671,10 +691,11 @@ fi
 
 if grep -q '^SupplementaryGroups=i2c video$' "$UNIT" \
         && grep -q 'mediamtx.service' "$UNIT" \
+        && grep -q 'avahi-daemon.service' "$UNIT" \
         && grep -q 'ReadWritePaths=/var/lib/doggy' "$UNIT"; then
-    pass "doggy service has video access and starts after MediaMTX"
+    pass "doggy service has video access and starts after MediaMTX and Avahi"
 else
-    fail "doggy service has video access and starts after MediaMTX"
+    fail "doggy service has video access and starts after MediaMTX and Avahi"
 fi
 
 if grep -q '^pathDefaults:$' "$MEDIAMTX_CONFIG" \

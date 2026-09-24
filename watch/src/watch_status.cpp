@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 
 namespace {
 
@@ -129,4 +130,25 @@ void watch_format_ssid(
     }
     const int kept = static_cast<int>(budget - kEllipsisLength);
     std::snprintf(out, size, "%.*s...", kept, ssid);
+}
+
+// ================================================================================
+
+void watch_format_status_time(
+        std::time_t utc,
+        bool valid,
+        int utc_offset_seconds,
+        char *out,
+        std::size_t size) {
+    if (out == nullptr || size == 0) {
+        return;
+    }
+    if (valid == false) {
+        std::snprintf(out, size, "--:--:--");
+        return;
+    }
+    const std::time_t local_time = utc + utc_offset_seconds;
+    std::tm broken_down{};
+    gmtime_r(&local_time, &broken_down);
+    std::strftime(out, size, "%H:%M:%S", &broken_down);
 }

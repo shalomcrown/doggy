@@ -116,11 +116,26 @@ static void test_ssid() {
 
 // ================================================================================
 
+static void test_status_time() {
+    char text[16];
+    watch_format_status_time(0, false, 0, text, sizeof(text));
+    expect_text(text, "--:--:--", "invalid time has a stable placeholder");
+
+    watch_format_status_time(0, true, 3 * 3600, text, sizeof(text));
+    expect_text(text, "03:00:00", "status time applies the UTC offset");
+
+    watch_format_status_time(86399, true, 3 * 3600, text, sizeof(text));
+    expect_text(text, "02:59:59", "status time wraps across midnight");
+}
+
+// ================================================================================
+
 int main() {
     test_signal_bars();
     test_battery_level();
     test_sync_age();
     test_connected_status();
     test_ssid();
+    test_status_time();
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

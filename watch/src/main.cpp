@@ -1,4 +1,6 @@
 #include "board_hal.h"
+#include "watch_control.h"
+#include "watch_discovery.h"
 #include "watch_network.h"
 #include "watch_settings.h"
 #include "watch_sleep_policy.h"
@@ -23,6 +25,7 @@ void setup() {
         return;
     }
     watch_ui_begin();
+    watch_control_begin();
     watch_network_begin();
     application_ready = true;
 }
@@ -54,6 +57,16 @@ static void service_idle_sleep() {
         lv_display_trigger_activity(nullptr);
         return;
     }
+    if (watch_discovery_state() == WatchDiscoveryState::Searching) {
+        // The IDF query is asynchronous, but the radio must stay up until its
+        // bounded three-second window closes.
+        lv_display_trigger_activity(nullptr);
+        return;
+    }
+    if (watch_control_prevents_sleep()) {
+        lv_display_trigger_activity(nullptr);
+        return;
+    }
     const bool due = watch_idle_should_sleep(
             lv_display_get_inactive_time(nullptr),
             0,
@@ -82,6 +95,8 @@ void loop() {
         return;
     }
     watch_network_service();
+    watch_discovery_service(watch_network_connected());
+    watch_control_service(watch_network_connected(), millis());
     if (millis() - last_ui_refresh >= kUiRefreshMs) {
         last_ui_refresh = millis();
         watch_ui_update(collect_ui_state());

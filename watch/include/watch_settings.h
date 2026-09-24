@@ -1,6 +1,7 @@
 #ifndef DOGGY_WATCH_SETTINGS_H
 #define DOGGY_WATCH_SETTINGS_H
 
+#include "watch_doggy.h"
 #include "watch_wifi_roster.h"
 
 #include <cstddef>
@@ -31,6 +32,14 @@ int watch_settings_idle_timeout_seconds();
 
 // Ignores any value outside the choices the settings page offers.
 void watch_settings_set_idle_timeout_seconds(int seconds);
+
+// ================================================================================
+
+const WatchDoggyTarget *watch_settings_selected_doggy();
+
+// ================================================================================
+
+void watch_settings_set_selected_doggy(const WatchDoggyTarget &target);
 
 // ================================================================================
 

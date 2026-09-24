@@ -12,6 +12,20 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 > Work merged but not yet shipped. Move entries to a versioned section on release.
 
 ### Added
+- The watch Control screen (swipe right from the clock) drives a selected rover
+  with a joystick matching the web dead zone. Heartbeats and drive commands go
+  to the Pi only while that screen is visible; there is no doggy selected or
+  not-a-rover messaging when control is unavailable.
+- Installed doggys advertise `_doggy._tcp` on HTTPS 443 through Avahi. Either
+  watch can browse that service on a Doggys page (second swipe left), pick one,
+  and remember the instance, hostname, and port in NVS. The browse is
+  asynchronous so the clock keeps ticking. Settings and Doggys show local time
+  in the middle of the status bar. This slice does not talk HTTPS to the robot.
+  The radio leaves Wi-Fi modem sleep for the few seconds a search runs, because
+  a sleeping station only listens for the multicast answers around beacons. A
+  search that never reports itself finished now gives the page back instead of
+  waiting forever, and each search reports what it heard over USB serial at
+  115200 so a watch that finds nothing can say whether the answers arrived.
 - The Waveshare C6 watch now uses the chips on its pinout: AXP2101 battery
   gauge, PCF85063 calendar (cold boot before NTP, like the S3), and QMI8658
   wake-on-motion on INT1. The speaker/mic codec is still unused.
@@ -28,6 +42,12 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 - `robot.turn_gain_min` (default 0.25) so low-speed steering is less twitchy while full-speed turns stay authoritative.
 
 ### Fixed
+- Watch discovery retries an empty `_doggy._tcp` browse up to three times
+  before deciding the LAN is empty. The first query often races `MDNS.begin()`,
+  so a single miss used to latch "No doggys found" until Refresh. The log now
+  includes `attempt=N/3`.
+- Watch discovery USB log lines now end with CR+LF. `Serial.printf` only
+  emitted LF, so a 115200 monitor stair-stepped each `discovery:` line.
 - Watch time no longer accumulates ESP sleep-clock drift while the panel is
   asleep. Both boards now restore system UTC from their PCF85063 immediately
   after wake and before restarting Wi-Fi.
