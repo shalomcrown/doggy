@@ -295,6 +295,19 @@ std::vector<MotorSnapshot> Rover::listMotors() {
 
 // ================================================================================
 
+Rover::~Rover() {
+    try {
+        std::lock_guard<std::mutex> lock(mutex_);
+        coastMotorOutputsUnlocked();
+        status_.set_speed(0.0);
+        status_.set_turn(0.0);
+        last_gcs_.reset();
+    } catch (const std::system_error &) {
+    }
+}
+
+// ================================================================================
+
 CommandResult Rover::setDrive(double speed, double turn) {
     if (std::isfinite(speed) == false || std::isfinite(turn) == false
             || speed < -1.0 || speed > 1.0 || turn < -1.0 || turn > 1.0) {

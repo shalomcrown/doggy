@@ -193,17 +193,20 @@ charging bolt while USB power is charging the pack. If the C6 cannot see a
 battery, the status bar still shows `--` rather than a fabricated level.
 
 The factory offset is UTC+3:00. Swipe **right** from the clock (or tap
-**< Control**) for **Rover** control. Swipe **left**, or tap **Settings >**, for
-settings. The page scrolls vertically: UTC offset (whole hours from −12 through
+**< Control**) for **Rover** control; tile swipes are disabled on that page so
+the joystick does not drag you back to the clock — tap **< Clock** to leave.
+Swipe **left**, or tap **Settings >**, for settings. The page scrolls vertically: UTC offset (whole hours from −12 through
 +14, minutes from 00, 15, 30, or 45), the sleep timeout, **Pair Wi-Fi**, then
 **Save** and **Cancel**. Swipe left twice more for **Doggys**: **Refresh** runs
 a bounded LAN browse of `_doggy._tcp`, and tapping a result stores that robot
 for control. With no doggy selected, the control page says so. With a rover
 selected, the joystick matches the web page (15% dead zone, forward/back and
 left/right). While that page is visible the watch posts `POST /api/heartbeat`
-every 750 ms and `POST /api/drive` after 100 ms idle (immediately on release);
-leaving the page stops both and sends a zero drive. HTTPS uses the self-signed
-Pi cert via `setInsecure()` on the LAN only. Settings, Doggys, and Control keep
+every 750 ms and `POST /api/drive` when speed or turn change (about every 50 ms
+while the stick moves, immediately on release). HTTPS runs on a dedicated
+FreeRTOS task so the UI keeps swiping when the Pi is offline; one TLS session is
+reused per selected doggy. Leaving the page stops both and sends a zero drive.
+HTTPS uses the self-signed Pi cert via `setInsecure()` on the LAN only. Settings, Doggys, and Control keep
 SSID and battery in the status bar and put local `HH:MM:SS` in the middle so
 the clock stays visible while discovery or control runs.
 

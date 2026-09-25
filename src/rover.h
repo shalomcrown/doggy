@@ -45,6 +45,8 @@ public:
     Rover(const Config &config, std::string config_path,
           std::unique_ptr<SystemControl> system_control);
 
+    ~Rover() override;
+
     RobotType robotType() const override;
     std::vector<MotorSnapshot> listMotors() override;
     CommandResult setDrive(double speed, double turn) override;

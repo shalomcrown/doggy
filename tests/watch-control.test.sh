@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 UI="$ROOT/watch/src/watch_ui.cpp"
 MAIN="$ROOT/watch/src/main.cpp"
 CONTROL="$ROOT/watch/src/watch_control.cpp"
+WORKER="$ROOT/watch/src/watch_rover_worker.cpp"
 CLIENT="$ROOT/watch/src/watch_rover_client.cpp"
 FAILS=0
 
@@ -37,21 +38,21 @@ fi
 
 if grep -q 'watch_control_set_screen_active' "$UI" \
         && grep -q 'watch_control_service' "$MAIN"; then
-    pass "control screen gates the rover client loop"
+    pass "main loop feeds Wi-Fi state to rover control"
 else
-    fail "control screen gates the rover client loop"
+    fail "main loop feeds Wi-Fi state to rover control"
 fi
 
-if grep -q 'kHeartbeatIntervalMs = 750' "$CONTROL"; then
+if grep -q 'kHeartbeatIntervalMs = 750' "$WORKER"; then
     pass "heartbeat interval matches the rover page"
 else
     fail "heartbeat interval matches the rover page"
 fi
 
-if grep -q 'kDriveDebounceMs = 100' "$CONTROL"; then
-    pass "drive debounce matches the rover page"
+if grep -q 'kDriveResendMs = 50' "$WORKER"; then
+    pass "drive resend is tuned for watch responsiveness"
 else
-    fail "drive debounce matches the rover page"
+    fail "drive resend is tuned for watch responsiveness"
 fi
 
 if grep -q 'watch_control_stick(0.0f, 0.0f, true)' "$UI"; then
@@ -60,23 +61,53 @@ else
     fail "releasing the stick stops the rover immediately"
 fi
 
-if grep -q 'drive_stop_immediate' "$CONTROL" \
-        && ! grep -q 'send_heartbeat(millis())' "$CONTROL"; then
-    pass "rover HTTPS runs from the service loop, not the UI thread"
+if grep -q 'xTaskCreate' "$WORKER" \
+        && grep -q 'watch_rover_worker_begin' "$CONTROL" \
+        && ! grep -q 'watch_rover_post_drive' "$CONTROL"; then
+    pass "rover HTTPS runs on a dedicated FreeRTOS task"
 else
-    fail "rover HTTPS runs from the service loop, not the UI thread"
+    fail "rover HTTPS runs on a dedicated FreeRTOS task"
 fi
 
-if grep -q 'http_in_flight' "$CONTROL"; then
-    pass "rover HTTPS requests are serialized"
+if grep -q 'drive_command_changed_locked' "$WORKER"; then
+    pass "worker sends drive when speed or turn change"
 else
-    fail "rover HTTPS requests are serialized"
+    fail "worker sends drive when speed or turn change"
 fi
 
-if grep -q 'lv_event_stop_bubbling' "$UI"; then
-    pass "joystick touch does not scroll the tile view"
+if grep -q 'set_tileview_scroll_enabled' "$UI" \
+        && grep -q 'watch_joystick_normalize_stick_offset' "$UI"; then
+    pass "control page locks tile swipes and uses web stick math"
 else
-    fail "joystick touch does not scroll the tile view"
+    fail "control page locks tile swipes and uses web stick math"
+fi
+
+if grep -q 'watch_board_poll_ui' "$MAIN"; then
+    pass "LVGL runs on the main loop independently of rover HTTPS"
+else
+    fail "LVGL runs on the main loop independently of rover HTTPS"
+fi
+
+if grep -q 'setReuse(true)' "$CLIENT"; then
+    pass "rover HTTPS reuses the TLS session"
+else
+    fail "rover HTTPS reuses the TLS session"
+fi
+
+if grep -q 'watch_rover_post_stop' "$CLIENT" \
+        && grep -q '"/api/stop"' "$CLIENT" \
+        && grep -q 'apply_stop_result_locked' "$WORKER" \
+        && grep -q 'Stop failed — retrying' "$WORKER"; then
+    pass "stop uses POST /api/stop and retries until it succeeds"
+else
+    fail "stop uses POST /api/stop and retries until it succeeds"
+fi
+
+if grep -q 'watch_rover_client_reset_session' "$CLIENT" \
+        && grep -q 'watch_rover_client_reset_session' "$WORKER"; then
+    pass "TLS session resets after Pi reboot or entering control"
+else
+    fail "TLS session resets after Pi reboot or entering control"
 fi
 
 if grep -q 'setInsecure()' "$CLIENT"; then
@@ -85,7 +116,7 @@ else
     fail "HTTPS uses setInsecure for the LAN self-signed cert"
 fi
 
-if grep -q 'No doggy selected' "$CONTROL"; then
+if grep -q 'No doggy selected' "$WORKER"; then
     pass "control page handles missing selection"
 else
     fail "control page handles missing selection"

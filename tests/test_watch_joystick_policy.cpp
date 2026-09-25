@@ -59,5 +59,14 @@ int main() {
     expect_near(speed, 0.0f, "full right has no speed");
     expect_near(turn, 1.0f, "full right turn");
 
+    float nx = 0.0f;
+    float ny = 0.0f;
+    watch_joystick_normalize_stick_offset(0.0f, 70.0f, 70.0f, &nx, &ny);
+    expect_near(nx, 0.0f, "pad-top offset has no turn");
+    expect_near(ny, 1.0f, "pad-top offset is full forward");
+    watch_joystick_normalize_stick_offset(80.0f, 80.0f, 70.0f, &nx, &ny);
+    const float rim_mag = std::hypot(nx, ny);
+    expect_near(rim_mag, 1.0f, "corner beyond rim clamps to unit circle");
+
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

@@ -26,6 +26,7 @@ namespace fs = std::filesystem;
 
 // Error bodies are short JSON codes; the cap keeps a malformed response out of the log.
 inline constexpr std::size_t kMaxLoggedErrorBody = 512;
+inline constexpr std::size_t kMaxLoggedJsonBody = 16384;
 
 // ================================================================================
 
@@ -76,6 +77,137 @@ std::string error_json(const char *code) {
 std::string error_json(const char *code, const std::string &message) {
     return std::string("{\"error\":\"") + code + "\",\"message\":\""
             + json_escape(message) + "\"}";
+}
+
+// ================================================================================
+
+std::string json_one_line(std::string text) {
+    std::string out;
+    out.reserve(text.size());
+    bool pending_space = false;
+    for (unsigned char byte : text) {
+        char character = static_cast<char>(byte);
+        if (character == '\n' || character == '\r' || character == '\t') {
+            character = ' ';
+        }
+        if (character == ' ') {
+            pending_space = true;
+            continue;
+        }
+
+        if (pending_space && out.empty() == false) {
+            out.push_back(' ');
+        }
+        pending_space = false;
+        out.push_back(character);
+    }
+
+    return out;
+}
+
+// ================================================================================
+
+void redact_json_string_field(std::string &text, const char *field) {
+    const std::string key = std::string("\"") + field + "\":\"";
+    std::size_t index = 0;
+    while ((index = text.find(key, index)) != std::string::npos) {
+        const std::size_t value_start = index + key.size();
+        std::size_t value_end = value_start;
+        while (value_end < text.size() && text[value_end] != '"') {
+            if (text[value_end] == '\\' && value_end + 1 < text.size()) {
+                value_end += 2;
+                continue;
+            }
+            value_end += 1;
+        }
+        if (value_end >= text.size()) {
+            return;
+        }
+
+        text.replace(value_start, value_end - value_start, "***");
+        index = value_start + 3;
+    }
+}
+
+// ================================================================================
+
+std::string redact_sensitive_json(std::string text) {
+    redact_json_string_field(text, "pin");
+    redact_json_string_field(text, "current_pin");
+    redact_json_string_field(text, "air_key");
+    return text;
+}
+
+// ================================================================================
+
+std::string truncate_logged_json(std::string text) {
+    if (text.size() <= kMaxLoggedJsonBody) {
+        return text;
+    }
+
+    text.resize(kMaxLoggedJsonBody);
+    text += "...(truncated)";
+    return text;
+}
+
+// ================================================================================
+
+bool api_path_has_input_body(const httplib::Request &req) {
+    if (req.body.empty()) {
+        return false;
+    }
+
+    if (req.method == "PUT" && req.path == "/api/config") {
+        return true;
+    }
+
+    if (req.method != "POST") {
+        return false;
+    }
+
+    if (req.path == "/api/drive" || req.path == "/api/system"
+            || req.path == "/api/system/pin") {
+        return true;
+    }
+
+    if (req.path.rfind("/api/servos/", 0) == 0
+            || req.path.rfind("/api/motors/", 0) == 0) {
+        return true;
+    }
+
+    return false;
+}
+
+// ================================================================================
+
+const char *api_log_peer(const httplib::Request &req) {
+    if (req.remote_addr.empty()) {
+        return "-";
+    }
+
+    return req.remote_addr.c_str();
+}
+
+// ================================================================================
+
+std::optional<std::string> api_log_json_suffix(
+        const httplib::Request &req,
+        const httplib::Response &res) {
+    if (req.method == "GET" && req.path == "/api/config" && res.status < 400) {
+        return truncate_logged_json(json_one_line(res.body));
+    }
+
+    if (api_path_has_input_body(req) == false) {
+        return std::nullopt;
+    }
+
+    std::string payload = json_one_line(req.body);
+    if (req.path == "/api/config" || req.path == "/api/system"
+            || req.path == "/api/system/pin") {
+        payload = redact_sensitive_json(std::move(payload));
+    }
+
+    return truncate_logged_json(std::move(payload));
 }
 
 // ================================================================================
@@ -355,9 +487,6 @@ void register_api(httplib::Server &server, RobotApi &api,
                 res.status = 202;
             }
             res.set_content(config_to_public_json(api.getConfig()), "application/json");
-            PLOG_INFO << "PUT /api/config " << res.status << " type="
-                      << robot_type_json(api.getConfig().robot().type())
-                      << " type_changed=" << (type_changed ? "true" : "false");
             return;
         }
 
@@ -647,26 +776,31 @@ void register_api(httplib::Server &server, RobotApi &api,
             // so logging them cannot leak a PIN or a config payload.
             const bool json_body = res.get_header_value("Content-Type").rfind("application/json", 0) == 0;
             if (json_body && res.body.empty() == false && res.body.size() <= kMaxLoggedErrorBody) {
-                PLOG_ERROR << req.method << " " << req.path << " " << res.status
-                           << " " << res.body;
+                PLOG_ERROR << api_log_peer(req) << " " << req.method << " " << req.path
+                           << " " << res.status << " " << json_one_line(res.body);
                 return;
             }
 
-            PLOG_ERROR << req.method << " " << req.path << " " << res.status;
+            PLOG_ERROR << api_log_peer(req) << " " << req.method << " " << req.path << " "
+                       << res.status;
             return;
         }
 
-        if ((req.method == "GET" && req.path == "/api/status")
-                || (req.method == "POST" && req.path == "/api/heartbeat")) {
+        const std::optional<std::string> json_suffix = api_log_json_suffix(req, res);
+        if (json_suffix.has_value()) {
+            PLOG_INFO << api_log_peer(req) << " " << req.method << " " << req.path << " "
+                      << res.status << " " << *json_suffix;
             return;
         }
 
-        PLOG_INFO << req.method << " " << req.path << " " << res.status;
+        PLOG_INFO << api_log_peer(req) << " " << req.method << " " << req.path << " "
+                  << res.status;
     });
 
     server.set_exception_handler(
             [](const httplib::Request &req, httplib::Response &res, std::exception_ptr) {
-                PLOG_ERROR << "exception " << req.method << " " << req.path;
+                PLOG_ERROR << "exception " << api_log_peer(req) << " " << req.method << " "
+                           << req.path;
                 res.status = 500;
                 res.set_content(error_json("internal"), "application/json");
             });

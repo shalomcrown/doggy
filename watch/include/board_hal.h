@@ -13,6 +13,10 @@ void watch_board_service();
 
 // ================================================================================
 
+void watch_board_poll_ui();
+
+// ================================================================================
+
 // False when the board exposes no battery gauge; percent/charging stay untouched.
 bool watch_board_battery(int &percent, bool &charging);
 

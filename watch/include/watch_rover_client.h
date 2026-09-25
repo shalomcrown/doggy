@@ -24,4 +24,12 @@ WatchRoverPostResult watch_rover_post_drive(
         float speed,
         float turn);
 
+// ================================================================================
+
+WatchRoverPostResult watch_rover_post_stop(const WatchDoggyTarget &target);
+
+// ================================================================================
+
+void watch_rover_client_reset_session();
+
 #endif

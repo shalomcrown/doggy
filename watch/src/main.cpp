@@ -25,8 +25,8 @@ void setup() {
         return;
     }
     watch_ui_begin();
-    watch_control_begin();
     watch_network_begin();
+    watch_control_begin();
     application_ready = true;
 }
 
@@ -94,6 +94,7 @@ void loop() {
         delay(1000);
         return;
     }
+    watch_board_poll_ui();
     watch_network_service();
     watch_discovery_service(watch_network_connected());
     watch_control_service(watch_network_connected(), millis());

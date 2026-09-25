@@ -1062,13 +1062,16 @@ int main() {
     const std::string log_text{
             std::istreambuf_iterator<char>(log_in),
             std::istreambuf_iterator<char>()};
-    expect(log_text.find("GET /api/servos 200") != std::string::npos,
-           "API GET /api/servos is logged");
-    expect(log_text.find("GET /api/config 200") != std::string::npos,
-           "API GET /api/config is logged");
-    expect(log_text.find("PUT /api/config 202 type=ROVER type_changed=true")
-                   != std::string::npos,
-           "type change is logged without a PIN");
+    const bool servos_logged_with_peer =
+            log_text.find("127.0.0.1 GET /api/servos 200") != std::string::npos
+            || log_text.find("::1 GET /api/servos 200") != std::string::npos;
+    expect(servos_logged_with_peer,
+           "API GET /api/servos is logged with remote address");
+    expect(log_text.find("GET /api/config 200 {") != std::string::npos,
+           "successful GET /api/config is logged with one-line JSON");
+    expect(log_text.find("PUT /api/config 202 ") != std::string::npos
+                   && log_text.find("\"type\":\"ROVER\"") != std::string::npos,
+           "type change is logged with one-line request JSON");
     expect(log_text.find("\"pin\":\"1234\"") == std::string::npos
                    && log_text.find("pin=1234") == std::string::npos,
            "log does not contain the PIN");
@@ -1077,10 +1080,13 @@ int main() {
            "failed config save is logged with its reason");
     expect(log_text.find("head_neck channel out of range") != std::string::npos,
            "log names the rejected config field");
-    expect(log_text.find("GET /api/status 200") == std::string::npos,
-           "successful GET /api/status is not logged");
-    expect(log_text.find("POST /api/heartbeat 200") == std::string::npos,
-           "successful POST /api/heartbeat is not logged");
+    expect(log_text.find("GET /api/status 200") != std::string::npos,
+           "successful GET /api/status is logged");
+    expect(log_text.find("POST /api/heartbeat 200") != std::string::npos,
+           "successful POST /api/heartbeat is logged");
+    expect(log_text.find("POST /api/drive 200 {\"speed\":0.5,\"turn\":-0.25}")
+                   != std::string::npos,
+           "successful POST /api/drive logs request JSON on one line");
     expect(log_text.find("POST /api/servos/99 404") != std::string::npos,
            "API failure 404 is logged");
     expect(log_text.find("GET / 200") == std::string::npos,

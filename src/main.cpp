@@ -1,4 +1,6 @@
+#include <atomic>
 #include <chrono>
+#include <csignal>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -21,6 +23,18 @@
 #include <plog/Log.h>
 
 namespace fs = std::filesystem;
+
+namespace {
+
+std::atomic<bool> g_shutdown_requested{false};
+
+// ================================================================================
+
+void on_shutdown_signal(int) {
+    g_shutdown_requested.store(true);
+}
+
+}  // namespace
 
 // ================================================================================
 
@@ -129,7 +143,10 @@ int main() {
               << " listening on https://0.0.0.0:" << server.port()
               << " (http://0.0.0.0:" << server.plain_port() << " redirects)";
 
-    while (true) {
+    std::signal(SIGTERM, on_shutdown_signal);
+    std::signal(SIGINT, on_shutdown_signal);
+
+    while (g_shutdown_requested.load() == false) {
         if (dog != nullptr) {
             dog->poll();
         } else {
@@ -137,4 +154,12 @@ int main() {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(kDoggyLoopPeriodMs));
     }
+
+    PLOG_INFO << "Shutting down — stopping rover outputs";
+    server.stop();
+    if (rover != nullptr) {
+        rover->stop();
+    }
+
+    return 0;
 }

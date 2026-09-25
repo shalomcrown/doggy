@@ -16,6 +16,30 @@ float watch_joystick_apply_deadzone(float value, float dead) {
 
 // ================================================================================
 
+void watch_joystick_normalize_stick_offset(
+        float delta_x,
+        float delta_y,
+        float travel,
+        float *normalized_x,
+        float *normalized_y) {
+    if (normalized_x == nullptr || normalized_y == nullptr || travel <= 0.0f) {
+        return;
+    }
+
+    float nx = delta_x / travel;
+    float ny = delta_y / travel;
+    const float mag = std::hypot(nx, ny);
+    if (mag > 1.0f) {
+        nx /= mag;
+        ny /= mag;
+    }
+
+    *normalized_x = nx;
+    *normalized_y = ny;
+}
+
+// ================================================================================
+
 void watch_joystick_drive_from_stick(
         float nx,
         float ny,

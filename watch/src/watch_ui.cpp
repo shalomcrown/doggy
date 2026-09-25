@@ -4,6 +4,7 @@
 #include "time_offset.h"
 #include "watch_control.h"
 #include "watch_discovery.h"
+#include "watch_joystick_policy.h"
 #include "watch_doggy.h"
 #include "watch_network.h"
 #include "watch_settings.h"
@@ -232,9 +233,24 @@ static void refresh_control_message_label() {
 
 // ================================================================================
 
+static void set_tileview_scroll_enabled(bool enabled) {
+    if (tile_view == nullptr) {
+        return;
+    }
+
+    if (enabled) {
+        lv_obj_add_flag(tile_view, LV_OBJ_FLAG_SCROLLABLE);
+    } else {
+        lv_obj_remove_flag(tile_view, LV_OBJ_FLAG_SCROLLABLE);
+    }
+}
+
+// ================================================================================
+
 static void sync_control_screen_active() {
     const bool on_control =
             lv_tileview_get_tile_active(tile_view) == control_tile;
+    set_tileview_scroll_enabled(on_control == false);
     watch_control_set_screen_active(on_control);
     if (on_control) {
         watch_control_refresh_message();
@@ -295,18 +311,15 @@ static void joystick_event(lv_event_t *event) {
     lv_obj_get_coords(joystick_pad, &coords);
     const int center_x = (coords.x1 + coords.x2) / 2;
     const int center_y = (coords.y1 + coords.y2) / 2;
-    const int travel = kJoystickPadSize / 2;
-    if (travel <= 0) {
-        return;
-    }
-
-    float nx = static_cast<float>(point.x - center_x) / static_cast<float>(travel);
-    float ny = static_cast<float>(center_y - point.y) / static_cast<float>(travel);
-    const float mag = std::hypot(nx, ny);
-    if (mag > 1.0f) {
-        nx /= mag;
-        ny /= mag;
-    }
+    const float travel = static_cast<float>(kJoystickPadSize) / 2.0f;
+    float nx = 0.0f;
+    float ny = 0.0f;
+    watch_joystick_normalize_stick_offset(
+            static_cast<float>(point.x - center_x),
+            static_cast<float>(center_y - point.y),
+            travel,
+            &nx,
+            &ny);
 
     apply_joystick_knob(nx, ny);
     watch_control_stick(nx, ny, false);
@@ -898,6 +911,8 @@ void watch_ui_begin() {
     lv_obj_set_size(tile_view, lv_pct(100), lv_pct(100));
     apply_dark_surface(tile_view);
     lv_obj_set_style_bg_color(tile_view, background_color(), LV_PART_SCROLLBAR);
+    lv_obj_set_style_anim_duration(tile_view, 0, LV_PART_MAIN);
+    lv_obj_set_style_anim_duration(tile_view, 0, LV_PART_SCROLLBAR);
 
     control_tile = lv_tileview_add_tile(tile_view, 0, 0, LV_DIR_RIGHT);
     clock_tile = lv_tileview_add_tile(
