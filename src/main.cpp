@@ -155,7 +155,8 @@ int main() {
         std::this_thread::sleep_for(std::chrono::milliseconds(kDoggyLoopPeriodMs));
     }
 
-    PLOG_INFO << "Shutting down — stopping rover outputs";
+    PLOG_INFO << "Shutting down — stopping cameras and rover outputs";
+    camera_pipeline.stopAllFeeders();
     server.stop();
     if (rover != nullptr) {
         rover->stop();

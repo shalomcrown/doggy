@@ -2,10 +2,13 @@
 #include "config.h"
 
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <optional>
 #include <string>
+
+namespace fs = std::filesystem;
 
 static int failures = 0;
 
@@ -55,6 +58,50 @@ public:
 
 // ================================================================================
 
+class LiveCounter {
+public:
+    int live = 0;
+};
+
+// ================================================================================
+
+class CountingFake final : public CameraProcess {
+public:
+    explicit CountingFake(LiveCounter *counter) : counter_(counter) {
+    }
+
+    // ================================================================================
+
+    bool start(const CameraProcessSpec &) override {
+        if (active_ == false) {
+            counter_->live += 1;
+            active_ = true;
+        }
+        return true;
+    }
+
+    // ================================================================================
+
+    bool running() override {
+        return active_;
+    }
+
+    // ================================================================================
+
+    void stop() override {
+        if (active_) {
+            counter_->live -= 1;
+            active_ = false;
+        }
+    }
+
+private:
+    LiveCounter *counter_ = nullptr;
+    bool active_ = false;
+};
+
+// ================================================================================
+
 class FakeCameraDiscovery final : public CameraDiscovery {
 public:
     bool has_rpi = false;
@@ -74,6 +121,36 @@ public:
         probes += 1;
         return v4l2_device;
     }
+
+    // ================================================================================
+
+    std::vector<V4l2CaptureDevice> listV4l2CaptureDevices() override {
+        probes += 1;
+        std::vector<V4l2CaptureDevice> devices;
+        for (const std::optional<std::string> &entry : v4l2_devices) {
+            if (entry.has_value() == false) {
+                continue;
+            }
+
+            V4l2CaptureDevice device;
+            device.device = *entry;
+            device.name = "USB camera";
+            device.stable_id = "usb-" + *entry;
+            devices.push_back(device);
+        }
+
+        if (devices.empty() && v4l2_device.has_value()) {
+            V4l2CaptureDevice device;
+            device.device = *v4l2_device;
+            device.name = "USB camera";
+            device.stable_id = "usb-" + *v4l2_device;
+            devices.push_back(device);
+        }
+
+        return devices;
+    }
+
+    std::vector<std::optional<std::string>> v4l2_devices;
 };
 
 // ================================================================================
@@ -136,6 +213,10 @@ int main() {
     expect(has_arg_pair(
                     rpi_process_ptr->last_spec, "--rotation", "180"),
            "Raspberry Pi camera applies default rotation in rpicam-vid");
+    expect(has_arg(rpi_process_ptr->last_spec, "--low-latency"),
+           "Raspberry Pi camera enables low-latency encode");
+    expect(has_arg_pair(rpi_process_ptr->last_spec, "-g", "4"),
+           "Raspberry Pi camera uses quarter-second GOP at 15 fps");
     expect(first.streams.items_size() == 1
                     && first.streams.items(0).webrtc_url()
                             == "https://rover.local:8889/cam0/whep",
@@ -178,9 +259,14 @@ int main() {
                     && usb_process_ptr->last_spec.commands.size() == 1,
            "V4L2 camera uses one ffmpeg command");
     expect(has_arg(usb_process_ptr->last_spec, "/dev/video7")
-                    && has_arg(usb_process_ptr->last_spec, "libx264")
+                    && has_arg(usb_process_ptr->last_spec, "mjpeg")
+                    && has_arg(usb_process_ptr->last_spec, "nobuffer"),
+           "V4L2 camera uses low-latency MJPEG capture");
+    expect(has_arg_pair(usb_process_ptr->last_spec, "-g", "4"),
+           "V4L2 camera uses quarter-second GOP at 15 fps");
+    expect(has_arg(usb_process_ptr->last_spec, "libx264")
                     && has_arg(usb_process_ptr->last_spec, "baseline"),
-           "V4L2 camera uses configured device and H264 Baseline");
+           "V4L2 camera uses software H.264 baseline encode");
     expect(has_arg(usb_process_ptr->last_spec, "-vf")
                     && has_arg(usb_process_ptr->last_spec, "hflip,vflip"),
            "V4L2 camera applies default 180 degree rotation");
@@ -216,6 +302,72 @@ int main() {
     expect(failed_pipeline.query(defaults, "rover.local").result
                     == CameraResult::failed,
            "camera launch failure is reported");
+
+    auto stereo_process = std::make_unique<FakeCameraProcess>();
+    FakeCameraProcess *stereo_process_ptr = stereo_process.get();
+    auto stereo_discovery = std::make_unique<FakeCameraDiscovery>();
+    stereo_discovery->has_rpi = true;
+    stereo_discovery->v4l2_devices = {std::optional<std::string>{"/dev/video2"},
+            std::optional<std::string>{"/dev/video4"}};
+    CameraPipeline stereo_pipeline(
+            std::move(stereo_process), std::move(stereo_discovery));
+
+    Config stereo_config = defaults;
+    for (doggy::v1::Camera &camera : *stereo_config.mutable_cameras()->mutable_items()) {
+        if (camera.id() == "usb_left" || camera.id() == "usb_right") {
+            camera.set_enabled(true);
+        }
+    }
+
+    const CameraQueryResult stereo_result =
+            stereo_pipeline.query(stereo_config, "rover.local");
+    expect(stereo_result.result == CameraResult::ok
+                    && stereo_result.streams.items_size() == 3,
+           "enabled primary and stereo cameras return three streams");
+    expect(stereo_process_ptr->starts >= 3,
+           "stereo query starts feeders for each enabled camera");
+    expect(stereo_result.persist_stereo.has_value(),
+           "first stereo query persists default bindings in config");
+
+    StereoBindings bindings = *stereo_result.persist_stereo;
+    stereo_bindings_swap(&bindings);
+    stereo_bindings_apply(&stereo_config, bindings);
+    const CameraQueryResult swapped_query =
+            stereo_pipeline.query(stereo_config, "rover.local");
+    expect(swapped_query.result == CameraResult::ok,
+           "stereo query works after bindings are swapped in config");
+
+    LiveCounter independent_counter;
+    auto independent_discovery = std::make_unique<FakeCameraDiscovery>();
+    independent_discovery->has_rpi = true;
+    independent_discovery->v4l2_devices = {
+            std::optional<std::string>{"/dev/video0"},
+            std::optional<std::string>{"/dev/video2"}};
+    CameraPipeline independent_pipeline(
+            [&independent_counter] {
+                return std::make_unique<CountingFake>(&independent_counter);
+            },
+            std::move(independent_discovery));
+    Config independent_config = default_config();
+    for (doggy::v1::Camera &camera :
+            *independent_config.mutable_cameras()->mutable_items()) {
+        if (camera.id() == "usb_left" || camera.id() == "usb_right") {
+            camera.set_enabled(true);
+        }
+    }
+    const CameraQueryResult independent_first =
+            independent_pipeline.query(independent_config, "rover.local");
+    expect(independent_first.result == CameraResult::ok
+                    && independent_counter.live == 3,
+           "each enabled camera uses an independent feeder process");
+    const CameraQueryResult independent_second =
+            independent_pipeline.query(independent_config, "rover.local");
+    expect(independent_second.streams.items(0).ready()
+                    && independent_second.streams.items(1).ready()
+                    && independent_second.streams.items(2).ready(),
+           "all streams stay ready on a healthy multi-camera query");
+    expect(independent_counter.live == 3,
+           "healthy multi-camera query keeps all feeders running");
 
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

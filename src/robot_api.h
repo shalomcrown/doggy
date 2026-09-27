@@ -2,6 +2,7 @@
 #define ROBOT_API_H
 
 #include "config.h"
+#include "stereo_bindings.h"
 
 #include <chrono>
 #include <memory>
@@ -54,6 +55,8 @@ public:
     virtual CommandResult requestSystemAction(SystemAction action, const std::string &pin);
     virtual CommandResult setSystemPin(const std::string &pin,
                                        const std::string &current_pin);
+
+    CommandResult saveStereoBindings(const StereoBindings &bindings);
 
 protected:
     Config config_;

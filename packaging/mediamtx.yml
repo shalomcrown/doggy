@@ -21,3 +21,9 @@ pathDefaults:
 paths:
   all_others:
     source: publisher
+  usb_left:
+    source: publisher
+    record: false
+  usb_right:
+    source: publisher
+    record: false

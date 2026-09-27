@@ -162,6 +162,13 @@ message Media {
 
 // ================================================================================
 
+message CameraPair {
+  optional string left_stable_id = 1;
+  optional string right_stable_id = 2;
+}
+
+// ================================================================================
+
 message Config {
   optional Robot robot = 1;
   optional I2cConfig i2c = 2;
@@ -172,6 +179,7 @@ message Config {
   optional string pin = 7;
   optional Cameras cameras = 8;
   optional Media media = 9;
+  optional CameraPair camera_pair = 10;
 }
 
 // ================================================================================
@@ -241,6 +249,28 @@ message CameraStream {
 
 message CameraStreamList {
   repeated CameraStream items = 1;
+}
+
+// ================================================================================
+
+message CameraDevice {
+  optional string stable_id = 1;
+  optional string device = 2;
+  optional string name = 3;
+  optional string role = 4;
+}
+
+// ================================================================================
+
+message CameraDeviceList {
+  repeated CameraDevice items = 1;
+}
+
+// ================================================================================
+
+message CameraPairAssignRequest {
+  optional string left = 1;
+  optional string right = 2;
 }
 
 // ================================================================================

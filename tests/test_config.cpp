@@ -33,8 +33,9 @@ int main() {
            "low-speed turn gain defaults to 0.25");
     expect(defaults.media().retain_hours() == 24,
            "media retention defaults to 24 hours");
-    expect(defaults.cameras().items_size() == 1
-                    && defaults.cameras().items(0).id() == "cam0"
+    expect(defaults.cameras().items_size() == 3,
+           "default config includes primary and USB pair camera entries");
+    expect(defaults.cameras().items(0).id() == "cam0"
                     && defaults.cameras().items(0).source() == "auto"
                     && defaults.cameras().items(0).width() == 1280
                     && defaults.cameras().items(0).height() == 720
@@ -42,6 +43,14 @@ int main() {
                     && defaults.cameras().items(0).rotation_deg() == 180
                     && defaults.cameras().items(0).enabled(),
            "camera defaults to enabled cam0 auto at 1280x720 15fps rotated 180");
+    expect(defaults.cameras().items(1).id() == "usb_left"
+                    && defaults.cameras().items(1).enabled() == false
+                    && defaults.cameras().items(1).width() == 1280
+                    && defaults.cameras().items(1).height() == 720,
+           "usb_left defaults to disabled 1280x720 v4l2");
+    expect(defaults.cameras().items(2).id() == "usb_right"
+                    && defaults.cameras().items(2).enabled() == false,
+           "usb_right defaults to disabled");
     expect(defaults.motors().front_left().pwm() == 2
                     && defaults.motors().front_left().in2() == 3
                     && defaults.motors().front_left().in1() == 4,

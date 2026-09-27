@@ -199,6 +199,7 @@ target_link_libraries(doggy_log PUBLIC plog::plog ${DOGGY_ZLIB})
 
 add_library(doggy_web STATIC
     src/camera_pipeline.cpp
+    src/stereo_bindings.cpp
     src/media_store.cpp
     src/web_server.cpp
     src/robot_api.cpp
@@ -365,6 +366,7 @@ add_test(
 add_executable(test_pwm_math
     tests/test_pwm_math.cpp
     src/config.cpp
+    src/stereo_bindings.cpp
     src/utils.cpp
     "${DOGGY_PB_CC}"
 )
@@ -402,6 +404,7 @@ add_executable(test_rover_drive
     src/pca9685.cpp
     src/i2c_interface.cpp
     src/config.cpp
+    src/stereo_bindings.cpp
     src/utils.cpp
     src/robot_api.cpp
     src/system_control.cpp
@@ -426,6 +429,10 @@ add_executable(test_camera_pipeline tests/test_camera_pipeline.cpp)
 target_link_libraries(test_camera_pipeline PRIVATE doggy_web)
 add_test(NAME camera_pipeline COMMAND test_camera_pipeline)
 
+add_executable(test_stereo_bindings tests/test_stereo_bindings.cpp)
+target_link_libraries(test_stereo_bindings PRIVATE doggy_web)
+add_test(NAME stereo_bindings COMMAND test_stereo_bindings)
+
 add_executable(test_media_store tests/test_media_store.cpp)
 target_link_libraries(test_media_store PRIVATE doggy_web)
 add_test(NAME media_store COMMAND test_media_store)
@@ -440,6 +447,7 @@ add_executable(test_dog_poll
     src/pca9685.cpp
     src/i2c_interface.cpp
     src/config.cpp
+    src/stereo_bindings.cpp
     src/utils.cpp
     src/robot_api.cpp
     src/system_control.cpp
@@ -471,6 +479,7 @@ add_test(NAME utils COMMAND test_utils)
 add_executable(test_config
     tests/test_config.cpp
     src/config.cpp
+    src/stereo_bindings.cpp
     src/utils.cpp
     "${DOGGY_PB_CC}"
 )

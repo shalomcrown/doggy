@@ -1,5 +1,6 @@
 #include "robot_api.h"
 
+#include "stereo_bindings.h"
 #include "system_control.h"
 
 #include <plog/Log.h>
@@ -108,6 +109,28 @@ CommandResult RobotApi::requestSystemAction(SystemAction action, const std::stri
 
     scheduleSystemActionUnlocked(action);
     return CommandResult::ok;
+}
+
+// ================================================================================
+
+CommandResult RobotApi::saveStereoBindings(const StereoBindings &bindings) {
+    if (bindings.left_stable_id.empty() == false
+            && stereo_bindings_stable_id_ok(bindings.left_stable_id) == false) {
+        return CommandResult::failed;
+    }
+    if (bindings.right_stable_id.empty() == false
+            && stereo_bindings_stable_id_ok(bindings.right_stable_id) == false) {
+        return CommandResult::failed;
+    }
+
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+    if (lock.owns_lock() == false || system_action_pending_) {
+        return CommandResult::busy;
+    }
+
+    Config next = config_;
+    stereo_bindings_apply(&next, bindings);
+    return saveConfigUnlocked(next);
 }
 
 // ================================================================================

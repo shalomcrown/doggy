@@ -563,6 +563,9 @@ class MediaMTXWebRTCReader {
   }
 
   #onTrack(evt) {
+    if (evt.receiver != null && 'playoutDelayHint' in evt.receiver) {
+      evt.receiver.playoutDelayHint = 0;
+    }
     if (this.conf.onTrack !== undefined) {
       this.conf.onTrack(evt);
     }

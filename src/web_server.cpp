@@ -1,5 +1,6 @@
 #include "web_server.h"
 #include "camera_pipeline.h"
+#include "stereo_bindings.h"
 #include "dog_api.h"
 #include "media_store.h"
 #include "rover_api.h"
@@ -31,6 +32,20 @@ inline constexpr std::size_t kMaxLoggedJsonBody = 16384;
 // ================================================================================
 
 namespace {
+
+// ================================================================================
+
+bool camera_pair_stable_id_detected(
+        const doggy::v1::CameraDeviceList &devices,
+        const std::string &stable_id) {
+    for (const doggy::v1::CameraDevice &device : devices.items()) {
+        if (device.stable_id() == stable_id) {
+            return true;
+        }
+    }
+
+    return false;
+}
 
 // ================================================================================
 
@@ -77,6 +92,98 @@ std::string error_json(const char *code) {
 std::string error_json(const char *code, const std::string &message) {
     return std::string("{\"error\":\"") + code + "\",\"message\":\""
             + json_escape(message) + "\"}";
+}
+
+// ================================================================================
+
+void handle_camera_pair_swap(
+        RobotApi &api,
+        CameraPipeline *camera_pipeline,
+        httplib::Response &res) {
+    if (camera_pipeline == nullptr) {
+        res.status = 404;
+        res.set_content(error_json("not_found"), "application/json");
+        return;
+    }
+
+    StereoBindings bindings = stereo_bindings_from_config(api.getConfig());
+    if (bindings.left_stable_id.empty() || bindings.right_stable_id.empty()) {
+        res.status = 400;
+        res.set_content(error_json("bad_request"), "application/json");
+        return;
+    }
+
+    stereo_bindings_swap(&bindings);
+    const CommandResult saved = api.saveStereoBindings(bindings);
+    if (saved == CommandResult::busy) {
+        res.status = 409;
+        res.set_content(error_json("busy"), "application/json");
+        return;
+    }
+    if (saved != CommandResult::ok) {
+        res.status = 500;
+        res.set_content(error_json("config_write"), "application/json");
+        return;
+    }
+
+    camera_pipeline->invalidateStereoFeeders();
+    res.status = 200;
+    res.set_content("{}", "application/json");
+}
+
+// ================================================================================
+
+void handle_camera_pair_assign(
+        RobotApi &api,
+        CameraPipeline *camera_pipeline,
+        const httplib::Request &req,
+        httplib::Response &res) {
+    if (camera_pipeline == nullptr) {
+        res.status = 404;
+        res.set_content(error_json("not_found"), "application/json");
+        return;
+    }
+
+    doggy::v1::CameraPairAssignRequest body;
+    if (proto_from_json(req.body, body) == false
+            || body.left().empty()
+            || body.right().empty()) {
+        res.status = 400;
+        res.set_content(error_json("bad_json"), "application/json");
+        return;
+    }
+
+    const doggy::v1::CameraDeviceList devices =
+            camera_pipeline->listDevices(api.getConfig());
+    if (camera_pair_stable_id_detected(devices, body.left()) == false
+            || camera_pair_stable_id_detected(devices, body.right()) == false) {
+        res.status = 400;
+        res.set_content(error_json("bad_request"), "application/json");
+        return;
+    }
+
+    StereoBindings bindings = stereo_bindings_from_config(api.getConfig());
+    if (stereo_bindings_assign(&bindings, body.left(), body.right()) == false) {
+        res.status = 400;
+        res.set_content(error_json("bad_request"), "application/json");
+        return;
+    }
+
+    const CommandResult saved = api.saveStereoBindings(bindings);
+    if (saved == CommandResult::busy) {
+        res.status = 409;
+        res.set_content(error_json("busy"), "application/json");
+        return;
+    }
+    if (saved != CommandResult::ok) {
+        res.status = 500;
+        res.set_content(error_json("config_write"), "application/json");
+        return;
+    }
+
+    camera_pipeline->invalidateStereoFeeders();
+    res.status = 200;
+    res.set_content("{}", "application/json");
 }
 
 // ================================================================================
@@ -347,6 +454,20 @@ void register_api(httplib::Server &server, RobotApi &api,
         }
         const CameraQueryResult result =
                 camera_pipeline->query(api.getConfig(), host);
+        if (result.persist_stereo.has_value()) {
+            const CommandResult saved =
+                    api.saveStereoBindings(*result.persist_stereo);
+            if (saved == CommandResult::busy) {
+                res.status = 409;
+                res.set_content(error_json("busy"), "application/json");
+                return;
+            }
+            if (saved != CommandResult::ok) {
+                res.status = 500;
+                res.set_content(error_json("config_write"), "application/json");
+                return;
+            }
+        }
         if (result.result == CameraResult::not_found) {
             res.status = 404;
             res.set_content(error_json("not_found"), "application/json");
@@ -358,6 +479,37 @@ void register_api(httplib::Server &server, RobotApi &api,
             return;
         }
         res.set_content(proto_to_json(result.streams), "application/json");
+    });
+
+    server.Get("/api/camera-devices", [&api, camera_pipeline](
+            const httplib::Request &, httplib::Response &res) {
+        if (camera_pipeline == nullptr) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+
+        res.set_content(
+                proto_to_json(camera_pipeline->listDevices(api.getConfig())),
+                "application/json");
+    });
+
+    server.Post("/api/camera-pair/swap", [&api, camera_pipeline](
+            const httplib::Request &, httplib::Response &res) {
+        handle_camera_pair_swap(api, camera_pipeline, res);
+    });
+    server.Post("/api/stereo/swap", [&api, camera_pipeline](
+            const httplib::Request &, httplib::Response &res) {
+        handle_camera_pair_swap(api, camera_pipeline, res);
+    });
+
+    server.Post("/api/camera-pair/assign", [&api, camera_pipeline](
+            const httplib::Request &req, httplib::Response &res) {
+        handle_camera_pair_assign(api, camera_pipeline, req, res);
+    });
+    server.Post("/api/stereo/assign", [&api, camera_pipeline](
+            const httplib::Request &req, httplib::Response &res) {
+        handle_camera_pair_assign(api, camera_pipeline, req, res);
     });
 
     server.Get("/api/recordings", [media_store](

@@ -869,6 +869,9 @@ int main() {
            "rover page has steering slider");
     expect(rover_page && rover_page->body.find("id=\"speed\"") != std::string::npos,
            "rover page has speed slider");
+    expect(rover_page && rover_page->body.find("id=\"stereo-swap\"") != std::string::npos
+                   && rover_page->body.find("stereo-left-video") != std::string::npos,
+           "rover page shows stereo row and swap control");
     expect(rover_page && rover_page->body.find("class=\"drive-layout\"") != std::string::npos,
            "rover drive row lays out sliders, camera, and joystick");
     expect(rover_page && rover_page->body.find("id=\"drive-video\"") != std::string::npos,
@@ -1000,8 +1003,25 @@ int main() {
     auto rover_cameras = rover_cli.Get("/api/cameras");
     expect(rover_cameras && rover_cameras->status == 200,
            "GET /api/cameras works on rover");
-    expect(camera_process_ptr->starts == 1,
-           "rover camera GET reuses the running feeder");
+    const int rover_camera_starts = camera_process_ptr->starts;
+    auto rover_cameras_again = rover_cli.Get("/api/cameras");
+    expect(rover_cameras_again && rover_cameras_again->status == 200,
+           "second GET /api/cameras works on rover");
+    expect(camera_process_ptr->starts == rover_camera_starts,
+           "second rover camera GET reuses the running feeder");
+    auto camera_devices = rover_cli.Get("/api/camera-devices");
+    expect(camera_devices && camera_devices->status == 200
+                   && camera_devices->body.find("\"items\"") != std::string::npos,
+           "GET /api/camera-devices lists capture hardware");
+    auto stereo_swap = rover_cli.Post("/api/stereo/swap", "", "text/plain");
+    expect(stereo_swap && stereo_swap->status == 400,
+           "POST /api/stereo/swap without bindings is 400");
+    auto stereo_assign = rover_cli.Post(
+            "/api/stereo/assign",
+            R"({"left":"usb-a","right":"usb-b"})",
+            "application/json");
+    expect(stereo_assign && stereo_assign->status == 400,
+           "POST /api/stereo/assign rejects unknown stable ids");
     auto heartbeat = rover_cli.Post("/api/heartbeat", "", "text/plain");
     expect(heartbeat && heartbeat->status == 200,
            "POST /api/heartbeat on rover is 200");
