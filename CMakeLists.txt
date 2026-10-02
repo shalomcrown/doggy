@@ -198,6 +198,8 @@ target_link_libraries(doggy_log PUBLIC plog::plog ${DOGGY_ZLIB})
 # ==============================================================================
 
 add_library(doggy_web STATIC
+    src/gps_parse.cpp
+    src/gps_service.cpp
     src/camera_pipeline.cpp
     src/stereo_bindings.cpp
     src/media_store.cpp
@@ -365,6 +367,7 @@ add_test(
 
 add_executable(test_pwm_math
     tests/test_pwm_math.cpp
+    src/gps_parse.cpp
     src/config.cpp
     src/stereo_bindings.cpp
     src/utils.cpp
@@ -397,6 +400,8 @@ add_test(NAME motor_math COMMAND test_motor_math)
 
 add_executable(test_rover_drive
     tests/test_rover_drive.cpp
+    src/gps_parse.cpp
+    src/gps_service.cpp
     src/rover.cpp
     src/imu.cpp
     src/ads7830.cpp
@@ -439,6 +444,8 @@ add_test(NAME media_store COMMAND test_media_store)
 
 add_executable(test_dog_poll
     tests/test_dog_poll.cpp
+    src/gps_parse.cpp
+    src/gps_service.cpp
     src/doggy.cpp
     src/imu.cpp
     src/ads7830.cpp
@@ -476,8 +483,22 @@ add_executable(test_utils
 target_include_directories(test_utils PRIVATE "${CMAKE_SOURCE_DIR}/src")
 add_test(NAME utils COMMAND test_utils)
 
+add_executable(test_gps
+    tests/test_gps.cpp
+    src/gps_parse.cpp
+    "${DOGGY_PB_CC}"
+)
+target_include_directories(test_gps PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+    "${CMAKE_BINARY_DIR}/generated"
+)
+target_link_libraries(test_gps PRIVATE protobuf::libprotobuf)
+add_dependencies(test_gps doggy_proto)
+add_test(NAME gps COMMAND test_gps)
+
 add_executable(test_config
     tests/test_config.cpp
+    src/gps_parse.cpp
     src/config.cpp
     src/stereo_bindings.cpp
     src/utils.cpp

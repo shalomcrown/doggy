@@ -1,4 +1,5 @@
 #include "rover.h"
+#include "gps.h"
 #include "motor_math.h"
 
 #include <plog/Log.h>
@@ -515,6 +516,7 @@ DogStatus Rover::getStatus() const {
         *copy.mutable_motors()->add_items() = item;
     }
     copy.clear_servos();
+    gps_service_attach(&copy);
     return copy;
 }
 
@@ -552,6 +554,7 @@ CommandResult Rover::replaceConfig(const Config &config, const std::string &pin)
         }
         return saved;
     }
+    gps_service_apply(config.gps());
     if (type_changed) {
         scheduleSystemActionUnlocked(SystemAction::restart);
         return CommandResult::ok;

@@ -464,8 +464,9 @@ int main() {
                               < page->body.find("id=\"config\""),
            "dog page rules off the configuration section");
     expect(page && page->body.find("[\"robot\", \"turn_gain_min\"]") != std::string::npos
-                   && page->body.find("[\"media\", \"retain_hours\"]") != std::string::npos,
-           "dog page edits turn gain and media retention");
+                   && page->body.find("[\"media\", \"retain_hours\"]") != std::string::npos
+                   && page->body.find("[\"media\", \"min_free_mb\"]") != std::string::npos,
+           "dog page edits turn gain, media retention, and min free space");
     expect(page && page->body.find("toISOString()") != std::string::npos,
            "dog page formats Linux time as UTC ISO-8601");
     expect(page && page->body.find("id=\"imu\"") != std::string::npos,
@@ -532,6 +533,13 @@ int main() {
            "dog page uses HF/LF dongle select for lora.band");
     expect(page && page->body.find("lora-baud") != std::string::npos,
            "dog page can set lora serial baud");
+    expect(page && page->body.find("[\"gps\", \"enabled\"]") != std::string::npos
+                    && page->body.find("gps-type") != std::string::npos
+                    && page->body.find("gps-device") != std::string::npos
+                    && page->body.find("gps-baud") != std::string::npos
+                    && page->body.find("921600") != std::string::npos
+                    && page->body.find("GPS changes apply on save") != std::string::npos,
+           "dog page can edit GPS settings");
     expect(page && page->body.find("[\"lora\", \"lbt\"]") != std::string::npos,
            "dog page can set numeric lora LBT");
     expect(page && page->body.find("[\"robot\", \"gcs_timeout_s\"]")
@@ -917,8 +925,10 @@ int main() {
            "rover page formats Linux time as UTC ISO-8601");
     expect(rover_page
                    && rover_page->body.find("[\"robot\", \"gcs_timeout_s\"]")
+                              != std::string::npos
+                   && rover_page->body.find("[\"media\", \"min_free_mb\"]")
                               != std::string::npos,
-           "rover page edits the GCS timeout");
+           "rover page edits the GCS timeout and min free space");
     expect(rover_page
                    && rover_page->body.find("camera-rotation")
                               != std::string::npos
@@ -977,6 +987,13 @@ int main() {
            "rover page uses HF/LF dongle select for lora.band");
     expect(rover_page && rover_page->body.find("lora-baud") != std::string::npos,
            "rover page can set lora serial baud");
+    expect(rover_page && rover_page->body.find("[\"gps\", \"enabled\"]") != std::string::npos
+                    && rover_page->body.find("gps-type") != std::string::npos
+                    && rover_page->body.find("gps-device") != std::string::npos
+                    && rover_page->body.find("gps-baud") != std::string::npos
+                    && rover_page->body.find("921600") != std::string::npos
+                    && rover_page->body.find("GPS changes apply on save") != std::string::npos,
+           "rover page can edit GPS settings");
     expect(rover_page && rover_page->body.find("[\"motors\", key, \"pwm\"]")
                    != std::string::npos
                    && rover_page->body.find("[\"motors\", key, \"in1\"]")

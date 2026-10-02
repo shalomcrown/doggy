@@ -1,8 +1,8 @@
 [Unit]
-Description=Hourly doggy media retention
+Description=Doggy media retention every 15 minutes
 
 [Timer]
-OnCalendar=hourly
+OnCalendar=*:0/15
 Persistent=true
 
 [Install]

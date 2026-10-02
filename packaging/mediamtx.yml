@@ -15,7 +15,7 @@ pathDefaults:
   recordPath: /var/lib/doggy/recordings/__HOSTNAME__-%path-%Y-%m-%d-%H%M%S
   recordFormat: mpegts
   recordPartDuration: 1s
-  recordSegmentDuration: 1h
+  recordSegmentDuration: 15m
   recordDeleteAfter: 0s
 
 paths:

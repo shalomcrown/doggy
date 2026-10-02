@@ -33,6 +33,7 @@ enum ErrorCode {
   i2c = 0;
   gcs = 1;
   camera = 2;
+  gps = 3;
 }
 
 // ================================================================================
@@ -158,6 +159,7 @@ message Cameras {
 
 message Media {
   optional uint32 retain_hours = 1;
+  optional uint32 min_free_mb = 2;
 }
 
 // ================================================================================
@@ -165,6 +167,15 @@ message Media {
 message CameraPair {
   optional string left_stable_id = 1;
   optional string right_stable_id = 2;
+}
+
+// ================================================================================
+
+message GpsConfig {
+  optional bool enabled = 1;
+  optional string type = 2;
+  optional string device = 3;
+  optional int32 baud = 4;
 }
 
 // ================================================================================
@@ -180,6 +191,7 @@ message Config {
   optional Cameras cameras = 8;
   optional Media media = 9;
   optional CameraPair camera_pair = 10;
+  optional GpsConfig gps = 11;
 }
 
 // ================================================================================
@@ -289,6 +301,53 @@ message MediaFileList {
 
 // ================================================================================
 
+enum GpsFixType {
+  GPS_FIX_NO_GPS = 0;
+  GPS_FIX_NO_FIX = 1;
+  GPS_FIX_2D = 2;
+  GPS_FIX_3D = 3;
+  GPS_FIX_DGPS = 4;
+  GPS_FIX_RTK_FLOAT = 5;
+  GPS_FIX_RTK_FIXED = 6;
+  GPS_FIX_STATIC = 7;
+  GPS_FIX_PPP = 8;
+}
+
+// ================================================================================
+
+enum GpsSpoofing {
+  GPS_SPOOF_UNKNOWN = 0;
+  GPS_SPOOF_NONE = 1;
+  GPS_SPOOF_INDICATED = 2;
+  GPS_SPOOF_MULTIPLE = 3;
+}
+
+// ================================================================================
+
+enum GpsJamming {
+  GPS_JAM_UNKNOWN = 0;
+  GPS_JAM_OK = 1;
+  GPS_JAM_WARNING = 2;
+  GPS_JAM_CRITICAL = 3;
+}
+
+// ================================================================================
+
+message Gps {
+  optional bool ok = 1;
+  optional int64 fix_unix_ms = 2;
+  optional double latitude_deg = 3;
+  optional double longitude_deg = 4;
+  optional double altitude_amsl_m = 5;
+  optional int32 satellites = 6;
+  optional GpsFixType fix_type = 7;
+  optional double accuracy_m = 8;
+  optional GpsSpoofing spoofing = 9;
+  optional GpsJamming jamming = 10;
+}
+
+// ================================================================================
+
 message Status {
   optional RobotType type = 1;
   optional string version = 2;
@@ -300,6 +359,7 @@ message Status {
   optional double turn = 8;
   optional MotorList motors = 9;
   optional int64 unix_time = 10;
+  optional Gps gps = 11;
 }
 
 // ================================================================================

@@ -1,4 +1,5 @@
 #include "config.h"
+#include "gps.h"
 #include "camera_ids.h"
 #include "stereo_bindings.h"
 #include "utils.h"
@@ -9,6 +10,7 @@
 
 #include <array>
 #include <cctype>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -21,6 +23,9 @@
 #include <vector>
 
 namespace fs = std::filesystem;
+
+static constexpr int kDefaultCameraFps = 15;
+static constexpr int kDefaultUsbCameraFps = 5;
 
 // ================================================================================
 
@@ -133,6 +138,35 @@ static void validate_motor(
 
 // ================================================================================
 
+static void validate_gps(const doggy::v1::GpsConfig &gps) {
+    if (gps.type() != "auto"
+            && gps.type() != "nmea"
+            && gps.type() != "ublox"
+            && gps.type() != "septentrio"
+            && gps.type() != "novatel") {
+        throw ConfigError("config gps.type must be auto, nmea, ublox, septentrio, or novatel");
+    }
+    switch (gps.baud()) {
+        case 4800:
+        case 9600:
+        case 19200:
+        case 38400:
+        case 57600:
+        case 115200:
+        case 230400:
+        case 460800:
+        case 921600:
+            break;
+        default:
+            throw ConfigError("config gps.baud is not a supported serial rate");
+    }
+    if (gps_device_path_allowed(gps.device()) == false) {
+        throw ConfigError("config gps.device must be a serial path");
+    }
+}
+
+// ================================================================================
+
 static void validate_cameras(const doggy::v1::Cameras &cameras) {
     std::set<std::string> ids;
     for (const doggy::v1::Camera &camera : cameras.items()) {
@@ -192,6 +226,9 @@ static void validate_media(const doggy::v1::Media &media) {
     if (media.retain_hours() < 1 || media.retain_hours() > 168) {
         throw ConfigError("config media.retain_hours out of range");
     }
+    if (media.min_free_mb() < 64 || media.min_free_mb() > 1048576) {
+        throw ConfigError("config media.min_free_mb out of range");
+    }
 }
 
 // ================================================================================
@@ -233,6 +270,7 @@ static void validate_config(const Config &config) {
         validate_camera_pair(config.camera_pair());
     }
     validate_media(config.media());
+    validate_gps(config.gps());
 }
 
 // ================================================================================
@@ -274,6 +312,18 @@ void fill_config_defaults(Config &config) {
     if (config.media().has_retain_hours() == false) {
         config.mutable_media()->set_retain_hours(24);
     }
+    if (config.media().has_min_free_mb() == false) {
+        config.mutable_media()->set_min_free_mb(512);
+    }
+    if (config.gps().has_enabled() == false) {
+        config.mutable_gps()->set_enabled(false);
+    }
+    if (config.gps().has_type() == false || config.gps().type().empty()) {
+        config.mutable_gps()->set_type("auto");
+    }
+    if (config.gps().has_baud() == false) {
+        config.mutable_gps()->set_baud(115200);
+    }
     if (config.cameras().items_size() == 0) {
         config.mutable_cameras()->add_items();
     }
@@ -305,7 +355,9 @@ void fill_config_defaults(Config &config) {
             camera->set_height(720);
         }
         if (camera->has_fps() == false) {
-            camera->set_fps(15);
+            camera->set_fps(camera->source() == "v4l2"
+                            ? kDefaultUsbCameraFps
+                            : kDefaultCameraFps);
         }
         if (camera->has_rotation_deg() == false) {
             camera->set_rotation_deg(180);
@@ -332,7 +384,7 @@ void fill_config_defaults(Config &config) {
         camera->set_source("v4l2");
         camera->set_width(1280);
         camera->set_height(720);
-        camera->set_fps(15);
+        camera->set_fps(kDefaultUsbCameraFps);
         camera->set_rotation_deg(180);
         camera->set_enabled(false);
     };
@@ -694,34 +746,97 @@ Config config_load_file(const std::string &path) {
 
 // ================================================================================
 
+static void remove_quietly(const fs::path &path) {
+    std::error_code error;
+    fs::remove(path, error);
+}
+
+// ================================================================================
+
+static void throw_config_write(const std::string &path) {
+    throw ConfigError("could not write config file: " + path);
+}
+
+// ================================================================================
+
+static void write_config_temp(
+        const fs::path &temp,
+        const std::string &json,
+        bool secret,
+        const std::string &path) {
+    const mode_t mode = secret ? static_cast<mode_t>(0600) : static_cast<mode_t>(0666);
+    const int fd = open(
+            temp.c_str(),
+            O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW,
+            mode);
+    if (fd < 0) {
+        throw_config_write(path);
+    }
+
+    if (secret && fchmod(fd, 0600) != 0) {
+        close(fd);
+        remove_quietly(temp);
+        throw_config_write(path);
+    }
+
+    const char *data = json.data();
+    std::size_t remaining = json.size();
+    while (remaining > 0) {
+        const ssize_t wrote = write(fd, data, remaining);
+        if (wrote < 0 && errno == EINTR) {
+            continue;
+        }
+        if (wrote <= 0) {
+            close(fd);
+            remove_quietly(temp);
+            throw_config_write(path);
+        }
+        data += wrote;
+        remaining -= static_cast<std::size_t>(wrote);
+    }
+
+    const int sync_result = fsync(fd);
+    const int close_result = close(fd);
+    if (sync_result != 0 || close_result != 0) {
+        remove_quietly(temp);
+        throw_config_write(path);
+    }
+}
+
+// ================================================================================
+
 void config_save_file(const Config &config, const std::string &path) {
     const fs::path file(path);
     if (file.has_parent_path()) {
         fs::create_directories(file.parent_path());
     }
-    if (config.lora().air_key().empty() == false) {
-        const int fd = open(path.c_str(), O_WRONLY | O_CREAT, 0600);
-        if (fd < 0) {
-            throw ConfigError("could not secure config file: " + path);
-        }
-        const int chmod_result = fchmod(fd, 0600);
-        close(fd);
-        if (chmod_result != 0) {
-            throw ConfigError("could not secure config file: " + path);
-        }
+
+    const std::string json = config_to_json(config);
+    if (json.empty()) {
+        throw_config_write(path);
     }
-    std::ofstream out(path);
-    if (out.is_open() == false) {
-        throw ConfigError("could not write config file: " + path);
+
+    const fs::path temp(file.string() + ".tmp");
+    const bool secret = config.lora().air_key().empty() == false;
+    write_config_temp(temp, json, secret, path);
+
+    std::error_code rename_error;
+    fs::rename(temp, file, rename_error);
+    if (rename_error) {
+        remove_quietly(temp);
+        throw_config_write(path);
     }
-    out << config_to_json(config);
-    if (out.fail()) {
-        throw ConfigError("could not write config file: " + path);
+
+    if (file.has_parent_path() == false) {
+        return;
     }
-    out.close();
-    if (config.lora().air_key().empty() == false) {
-        fs::permissions(file, fs::perms::owner_read | fs::perms::owner_write,
-                fs::perm_options::replace);
+
+    const int dir_fd = open(
+            file.parent_path().c_str(),
+            O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (dir_fd >= 0) {
+        fsync(dir_fd);
+        close(dir_fd);
     }
 }
 

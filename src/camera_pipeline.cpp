@@ -41,7 +41,7 @@ static int low_latency_gop_frames(int fps) {
         return 1;
     }
 
-    const int quarter_second = (fps + kLowLatencyGopDivisor - 1) / kLowLatencyGopDivisor;
+    const int quarter_second = fps / kLowLatencyGopDivisor;
     return std::max(1, quarter_second);
 }
 
@@ -416,6 +416,8 @@ static CameraProcessSpec rpi_process_spec(const doggy::v1::Camera &camera) {
             "--height", std::to_string(camera.height()),
             "--framerate", std::to_string(camera.fps()),
             "--rotation", std::to_string(camera.rotation_deg()),
+            "--buffer-count", "2",
+            "--denoise", "off",
             "--codec", "h264",
             "--profile", "baseline",
             "--inline",
@@ -429,12 +431,15 @@ static CameraProcessSpec rpi_process_spec(const doggy::v1::Camera &camera) {
             "-nostdin",
             "-hide_banner",
             "-loglevel", "warning",
+    };
+    append_ffmpeg_low_latency_input(&relay);
+    relay.insert(relay.end(), {
             "-f", "h264",
             "-framerate", std::to_string(camera.fps()),
             "-i", "pipe:0",
             "-an",
             "-c:v", "copy",
-    };
+    });
     append_ffmpeg_low_latency_output(&relay);
     relay.push_back("-f");
     relay.push_back("rtsp");

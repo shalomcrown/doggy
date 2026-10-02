@@ -701,12 +701,12 @@ fi
 if grep -q '^pathDefaults:$' "$MEDIAMTX_CONFIG" \
         && grep -q '^  record: true$' "$MEDIAMTX_CONFIG" \
         && grep -q '^  recordFormat: mpegts$' "$MEDIAMTX_CONFIG" \
-        && grep -q '^  recordSegmentDuration: 1h$' "$MEDIAMTX_CONFIG" \
+        && grep -q '^  recordSegmentDuration: 15m$' "$MEDIAMTX_CONFIG" \
         && grep -q '^  recordDeleteAfter: 0s$' "$MEDIAMTX_CONFIG" \
         && grep -q '^  recordPath: .*__HOSTNAME__.*%path' "$MEDIAMTX_CONFIG"; then
-    pass "MediaMTX records hourly MPEG-TS under pathDefaults with %path"
+    pass "MediaMTX records 15-minute MPEG-TS under pathDefaults with %path"
 else
-    fail "MediaMTX records hourly MPEG-TS under pathDefaults with %path"
+    fail "MediaMTX records 15-minute MPEG-TS under pathDefaults with %path"
 fi
 
 if grep -q '^record:' "$MEDIAMTX_CONFIG" \
@@ -728,13 +728,13 @@ CLEANUP_TIMER="$ROOT/packaging/doggy-cleanup-media.timer"
 CLEANUP_UNIT="$ROOT/packaging/doggy-cleanup-media.service"
 CLEANUP_SCRIPT="$ROOT/packaging/cleanup-media.sh"
 RENDER_SCRIPT="$ROOT/packaging/render-mediamtx-config.sh"
-if [ -f "$CLEANUP_TIMER" ] && grep -q '^OnCalendar=hourly$' "$CLEANUP_TIMER" \
+if [ -f "$CLEANUP_TIMER" ] && grep -q '^OnCalendar=\*:0/15$' "$CLEANUP_TIMER" \
         && grep -q 'cleanup-media.sh' "$CLEANUP_UNIT" \
         && grep -q 'doggy-cleanup-media.timer' "$POSTINST" \
         && grep -q 'ensure_media_dirs' "$POSTINST"; then
-    pass "hourly media cleanup timer is packaged and enabled"
+    pass "15-minute media cleanup timer is packaged and enabled"
 else
-    fail "hourly media cleanup timer is packaged and enabled"
+    fail "15-minute media cleanup timer is packaged and enabled"
 fi
 
 RENDER_OUT="$TMPDIR/mediamtx-rendered.yml"

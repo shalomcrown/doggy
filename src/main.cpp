@@ -8,6 +8,7 @@
 
 #include "config.h"
 #include "camera_pipeline.h"
+#include "gps.h"
 #include "media_store.h"
 #include "dog_status.h"
 #include "doggy.h"
@@ -115,6 +116,7 @@ int main() {
         robot = std::move(instance);
     }
 
+    gps_service_apply(config.gps());
     for (const std::string &message : status_error_messages(robot->getStatus())) {
         PLOG_ERROR << "hardware i2c: " << message;
     }
@@ -132,6 +134,7 @@ int main() {
     if (server.start() == false) {
         std::cerr << "Failed to listen on https://" << listen.bind_host << ":"
                   << https_port << std::endl;
+        gps_service_stop();
         return 1;
     }
 
@@ -161,6 +164,7 @@ int main() {
     if (rover != nullptr) {
         rover->stop();
     }
+    gps_service_stop();
 
     return 0;
 }

@@ -33,6 +33,8 @@ int main() {
            "low-speed turn gain defaults to 0.25");
     expect(defaults.media().retain_hours() == 24,
            "media retention defaults to 24 hours");
+    expect(defaults.media().min_free_mb() == 512,
+           "media min free space defaults to 512 MB");
     expect(defaults.cameras().items_size() == 3,
            "default config includes primary and USB pair camera entries");
     expect(defaults.cameras().items(0).id() == "cam0"
@@ -44,13 +46,17 @@ int main() {
                     && defaults.cameras().items(0).enabled(),
            "camera defaults to enabled cam0 auto at 1280x720 15fps rotated 180");
     expect(defaults.cameras().items(1).id() == "usb_left"
+                    && defaults.cameras().items(1).source() == "v4l2"
                     && defaults.cameras().items(1).enabled() == false
                     && defaults.cameras().items(1).width() == 1280
-                    && defaults.cameras().items(1).height() == 720,
-           "usb_left defaults to disabled 1280x720 v4l2");
+                    && defaults.cameras().items(1).height() == 720
+                    && defaults.cameras().items(1).fps() == 5,
+           "usb_left defaults to disabled 1280x720 5fps v4l2");
     expect(defaults.cameras().items(2).id() == "usb_right"
-                    && defaults.cameras().items(2).enabled() == false,
-           "usb_right defaults to disabled");
+                    && defaults.cameras().items(2).source() == "v4l2"
+                    && defaults.cameras().items(2).enabled() == false
+                    && defaults.cameras().items(2).fps() == 5,
+           "usb_right defaults to disabled 5fps");
     expect(defaults.motors().front_left().pwm() == 2
                     && defaults.motors().front_left().in2() == 3
                     && defaults.motors().front_left().in1() == 4,
@@ -62,6 +68,10 @@ int main() {
     expect(defaults.motors().front_left().enabled(), "motors default enabled");
     expect(defaults.motors().front_left().direction() == doggy::v1::forward,
            "motors default forward");
+    expect(defaults.gps().enabled() == false, "gps defaults disabled");
+    expect(defaults.gps().type() == "auto", "gps type defaults to auto");
+    expect(defaults.gps().device().empty(), "gps device defaults empty");
+    expect(defaults.gps().baud() == 115200, "gps baud defaults to 115200");
     expect(defaults.lora().enabled() == false, "lora defaults disabled");
     expect(defaults.lora().band() == doggy::v1::HF, "lora band defaults to HF");
     expect(defaults.lora().txch() == 18 && defaults.lora().rxch() == 18,
@@ -167,6 +177,32 @@ int main() {
                     && camera_overlay.cameras().items(0).rotation_deg() == 0,
            "camera overlay reads configured V4L2 input");
 
+    const Config default_v4l2_fps = config_from_json(
+            R"({"cameras":{"items":[{"id":"side","source":"v4l2"}]}})");
+    expect(default_v4l2_fps.cameras().items(0).fps() == 5,
+           "V4L2 camera without fps defaults to 5fps");
+
+    const Config gps_baud = config_from_json(R"({"gps":{"baud":9600,"device":"/dev/ttyUSB0"}})");
+    expect(gps_baud.gps().baud() == 9600 && gps_baud.gps().device() == "/dev/ttyUSB0"
+                    && gps_baud.gps().enabled() == false,
+           "explicit GPS baud and device are kept and stay disabled");
+
+    bool bad_gps_type_threw = false;
+    try {
+        config_from_json(R"({"gps":{"type":"garmin"}})");
+    } catch (const ConfigError &) {
+        bad_gps_type_threw = true;
+    }
+    expect(bad_gps_type_threw, "unknown GPS type throws ConfigError");
+
+    bool bad_gps_device_threw = false;
+    try {
+        config_from_json(R"({"gps":{"device":"/tmp/x"}})");
+    } catch (const ConfigError &) {
+        bad_gps_device_threw = true;
+    }
+    expect(bad_gps_device_threw, "non-serial GPS device throws ConfigError");
+
     bool bad_camera_source_threw = false;
     try {
         config_from_json(
@@ -236,6 +272,26 @@ int main() {
     }
     expect(long_retain_threw,
            "media retain above one week throws ConfigError");
+    expect(config_from_json(R"({"media":{"min_free_mb":64}})")
+                   .media().min_free_mb() == 64,
+           "media min free accepts 64 MB");
+    expect(config_from_json(R"({"media":{"min_free_mb":1048576}})")
+                   .media().min_free_mb() == 1048576,
+           "media min free accepts 1048576 MB");
+    bool low_free_threw = false;
+    try {
+        config_from_json(R"({"media":{"min_free_mb":63}})");
+    } catch (const ConfigError &) {
+        low_free_threw = true;
+    }
+    expect(low_free_threw, "media min free below 64 MB throws ConfigError");
+    bool high_free_threw = false;
+    try {
+        config_from_json(R"({"media":{"min_free_mb":1048577}})");
+    } catch (const ConfigError &) {
+        high_free_threw = true;
+    }
+    expect(high_free_threw, "media min free above 1048576 MB throws ConfigError");
 
     bool from_text_threw = false;
     try {
@@ -502,6 +558,47 @@ int main() {
            "status_error_messages preserves i2c error text");
     expect(status_error_messages(DogStatus{}).empty(),
            "status_error_messages is empty when Status has no errors");
+
+    const std::string preserved = (dir / "preserve.json").string();
+    const std::string preserved_text = "{\"servos\":{\"head_neck\":12}}\n";
+    {
+        std::ofstream out(preserved);
+        out << preserved_text;
+    }
+    std::filesystem::create_directory(preserved + ".tmp");
+    bool blocked_save_threw = false;
+    try {
+        config_save_file(default_config(), preserved);
+    } catch (const ConfigError &) {
+        blocked_save_threw = true;
+    }
+    expect(blocked_save_threw, "save fails when the temp path is not a file");
+    {
+        std::ifstream in(preserved);
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                std::istreambuf_iterator<char>());
+        expect(text == preserved_text,
+               "failed save leaves the previous config in place");
+    }
+
+    const std::string replaced = (dir / "replaced.json").string();
+    {
+        std::ofstream out(replaced);
+        out << "previous";
+    }
+    config_save_file(default_config(), replaced);
+    expect(std::filesystem::is_regular_file(replaced + ".tmp") == false,
+           "save does not leave the temp config behind");
+    {
+        std::ifstream in(replaced);
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                std::istreambuf_iterator<char>());
+        expect(text.empty() == false && text != "previous",
+               "save replaces the previous config only after the new file exists");
+        expect(text.find("\"min_free_mb\": 512") != std::string::npos
+                        || text.find("\"min_free_mb\":512") != std::string::npos,
+               "saved config includes the min free default");
+    }
 
     expect(config_default_path() == kDefaultConfigPath,
            "default path is /etc/doggy/doggy.json");

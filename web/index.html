@@ -24,7 +24,10 @@
     }
     #status:empty { display: none; }
     #errors { color: #8b0000; white-space: pre-wrap; }
-    #imu, #battery, #config, #power { margin-top: 1rem; }
+    #imu, #battery, #gps, #config, #power { margin-top: 1rem; }
+    #gps { overflow-x: auto; }
+    #gps table { width: max-content; min-width: 100%; }
+    #gps th, #gps td { white-space: nowrap; }
     #config input { width: 6rem; }
     #power button { margin-right: 0.5rem; }
     .pin-field { display: block; margin: 0.4rem 0; }
@@ -124,6 +127,40 @@
     <p id="battery-ok">Battery: unknown</p>
     <p>Voltage: <span id="battery-v">—</span> V</p>
   </section>
+  <section id="gps" aria-labelledby="gps-heading">
+    <h2 id="gps-heading">GPS</h2>
+    <table>
+      <caption>GPS fix</caption>
+      <thead>
+        <tr>
+          <th scope="col">Status</th>
+          <th scope="col">Time</th>
+          <th scope="col">Latitude</th>
+          <th scope="col">Longitude</th>
+          <th scope="col">Altitude AMSL (m)</th>
+          <th scope="col">Satellites</th>
+          <th scope="col">Fix</th>
+          <th scope="col">Accuracy (m)</th>
+          <th scope="col">Spoofing</th>
+          <th scope="col">Jamming</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td id="gps-ok">GPS: unknown</td>
+          <td id="gps-time">—</td>
+          <td id="gps-lat">—</td>
+          <td id="gps-lon">—</td>
+          <td id="gps-alt">—</td>
+          <td id="gps-sats">—</td>
+          <td id="gps-fix">—</td>
+          <td id="gps-acc">—</td>
+          <td id="gps-spoof">—</td>
+          <td id="gps-jam">—</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
   <section id="camera" aria-labelledby="camera-heading">
     <h2 id="camera-heading">Camera</h2>
     <div class="camera-layout">
@@ -173,7 +210,7 @@
   <hr class="section-rule">
   <section id="config" aria-labelledby="config-heading">
     <h2 id="config-heading">Configuration</h2>
-    <p id="config-note">I2C bus and address changes apply after restart. Servo channel changes apply immediately. Changing robot type requires the system PIN and restarts the service — refresh the page afterwards.</p>
+    <p id="config-note">I2C bus and address changes apply after restart. Servo channel changes apply immediately. GPS changes apply on save. Changing robot type requires the system PIN and restarts the service — refresh the page afterwards.</p>
     <label class="pin-field" for="robot-type">Robot type
       <select id="robot-type" aria-label="Robot type">
         <option value="DOG">DOG</option>
@@ -239,6 +276,16 @@
     const imuGzEl = document.getElementById("imu-gz");
     const batteryOkEl = document.getElementById("battery-ok");
     const batteryVEl = document.getElementById("battery-v");
+    const gpsOkEl = document.getElementById("gps-ok");
+    const gpsTimeEl = document.getElementById("gps-time");
+    const gpsLatEl = document.getElementById("gps-lat");
+    const gpsLonEl = document.getElementById("gps-lon");
+    const gpsAltEl = document.getElementById("gps-alt");
+    const gpsSatsEl = document.getElementById("gps-sats");
+    const gpsFixEl = document.getElementById("gps-fix");
+    const gpsAccEl = document.getElementById("gps-acc");
+    const gpsSpoofEl = document.getElementById("gps-spoof");
+    const gpsJamEl = document.getElementById("gps-jam");
     const titleEl = document.getElementById("page-title");
     const linuxTimeEl = document.getElementById("linux-time");
     const configBodyEl = document.getElementById("config-body");
@@ -363,6 +410,56 @@
 
     // ================================================================================
 
+    function gpsLabel(value, prefix) {
+      if (typeof value !== "string" || value.length === 0) {
+        return "—";
+      }
+
+      if (value.indexOf(prefix) === 0) {
+        return value.slice(prefix.length);
+      }
+
+      return value;
+    }
+
+    // ================================================================================
+
+    function applyGps(gps) {
+      if (gps === undefined || gps === null) {
+        gpsOkEl.textContent = "GPS: unavailable";
+        return;
+      }
+
+      if (gps.ok) {
+        gpsOkEl.textContent = "GPS: ok";
+      } else if (gps.fix_type === "GPS_FIX_NO_FIX" || gps.fix_type === 1) {
+        gpsOkEl.textContent = "GPS: no fix";
+      } else {
+        gpsOkEl.textContent = "GPS: off";
+      }
+
+      const unixMs = Number(gps.fix_unix_ms);
+      if (Number.isFinite(unixMs)) {
+        gpsTimeEl.textContent = new Date(unixMs).toISOString();
+      } else {
+        gpsTimeEl.textContent = "—";
+      }
+
+      gpsLatEl.textContent = typeof gps.latitude_deg === "number"
+              ? gps.latitude_deg.toFixed(7) : "—";
+      gpsLonEl.textContent = typeof gps.longitude_deg === "number"
+              ? gps.longitude_deg.toFixed(7) : "—";
+      gpsAltEl.textContent = formatNum(gps.altitude_amsl_m);
+      gpsSatsEl.textContent = typeof gps.satellites === "number"
+              ? String(gps.satellites) : "—";
+      gpsFixEl.textContent = gpsLabel(gps.fix_type, "GPS_FIX_");
+      gpsAccEl.textContent = formatNum(gps.accuracy_m);
+      gpsSpoofEl.textContent = gpsLabel(gps.spoofing, "GPS_SPOOF_");
+      gpsJamEl.textContent = gpsLabel(gps.jamming, "GPS_JAM_");
+    }
+
+    // ================================================================================
+
     function knownAngle(angle) {
       return typeof angle === "number" && Number.isFinite(angle);
     }
@@ -415,6 +512,7 @@
         applyErrors(data.errors || []);
         applyImu(data.imu);
         applyBattery(data.battery);
+        applyGps(data.gps);
         const items = data.servos && data.servos.items;
         if (items) {
           if (bodyEl.children.length === 0) {
@@ -587,6 +685,13 @@
     // ================================================================================
 
     function displayName(key) {
+      if (key === "gps") {
+        return "GPS";
+      }
+      if (key === "min_free_mb") {
+        return "Min free MB";
+      }
+
       const spaced = String(key).replaceAll("_", " ");
       if (spaced.length === 0) {
         return spaced;
@@ -675,6 +780,53 @@
         });
         return select;
       }
+      if (kind === "gps-type") {
+        const select = document.createElement("select");
+        select.setAttribute("aria-label", "GPS type");
+        [
+          ["auto", "auto"],
+          ["nmea", "NMEA"],
+          ["ublox", "u-blox"],
+          ["septentrio", "Septentrio"],
+          ["novatel", "NovAtel"]
+        ].forEach((opt) => {
+          const option = document.createElement("option");
+          option.value = opt[0];
+          option.textContent = opt[1];
+          select.appendChild(option);
+        });
+        select.value = ["auto", "nmea", "ublox", "septentrio", "novatel"].indexOf(value) < 0
+                ? "auto" : value;
+        select.addEventListener("change", () => {
+          setDraftValue(path, select.value);
+        });
+        return select;
+      }
+      if (kind === "gps-baud") {
+        const select = document.createElement("select");
+        select.setAttribute("aria-label", "GPS baud");
+        [4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600].forEach((rate) => {
+          const option = document.createElement("option");
+          option.value = String(rate);
+          option.textContent = String(rate);
+          select.appendChild(option);
+        });
+        select.value = String(value === undefined || value === 0 ? 115200 : value);
+        select.addEventListener("change", () => {
+          setDraftValue(path, Number(select.value));
+        });
+        return select;
+      }
+      if (kind === "gps-device") {
+        input.type = "text";
+        input.value = String(value || "");
+        input.placeholder = "empty scans /dev/serial/by-id";
+        input.setAttribute("aria-label", "GPS device");
+        input.addEventListener("input", () => {
+          setDraftValue(path, input.value);
+        });
+        return input;
+      }
       if (kind === "lora-air-key") {
         input.type = "password";
         input.autocomplete = "new-password";
@@ -715,6 +867,10 @@
           input.min = "1";
           input.max = "168";
           input.setAttribute("aria-label", "Media retain hours, 1 to 168");
+        } else if (path[path.length - 1] === "min_free_mb") {
+          input.min = "64";
+          input.max = "1048576";
+          input.setAttribute("aria-label", "Minimum free megabytes, 64 to 1048576");
         } else {
           input.min = "0";
         }
@@ -801,7 +957,7 @@
       configBodyEl.appendChild(robotTr);
 
       if (configDraft.media === undefined || configDraft.media === null) {
-        configDraft.media = { retain_hours: 24 };
+        configDraft.media = { retain_hours: 24, min_free_mb: 512 };
       }
       const mediaTr = document.createElement("tr");
       const mediaClass = document.createElement("th");
@@ -816,7 +972,13 @@
               configDraft.media.retain_hours === undefined
                       ? 24 : configDraft.media.retain_hours,
               "int");
-      appendEmptyPairs(mediaTr, 2);
+      appendPair(
+              mediaTr,
+              ["media", "min_free_mb"],
+              configDraft.media.min_free_mb === undefined
+                      ? 512 : configDraft.media.min_free_mb,
+              "int");
+      appendEmptyPairs(mediaTr, 1);
       configBodyEl.appendChild(mediaTr);
 
       const cameras = config.cameras && Array.isArray(config.cameras.items)
@@ -876,6 +1038,29 @@
         appendEmptyPairs(tr, 1);
         configBodyEl.appendChild(tr);
       });
+
+      if (configDraft.gps === undefined || configDraft.gps === null) {
+        configDraft.gps = { enabled: false, type: "auto", device: "", baud: 115200 };
+      }
+      const gps = configDraft.gps;
+      const gpsTr = document.createElement("tr");
+      const gpsClass = document.createElement("th");
+      gpsClass.scope = "rowgroup";
+      gpsClass.rowSpan = 2;
+      gpsClass.textContent = displayName("gps");
+      gpsTr.appendChild(gpsClass);
+      const gpsGroup = document.createElement("td");
+      gpsTr.appendChild(gpsGroup);
+      appendPair(gpsTr, ["gps", "enabled"], gps.enabled === true, "bool");
+      appendPair(gpsTr, ["gps", "type"], gps.type || "auto", "gps-type");
+      appendPair(gpsTr, ["gps", "device"], gps.device || "", "gps-device");
+      configBodyEl.appendChild(gpsTr);
+      const gpsTr2 = document.createElement("tr");
+      const gpsGroup2 = document.createElement("td");
+      gpsTr2.appendChild(gpsGroup2);
+      appendPair(gpsTr2, ["gps", "baud"], gps.baud === undefined ? 115200 : gps.baud, "gps-baud");
+      appendEmptyPairs(gpsTr2, 2);
+      configBodyEl.appendChild(gpsTr2);
 
       const lora = config.lora || {};
       const loraTr = document.createElement("tr");

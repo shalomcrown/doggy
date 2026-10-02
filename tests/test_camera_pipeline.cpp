@@ -213,10 +213,19 @@ int main() {
     expect(has_arg_pair(
                     rpi_process_ptr->last_spec, "--rotation", "180"),
            "Raspberry Pi camera applies default rotation in rpicam-vid");
+    expect(has_arg_pair(
+                    rpi_process_ptr->last_spec, "--buffer-count", "2")
+                    && has_arg_pair(
+                            rpi_process_ptr->last_spec, "--denoise", "off"),
+           "Raspberry Pi capture minimizes buffering and denoise latency");
     expect(has_arg(rpi_process_ptr->last_spec, "--low-latency"),
            "Raspberry Pi camera enables low-latency encode");
-    expect(has_arg_pair(rpi_process_ptr->last_spec, "-g", "4"),
-           "Raspberry Pi camera uses quarter-second GOP at 15 fps");
+    expect(has_arg(rpi_process_ptr->last_spec, "nobuffer+flush_packets")
+                    && has_arg_pair(
+                            rpi_process_ptr->last_spec, "-analyzeduration", "0"),
+           "Raspberry Pi relay minimizes ffmpeg input buffering");
+    expect(has_arg_pair(rpi_process_ptr->last_spec, "-g", "3"),
+           "Raspberry Pi camera keeps GOP at or below 250ms");
     expect(first.streams.items_size() == 1
                     && first.streams.items(0).webrtc_url()
                             == "https://rover.local:8889/cam0/whep",
@@ -254,18 +263,25 @@ int main() {
     doggy::v1::Camera *camera = usb.mutable_cameras()->mutable_items(0);
     camera->set_source("v4l2");
     camera->set_device("/dev/video7");
+    camera->set_fps(30);
     const CameraQueryResult usb_result = usb_pipeline.query(usb, "10.0.0.4");
     expect(usb_result.result == CameraResult::ok
                     && usb_process_ptr->last_spec.commands.size() == 1,
            "V4L2 camera uses one ffmpeg command");
     expect(has_arg(usb_process_ptr->last_spec, "/dev/video7")
                     && has_arg(usb_process_ptr->last_spec, "mjpeg")
-                    && has_arg(usb_process_ptr->last_spec, "nobuffer"),
+                    && has_arg(
+                            usb_process_ptr->last_spec,
+                            "nobuffer+flush_packets"),
            "V4L2 camera uses low-latency MJPEG capture");
-    expect(has_arg_pair(usb_process_ptr->last_spec, "-g", "4"),
-           "V4L2 camera uses quarter-second GOP at 15 fps");
+    expect(has_arg_pair(usb_process_ptr->last_spec, "-framerate", "30")
+                    && has_arg_pair(usb_process_ptr->last_spec, "-g", "7"),
+           "V4L2 camera honors an explicit fps with a short GOP");
     expect(has_arg(usb_process_ptr->last_spec, "libx264")
-                    && has_arg(usb_process_ptr->last_spec, "baseline"),
+                    && has_arg(usb_process_ptr->last_spec, "baseline")
+                    && has_arg(
+                            usb_process_ptr->last_spec,
+                            "h264_v4l2m2m") == false,
            "V4L2 camera uses software H.264 baseline encode");
     expect(has_arg(usb_process_ptr->last_spec, "-vf")
                     && has_arg(usb_process_ptr->last_spec, "hflip,vflip"),

@@ -12,6 +12,12 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 > Work merged but not yet shipped. Move entries to a versioned section on release.
 
 ### Added
+- Dog and rover status now includes a GPS fix when `gps.enabled` is set in
+  `doggy.json`. The receiver may be NMEA, u-blox, Septentrio, or NovAtel on a
+  USB or serial port. `type: auto` with an empty device selects one u-blox or
+  Septentrio node under `/dev/serial/by-id`; anything else needs `device` and
+  `baud`. Existing robots stay unchanged because GPS defaults to off. The
+  service only parses incoming sentences and does not send receiver commands.
 - The watch Control screen (swipe right from the clock) drives a selected rover
   with a joystick matching the web dead zone. Heartbeats and drive commands go
   to the Pi only while that screen is visible; there is no doggy selected or
@@ -72,6 +78,27 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
   it over USB serial.
 
 ### Changed
+- Saving `doggy.json` writes a temporary file in the same directory and replaces
+  the real file only after that write is synced. A full disk leaves the previous
+  config in place instead of an empty file.
+- Camera recordings close about every 15 minutes. Cleanup runs on that same
+  interval, still drops files older than `media.retain_hours`, and deletes the
+  oldest recordings when free space falls below `media.min_free_mb` (default
+  512). The segment currently being written is left in place.
+- The dog and rover GPS fix is a two-row table: a header row and one value row
+  for status, time, position, altitude, satellites, fix, accuracy, spoofing,
+  and jamming. The section scrolls sideways when the window is narrower than
+  the row.
+- GPS discovery writes the scanned `/dev/serial/by-id` nodes, the chosen port,
+  and open or failure results to `doggy.log`. The same outcome is not repeated
+  on every retry.
+- Dog and rover configuration tables can edit GPS enable, type, device, and
+  baud. Save applies the receiver without restarting the service.
+- Raspberry Pi camera streaming keeps the hardware H.264 path but now limits
+  capture to two buffers, disables denoise, and removes ffmpeg input buffering
+  to reduce glass-to-glass latency. USB cameras whose fps is omitted now default
+  to 5 fps and remain on software `libx264`; stored explicit fps values are
+  unchanged.
 - Rover **Drive** arcade-mixes steering: turn is added on the left and subtracted from the right, then both sides are scaled if either would leave `[-1, 1]`. Rest spin is scaled by `turn_gain_min`; at full speed the stick still uses full turn.
 - Rover GCS heartbeat over Wi-Fi or LoRa: the rover page posts every 750 ms, `robot.gcs_timeout_s` is configurable from 2–60 seconds (default 3), and loss of the page or channel coasts every motor.
 - `GET /api/status` now includes current Linux Unix time; both pages display it in UTC.

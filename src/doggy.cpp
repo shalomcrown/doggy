@@ -1,4 +1,5 @@
 #include "doggy.h"
+#include "gps.h"
 #include "i2c_interface.hpp"
 #include "utils.h"
 
@@ -281,6 +282,7 @@ DogStatus Dog::getStatus() const {
     copy.clear_motors();
     copy.clear_speed();
     copy.clear_turn();
+    gps_service_attach(&copy);
     return copy;
 }
 
@@ -323,6 +325,7 @@ CommandResult Dog::replaceConfig(const Config &config, const std::string &pin) {
     if (saved != CommandResult::ok) {
         return saved;
     }
+    gps_service_apply(config.gps());
     if (type_changed) {
         scheduleSystemActionUnlocked(SystemAction::restart);
     }
