@@ -58,6 +58,7 @@ func New(webRoot, localFile string, rt *hop.Runtime) http.Handler {
 	s.pages.HandleFunc("/lora", s.serveLoraPage)
 	s.pages.HandleFunc("/dog", s.serveFile("index.html"))
 	s.pages.HandleFunc("/rover", s.serveFile("rover.html"))
+	s.pages.HandleFunc("/vendor/leaflet/", s.serveLeaflet)
 	return s
 }
 
@@ -98,6 +99,34 @@ func (s *Server) serveFile(name string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, filepath.Join(s.webRoot, name))
 	}
+}
+
+// ================================================================================
+
+func leafletAssetName(name string) bool {
+	switch name {
+	case "leaflet.js", "leaflet.css",
+		"images/marker-icon.png", "images/marker-icon-2x.png",
+		"images/marker-shadow.png", "images/layers.png", "images/layers-2x.png":
+		return true
+	default:
+		return false
+	}
+}
+
+// ================================================================================
+
+func (s *Server) serveLeaflet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	name := strings.TrimPrefix(r.URL.Path, "/vendor/leaflet/")
+	if leafletAssetName(name) == false {
+		http.NotFound(w, r)
+		return
+	}
+	http.ServeFile(w, r, filepath.Join(s.webRoot, "vendor", "leaflet", filepath.FromSlash(name)))
 }
 
 // ================================================================================

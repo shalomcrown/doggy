@@ -402,6 +402,43 @@ bool host_name_ok(const std::string &name) {
     return true;
 }
 
+// ================================================================================
+
+bool leaflet_asset_name(const std::string &name) {
+    return name == "leaflet.js"
+            || name == "leaflet.css"
+            || name == "images/marker-icon.png"
+            || name == "images/marker-icon-2x.png"
+            || name == "images/marker-shadow.png"
+            || name == "images/layers.png"
+            || name == "images/layers-2x.png";
+}
+
+// ================================================================================
+
+const char *leaflet_content_type(const std::string &name) {
+    if (name.size() >= 3 && name.compare(name.size() - 3, 3, ".js") == 0) {
+        return "text/javascript; charset=utf-8";
+    }
+    if (name.size() >= 4 && name.compare(name.size() - 4, 4, ".css") == 0) {
+        return "text/css; charset=utf-8";
+    }
+    return "image/png";
+}
+
+// ================================================================================
+
+std::string read_file_bytes(const std::string &path) {
+    std::ifstream in(path, std::ios::binary);
+    if (in.is_open() == false) {
+        return {};
+    }
+
+    std::ostringstream os;
+    os << in.rdbuf();
+    return os.str();
+}
+
 void register_api(httplib::Server &server, RobotApi &api,
                   const std::string &index_html_path,
                   CameraPipeline *camera_pipeline,
@@ -428,6 +465,25 @@ void register_api(httplib::Server &server, RobotApi &api,
             return;
         }
         res.set_content(script, "text/javascript; charset=utf-8");
+    });
+
+    // Leaflet is a local file. The LoRa operator serves the same path from its
+    // own disk; this route is only for the page loaded from the Pi.
+    server.Get(R"(/vendor/leaflet/(.+))", [&index_html_path](
+            const httplib::Request &req, httplib::Response &res) {
+        const std::string name = req.matches[1];
+        if (leaflet_asset_name(name) == false) {
+            res.status = 404;
+            return;
+        }
+        const std::string bytes = read_file_bytes(
+                (fs::path(index_html_path).parent_path()
+                 / "vendor" / "leaflet" / name).string());
+        if (bytes.empty()) {
+            res.status = 404;
+            return;
+        }
+        res.set_content(bytes, leaflet_content_type(name));
     });
 
     server.Get("/api/status", [&api](const httplib::Request &, httplib::Response &res) {

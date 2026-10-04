@@ -47,6 +47,8 @@ install(FILES
     "${CMAKE_SOURCE_DIR}/web/lora.html"
     DESTINATION share/doggy
 )
+install(DIRECTORY "${CMAKE_SOURCE_DIR}/web/vendor/leaflet"
+        DESTINATION share/doggy/vendor)
 
 if(DOGGY_OPERATOR_OS STREQUAL "linux")
     install(FILES "${CMAKE_SOURCE_DIR}/packaging/doggy-lora-operator.service"

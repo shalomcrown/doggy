@@ -4,6 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Doggy</title>
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+  <script src="/vendor/leaflet/leaflet.js"></script>
   <style>
     body { font-family: system-ui, sans-serif; margin: 1.5rem; padding-bottom: 3rem; }
     table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
@@ -31,15 +33,21 @@
     #power button { margin-right: 0.5rem; }
     .pin-field { display: block; margin: 0.4rem 0; }
     .drive-field { display: block; margin: 0.6rem 0; }
-    /* Sized so the camera keeps the width on a 1080p window: a narrow slider
-       column, the video taking the slack, and a fixed-width stick/media rail. */
+    /* Map, then the camera taking the slack, then the stick and media rail. */
     .drive-layout {
       display: grid;
-      grid-template-columns: 13rem minmax(18rem, 52rem) 15rem;
+      grid-template-columns: minmax(18rem, 24rem) minmax(16rem, 52rem) 16rem;
       gap: 1rem;
       align-items: start;
     }
-    .drive-sliders input[type="range"] { width: 100%; }
+    #map { height: 22rem; width: 100%; background: #e6e2d6; }
+    .robot-marker { background: transparent; border: none; }
+    .map-tiles label { display: block; margin: 0.35rem 0; }
+    .map-tiles input { width: 100%; }
+    .map-tiles button { margin-top: 0.3rem; }
+    .stick-row { display: flex; align-items: center; gap: 0.6rem; }
+    .stick-actions { display: flex; flex-direction: column; gap: 0.5rem; }
+    .stick-actions button { min-width: 5.5rem; min-height: 2.75rem; }
     .drive-video {
       min-height: 10rem;
       max-height: 60vh;
@@ -141,19 +149,26 @@
   <section id="drive" aria-labelledby="drive-heading">
     <h2 id="drive-heading">Drive</h2>
     <div class="drive-layout">
-      <div class="drive-sliders">
-        <label class="drive-field" for="steering">Steering
-          <input type="range" id="steering" min="-1" max="1" step="0.01" value="0" aria-label="Steering">
-          <span id="steering-value">0.000</span>
-        </label>
-        <label class="drive-field" for="speed">Speed
-          <input type="range" id="speed" min="-1" max="1" step="0.01" value="0" aria-label="Speed">
-          <span id="speed-value">0.000</span>
-        </label>
-        <div class="drive-field">
-          <button type="button" id="drive-stop">Stop</button>
-          <button type="button" id="drive-brake">Brake</button>
-        </div>
+      <div class="drive-map">
+        <div id="map" role="region" aria-label="Robot map"></div>
+        <form id="map-tiles" class="map-tiles">
+          <label>Tiles
+            <select id="map-provider" aria-label="Map tile provider">
+              <option value="osm">OpenStreetMap</option>
+              <option value="custom">Custom</option>
+            </select>
+          </label>
+          <label id="map-url-label" hidden>URL
+            <input id="map-url" type="text" autocomplete="off" spellcheck="false"
+                   aria-label="Tile URL template">
+          </label>
+          <label id="map-key-label" hidden>Key
+            <input id="map-key" type="password" autocomplete="off"
+                   aria-label="Tile provider key">
+          </label>
+          <button type="submit">Apply</button>
+        </form>
+        <p id="map-note" role="status"></p>
       </div>
       <div class="drive-video" id="drive-video" aria-label="Live camera">
         <video id="camera-video" autoplay muted playsinline aria-label="Live robot camera"></video>
@@ -162,10 +177,16 @@
       <div class="drive-stick">
         <p id="joystick-label">Joystick</p>
         <p id="joystick-hint">Inner circle: no steer, speed zero.</p>
-        <div id="joystick" role="application" tabindex="0" aria-labelledby="joystick-label"
-             aria-describedby="joystick-hint">
-          <div id="joystick-dead" aria-hidden="true"></div>
-          <div id="joystick-knob" aria-hidden="true"></div>
+        <div class="stick-row">
+          <div id="joystick" role="application" tabindex="0" aria-labelledby="joystick-label"
+               aria-describedby="joystick-hint">
+            <div id="joystick-dead" aria-hidden="true"></div>
+            <div id="joystick-knob" aria-hidden="true"></div>
+          </div>
+          <div class="stick-actions">
+            <button type="button" id="drive-stop">Stop</button>
+            <button type="button" id="drive-brake">Brake</button>
+          </div>
         </div>
         <div class="drive-media">
           <p>
@@ -370,10 +391,6 @@
     const pinCurrentEl = document.getElementById("pin-current");
     const pinNewEl = document.getElementById("pin-new");
     const systemPinEl = document.getElementById("system-pin");
-    const steeringEl = document.getElementById("steering");
-    const speedEl = document.getElementById("speed");
-    const steeringValueEl = document.getElementById("steering-value");
-    const speedValueEl = document.getElementById("speed-value");
     const joystickEl = document.getElementById("joystick");
     const joystickKnobEl = document.getElementById("joystick-knob");
     const cameraVideoEl = document.getElementById("camera-video");
@@ -396,6 +413,8 @@
     const stereoSwapEl = document.getElementById("stereo-swap");
     const stereoSwapStatusEl = document.getElementById("stereo-swap-status");
     const stereoReaders = {};
+    let driveSpeed = 0;
+    let driveTurn = 0;
     let draggingDrive = false;
     let configDraft = null;
     let loadedRobotType = "ROVER";
@@ -564,6 +583,7 @@
       gpsAccEl.textContent = formatNum(gps.accuracy_m);
       gpsSpoofEl.textContent = gpsLabel(gps.spoofing, "GPS_SPOOF_");
       gpsJamEl.textContent = gpsLabel(gps.jamming, "GPS_JAM_");
+      placeRobot(gps);
     }
 
     // ================================================================================
@@ -777,14 +797,12 @@
                 && pendingDrive === null && driveTimer === null;
         if (driveSettled) {
           if (typeof data.turn === "number") {
-            steeringEl.value = String(data.turn);
-            steeringValueEl.textContent = formatNum(data.turn);
+            driveTurn = data.turn;
           }
           if (typeof data.speed === "number") {
-            speedEl.value = String(data.speed);
-            speedValueEl.textContent = formatNum(data.speed);
+            driveSpeed = data.speed;
           }
-          setJoystickKnob(Number(speedEl.value), Number(steeringEl.value));
+          setJoystickKnob(driveSpeed, driveTurn);
         }
       } catch (err) {
         applyErrors([{ message: "Failed to load status" }]);
@@ -864,13 +882,10 @@
     // ================================================================================
 
     function readDriveCommand() {
-      const command = {
-        speed: Number(speedEl.value),
-        turn: Number(steeringEl.value)
+      return {
+        speed: driveSpeed,
+        turn: driveTurn
       };
-      steeringValueEl.textContent = formatNum(command.turn);
-      speedValueEl.textContent = formatNum(command.speed);
-      return command;
     }
 
     // ================================================================================
@@ -936,8 +951,8 @@
 
       joystickHeld = false;
       draggingDrive = false;
-      steeringEl.value = "0";
-      speedEl.value = "0";
+      driveSpeed = 0;
+      driveTurn = 0;
       setJoystickKnob(0, 0);
       sendDriveNow();
     }
@@ -957,32 +972,12 @@
         ny /= mag;
       }
 
-      steeringEl.value = String(applyAxisDeadzone(nx, JOYSTICK_DEADZONE));
-      speedEl.value = String(applyAxisDeadzone(ny, JOYSTICK_DEADZONE));
+      driveTurn = applyAxisDeadzone(nx, JOYSTICK_DEADZONE);
+      driveSpeed = applyAxisDeadzone(ny, JOYSTICK_DEADZONE);
       setJoystickKnob(ny, nx);
       queueDrive();
     }
 
-    steeringEl.addEventListener("pointerdown", () => {
-      draggingDrive = true;
-    });
-    speedEl.addEventListener("pointerdown", () => {
-      draggingDrive = true;
-    });
-    steeringEl.addEventListener("pointerup", () => {
-      draggingDrive = false;
-    });
-    speedEl.addEventListener("pointerup", () => {
-      draggingDrive = false;
-    });
-    steeringEl.addEventListener("input", () => {
-      setJoystickKnob(Number(speedEl.value), Number(steeringEl.value));
-      queueDrive();
-    });
-    speedEl.addEventListener("input", () => {
-      setJoystickKnob(Number(speedEl.value), Number(steeringEl.value));
-      queueDrive();
-    });
     if (joystickEl !== null) {
       joystickEl.addEventListener("pointerdown", (event) => {
         joystickHeld = true;
@@ -1010,8 +1005,8 @@
       });
       joystickEl.addEventListener("keydown", (event) => {
         const step = 0.1;
-        let speed = Number(speedEl.value);
-        let turn = Number(steeringEl.value);
+        let speed = driveSpeed;
+        let turn = driveTurn;
         if (event.key === "ArrowUp") {
           speed = Math.min(1, speed + step);
         } else if (event.key === "ArrowDown") {
@@ -1026,8 +1021,8 @@
         event.preventDefault();
         joystickHeld = true;
         draggingDrive = true;
-        speedEl.value = String(speed);
-        steeringEl.value = String(turn);
+        driveSpeed = speed;
+        driveTurn = turn;
         setJoystickKnob(speed, turn);
         queueDrive();
       });
@@ -1043,10 +1038,8 @@
             setStatus("Stop failed");
             return;
           }
-          speedEl.value = "0";
-          steeringEl.value = "0";
-          speedValueEl.textContent = formatNum(0);
-          steeringValueEl.textContent = formatNum(0);
+          driveSpeed = 0;
+          driveTurn = 0;
           setJoystickKnob(0, 0);
           if (driveTimer !== null) {
             clearTimeout(driveTimer);
@@ -1071,9 +1064,8 @@
             setStatus("Brake failed");
             return;
           }
-          speedEl.value = "0";
-          speedValueEl.textContent = formatNum(0);
-          setJoystickKnob(0, Number(steeringEl.value));
+          driveSpeed = 0;
+          setJoystickKnob(0, driveTurn);
           if (driveTimer !== null) {
             clearTimeout(driveTimer);
             driveTimer = null;
@@ -1929,8 +1921,201 @@
       }
     });
 
+    const MAP_HOME = [32.0783, 34.8489];
+    const OSM_TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+    const mapEl = document.getElementById("map");
+    const mapNoteEl = document.getElementById("map-note");
+    const mapFormEl = document.getElementById("map-tiles");
+    const mapProviderEl = document.getElementById("map-provider");
+    const mapUrlEl = document.getElementById("map-url");
+    const mapKeyEl = document.getElementById("map-key");
+    const mapUrlLabelEl = document.getElementById("map-url-label");
+    const mapKeyLabelEl = document.getElementById("map-key-label");
+    let robotMap = null;
+    let robotMarker = null;
+    let robotSeen = false;
+    let mapMoved = false;
+    let tileLayer = null;
+
+    // ================================================================================
+
+    function defaultTileChoice() {
+      return { provider: "osm", url: "", key: "" };
+    }
+
+    // ================================================================================
+
+    function loadTileChoice() {
+      try {
+        const raw = localStorage.getItem("doggy.map.tiles");
+        if (typeof raw !== "string" || raw.length === 0) {
+          return defaultTileChoice();
+        }
+
+        const parsed = JSON.parse(raw);
+        if (parsed === null || typeof parsed !== "object") {
+          return defaultTileChoice();
+        }
+
+        const provider = parsed.provider === "custom" ? "custom" : "osm";
+        const url = typeof parsed.url === "string" ? parsed.url.slice(0, 500) : "";
+        const key = typeof parsed.key === "string" ? parsed.key.slice(0, 256) : "";
+        return { provider: provider, url: url, key: key };
+      } catch (err) {
+        return defaultTileChoice();
+      }
+    }
+
+    // ================================================================================
+
+    function saveTileChoice(choice) {
+      localStorage.setItem("doggy.map.tiles", JSON.stringify(choice));
+    }
+
+    // ================================================================================
+
+    function tileUrlOk(url) {
+      if (url.indexOf("https://") !== 0 && url.indexOf("http://") !== 0) {
+        return false;
+      }
+
+      if (url.indexOf("{z}") < 0 || url.indexOf("{x}") < 0 || url.indexOf("{y}") < 0) {
+        return false;
+      }
+
+      if (url.indexOf(" ") >= 0) {
+        return false;
+      }
+
+      return true;
+    }
+
+    // ================================================================================
+
+    function applyTileKey(url, key) {
+      return url.split("{key}").join(encodeURIComponent(key));
+    }
+
+    // ================================================================================
+
+    function showTileFields() {
+      const custom = mapProviderEl.value === "custom";
+      mapUrlLabelEl.hidden = custom == false;
+      mapKeyLabelEl.hidden = custom == false;
+    }
+
+    // ================================================================================
+
+    function robotIcon() {
+      return L.divIcon({
+        className: "robot-marker",
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+        html: "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 28 28\""
+                + " width=\"28\" height=\"28\" aria-hidden=\"true\">"
+                + "<circle cx=\"14\" cy=\"16\" r=\"7\" fill=\"#1b1b1b\"/>"
+                + "<path d=\"M14 3 L20 13 L8 13 Z\" fill=\"#c45500\"/>"
+                + "</svg>"
+      });
+    }
+
+    // ================================================================================
+
+    function setTileLayer(choice) {
+      let template = OSM_TILES;
+      let attribution = "&copy; OpenStreetMap";
+      mapNoteEl.textContent = "";
+      if (choice.provider === "custom") {
+        if (tileUrlOk(choice.url) == false) {
+          mapNoteEl.textContent = "Custom tile URL must be http or https and include {z}, {x}, and {y}.";
+        } else {
+          template = applyTileKey(choice.url, choice.key);
+          attribution = "";
+        }
+      }
+
+      if (tileLayer !== null) {
+        robotMap.removeLayer(tileLayer);
+      }
+
+      tileLayer = L.tileLayer(template, {
+        attribution: attribution,
+        maxZoom: 19
+      });
+      tileLayer.on("tileerror", () => {
+        if (mapNoteEl.textContent.length === 0) {
+          mapNoteEl.textContent = "Map tiles did not load.";
+        }
+      });
+      tileLayer.addTo(robotMap);
+    }
+
+    // ================================================================================
+
+    function placeRobot(gps) {
+      if (robotMap === null || gps === undefined || gps === null) {
+        return;
+      }
+
+      if (typeof gps.latitude_deg !== "number" || typeof gps.longitude_deg !== "number") {
+        return;
+      }
+
+      const here = [gps.latitude_deg, gps.longitude_deg];
+      if (robotMarker === null) {
+        robotMarker = L.marker(here, {
+          icon: robotIcon(),
+          title: "Robot",
+          alt: "Robot"
+        }).addTo(robotMap);
+      } else {
+        robotMarker.setLatLng(here);
+      }
+
+      if (robotSeen == false && mapMoved == false) {
+        robotMap.setView(here, robotMap.getZoom());
+      }
+      robotSeen = true;
+    }
+
+    // ================================================================================
+
+    function initMap() {
+      if (mapEl === null) {
+        return;
+      }
+
+      if (typeof L === "undefined") {
+        mapNoteEl.textContent = "Map library did not load.";
+        return;
+      }
+
+      const choice = loadTileChoice();
+      mapProviderEl.value = choice.provider;
+      mapUrlEl.value = choice.url;
+      mapKeyEl.value = choice.key;
+      showTileFields();
+      robotMap = L.map(mapEl, { zoomControl: true }).setView(MAP_HOME, 15);
+      robotMap.on("dragstart", () => {
+        mapMoved = true;
+      });
+      setTileLayer(choice);
+      mapProviderEl.addEventListener("change", showTileFields);
+      mapFormEl.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const next = {
+          provider: mapProviderEl.value === "custom" ? "custom" : "osm",
+          url: mapUrlEl.value.slice(0, 500),
+          key: mapKeyEl.value.slice(0, 256)
+        };
+        saveTileChoice(next);
+        setTileLayer(next);
+      });
+    }
+
     // Liveness is armed before anything optional, so camera work can never
     // delay or prevent the heartbeat that keeps the rover drivable.
+    initMap();
     sendHeartbeat();
     setInterval(sendHeartbeat, HEARTBEAT_MS);
     loadConfig();

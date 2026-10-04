@@ -312,3 +312,57 @@ func TestInvalidLoraFileIsNotTreatedAsMissing(t *testing.T) {
 		t.Fatalf("invalid config response %s", body)
 	}
 }
+
+// ================================================================================
+
+func TestLeafletIsServedLocally(t *testing.T) {
+	dir := t.TempDir()
+	leaflet := filepath.Join(dir, "vendor", "leaflet")
+	if err := os.MkdirAll(leaflet, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(leaflet, "leaflet.js"), []byte("leaflet-local"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	viaNew := httptest.NewServer(New(dir, filepath.Join(dir, "lora.json"), nil))
+	defer viaNew.Close()
+	res, err := http.Get(viaNew.URL + "/vendor/leaflet/leaflet.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newBody, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || string(newBody) != "leaflet-local" {
+		t.Fatalf("operator leaflet status %d body %s", res.StatusCode, newBody)
+	}
+
+	rt := &countingRoundTripper{}
+	server := &Server{
+		webRoot:   dir,
+		localFile: filepath.Join(dir, "lora.json"),
+		pages:     http.NewServeMux(),
+		rt:        rt,
+	}
+	server.pages.HandleFunc("/", server.serveRoot)
+	server.pages.HandleFunc("/vendor/leaflet/", server.serveLeaflet)
+
+	request := httptest.NewRequest(http.MethodGet, "/vendor/leaflet/leaflet.js", http.NoBody)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Body.String() != "leaflet-local" {
+		t.Fatalf("leaflet status %d body %s", response.Code, response.Body.String())
+	}
+	if rt.count != 0 {
+		t.Fatalf("leaflet request made %d air round trips", rt.count)
+	}
+
+	denied := httptest.NewRequest(http.MethodGet, "/vendor/leaflet/secret.js", http.NoBody)
+	deniedResponse := httptest.NewRecorder()
+	server.ServeHTTP(deniedResponse, denied)
+	if deniedResponse.Code != http.StatusNotFound {
+		t.Fatalf("unexpected leaflet name status %d", deniedResponse.Code)
+	}
+	if rt.count != 0 {
+		t.Fatalf("rejected leaflet request made %d air round trips", rt.count)
+	}
+}

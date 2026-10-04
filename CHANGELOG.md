@@ -78,6 +78,11 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
   it over USB serial.
 
 ### Changed
+- The rover Drive row shows a map in place of the steering and speed sliders.
+  Stop and Brake sit to the right of the joystick. The map opens on Givat
+  Shmuel and drops a robot marker on the latest GPS fix. Tile choice and any
+  provider key stay in the browser. Leaflet is loaded from the machine that
+  served the page, including the LoRa operator, and is not sent over the air.
 - Saving `doggy.json` writes a temporary file in the same directory and replaces
   the real file only after that write is synced. A full disk leaves the previous
   config in place instead of an empty file.

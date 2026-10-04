@@ -873,15 +873,27 @@ int main() {
            "rover page fetches /api/motors");
     expect(rover_page && rover_page->body.find("\"Run\"") != std::string::npos,
            "rover page has Run control");
-    expect(rover_page && rover_page->body.find("id=\"steering\"") != std::string::npos,
-           "rover page has steering slider");
-    expect(rover_page && rover_page->body.find("id=\"speed\"") != std::string::npos,
-           "rover page has speed slider");
+    expect(rover_page && rover_page->body.find("id=\"map\"") != std::string::npos
+                   && rover_page->body.find("/vendor/leaflet/leaflet.js") != std::string::npos
+                   && rover_page->body.find("id=\"steering\"") == std::string::npos
+                   && rover_page->body.find("id=\"speed\"") == std::string::npos,
+           "rover page has a map and no drive sliders");
+    auto leaflet = get_retry(rover_cli, "/vendor/leaflet/leaflet.js");
+    expect(leaflet && leaflet->status == 200
+                   && leaflet->body.find("1.9.4") != std::string::npos,
+           "rover host serves Leaflet from disk");
+    auto leaflet_other = rover_cli.Get("/vendor/leaflet/secret.js");
+    expect(leaflet_other && leaflet_other->status == 404,
+           "Leaflet route rejects names outside the library");
+    expect(rover_page && rover_page->body.find("id=\"drive-stop\"") != std::string::npos
+                   && rover_page->body.find("id=\"drive-brake\"") != std::string::npos
+                   && rover_page->body.find("stick-actions") != std::string::npos,
+           "rover stop and brake sit with the joystick");
     expect(rover_page && rover_page->body.find("id=\"stereo-swap\"") != std::string::npos
                    && rover_page->body.find("stereo-left-video") != std::string::npos,
            "rover page shows stereo row and swap control");
     expect(rover_page && rover_page->body.find("class=\"drive-layout\"") != std::string::npos,
-           "rover drive row lays out sliders, camera, and joystick");
+           "rover drive row lays out map, camera, and joystick");
     expect(rover_page && rover_page->body.find("id=\"drive-video\"") != std::string::npos,
            "rover page reserves the camera slot");
     expect(rover_page && rover_page->body.find("<video id=\"camera-video\"")
@@ -966,9 +978,9 @@ int main() {
            "rover page has drive brake");
     expect(rover_page && rover_page->body.find("failureText(res, \"Save failed\")") != std::string::npos,
            "rover page shows the server's save failure reason");
-    expect(rover_page && rover_page->body.find("speedEl.value = \"0\"") != std::string::npos
+    expect(rover_page && rover_page->body.find("setJoystickKnob(0, driveTurn)") != std::string::npos
                    && rover_page->body.find("/api/brake") != std::string::npos,
-           "drive brake zeros speed sliders without posting /api/drive");
+           "drive brake zeros speed without posting /api/drive");
     expect(rover_page && rover_page->body.find("zeroAllMotorSpeedSliders()") != std::string::npos
                    && rover_page->body.find("/api/stop") != std::string::npos,
            "drive stop zeros motor speed sliders");

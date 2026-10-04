@@ -310,6 +310,7 @@ target_compile_definitions(doggy
 install(TARGETS doggy RUNTIME DESTINATION bin)
 install(FILES web/index.html web/rover.html web/lora.html
         web/mediamtx-webrtc-reader.js DESTINATION share/doggy)
+install(DIRECTORY web/vendor/leaflet DESTINATION share/doggy/vendor)
 install(FILES packaging/doggy.service packaging/doggy-lora.service
         packaging/doggy-lora-operator.service packaging/mediamtx.service
         packaging/doggy-cleanup-media.service packaging/doggy-cleanup-media.timer
