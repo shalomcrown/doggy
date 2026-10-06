@@ -16,6 +16,7 @@
 #include "doggy_version.h"
 #include "rover.h"
 #include "system_control.h"
+#include "telemetry.h"
 #include "tls_cert.h"
 #include "web_server.h"
 
@@ -130,6 +131,8 @@ int main() {
 
     CameraPipeline camera_pipeline;
     MediaStore media_store;
+    TelemetryLog telemetry(telemetry_default_directory());
+    telemetry_bind(telemetry.ok() ? &telemetry : nullptr);
     WebServer server(*robot, index, listen, &camera_pipeline, &media_store);
     if (server.start() == false) {
         std::cerr << "Failed to listen on https://" << listen.bind_host << ":"
@@ -155,12 +158,15 @@ int main() {
         } else {
             rover->poll();
         }
+        telemetry.sample(robot->getStatus(), robot->getConfig());
         std::this_thread::sleep_for(std::chrono::milliseconds(kDoggyLoopPeriodMs));
     }
 
     PLOG_INFO << "Shutting down — stopping cameras and rover outputs";
     camera_pipeline.stopAllFeeders();
     server.stop();
+    telemetry_bind(nullptr);
+    telemetry.close();
     if (rover != nullptr) {
         rover->stop();
     }

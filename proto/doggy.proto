@@ -164,6 +164,12 @@ message Media {
 
 // ================================================================================
 
+message Telemetry {
+  optional uint32 retain_hours = 1;
+}
+
+// ================================================================================
+
 message CameraPair {
   optional string left_stable_id = 1;
   optional string right_stable_id = 2;
@@ -192,6 +198,7 @@ message Config {
   optional Media media = 9;
   optional CameraPair camera_pair = 10;
   optional GpsConfig gps = 11;
+  optional Telemetry telemetry = 12;
 }
 
 // ================================================================================
@@ -360,6 +367,24 @@ message Status {
   optional MotorList motors = 9;
   optional int64 unix_time = 10;
   optional Gps gps = 11;
+  optional uint64 mission = 12;
+  optional int64 mission_start_unix = 13;
+}
+
+// ================================================================================
+
+message TelemetryPoint {
+  optional int64 unix_time = 1;
+  optional double latitude_deg = 2;
+  optional double longitude_deg = 3;
+}
+
+// ================================================================================
+
+message TelemetryTrack {
+  optional uint64 mission = 1;
+  optional int64 mission_start_unix = 2;
+  repeated TelemetryPoint points = 3;
 }
 
 // ================================================================================
@@ -421,6 +446,8 @@ message AirRequest {
     SystemCommand system = 8;
     PinCommand set_pin = 9;
     Empty heartbeat = 10;
+    Empty get_track = 11;
+    Empty new_mission = 12;
   }
 }
 
@@ -442,5 +469,6 @@ message AirResponse {
     ServoList servos = 12;
     SystemAccepted system_accepted = 13;
     ApiError error = 14;
+    TelemetryTrack track = 15;
   }
 }

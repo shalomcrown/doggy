@@ -19,12 +19,15 @@
 # nsis-common stubs/plugins; no MinGW). Watch firmware (`./build-watch.sh`)
 # needs PlatformIO Core 6.2.0 or newer; Debian/Ubuntu apt still ships an
 # incompatible 4.x package, so native and cross modes install it with pipx.
+# `--mode simulator` installs the host compiler, ffmpeg, MediaMTX v1.21.0
+# under ~/.local/lib/doggy, and Gazebo Harmonic (Ubuntu jammy and noble)
+# for ./build-simulator.sh. It does not install the Pi cross toolchain.
 #
 # Usage:
 #   ./install-prereqs.sh [options]
 #
 # Options:
-#   --mode <native|cross|windows|all>   Which prereqs to install (default: auto from arch)
+#   --mode <native|cross|windows|all|simulator>   Which prereqs to install (default: auto from arch)
 #   --print-plan                Print detected distro and package plan, then exit
 #   --dry-run                   Print what would be done, do not execute
 #   -h, --help                  Show this help
@@ -103,7 +106,7 @@ if [ -z "$MODE" ]; then
     fi
     MODE_SOURCE="auto"
 fi
-case "$MODE" in native|cross|windows|all) ;; *) die "Invalid --mode '$MODE' (try --help)"; esac
+case "$MODE" in native|cross|windows|all|simulator) ;; *) die "Invalid --mode '$MODE' (try --help)"; esac
 export DEBIAN_FRONTEND=noninteractive
 os_release_val() {
     local key="$1"
@@ -158,6 +161,9 @@ windows_packages() {
 watch_packages() {
     printf '%s' "python3 python3-venv python3-pip pipx"
 }
+simulator_packages() {
+    printf '%s' "ca-certificates cmake ninja-build g++ build-essential pkg-config git curl gnupg lsb-release ffmpeg"
+}
 print_plan() {
     printf 'os_id=%s\n' "$OS_ID"
     printf 'os_codename=%s\n' "$OS_CODENAME"
@@ -177,6 +183,11 @@ print_plan() {
     printf 'windows_packages=%s\n' "$(windows_packages)"
     printf 'watch_packages=%s\n' "$(watch_packages)"
     printf 'watch_tool=platformio>=6.2.0 via pipx\n'
+    printf 'simulator_packages=%s\n' "$(simulator_packages)"
+    printf 'gazebo_package=gz-harmonic\n'
+    printf 'gazebo_suites=jammy,noble\n'
+    printf 'simulator_mediamtx=~/.local/lib/doggy/mediamtx\n'
+    printf 'simulator_mediamtx_version=v1.21.0\n'
     if [ "$OS_KNOWN" -eq 0 ]; then
         printf 'warning=untested distro; continuing best-effort\n'
     fi
@@ -347,6 +358,55 @@ fi
 # ═════════════════════════════════════════════════════════════════════════════
 # WINDOWS OPERATOR (NSIS on Linux host; Go GOOS=windows, no MinGW)
 # ═════════════════════════════════════════════════════════════════════════════
+install_gazebo_harmonic() {
+    if [ "$OS_ID" != "ubuntu" ]; then
+        warn "Gazebo Harmonic packages are published for Ubuntu jammy and noble. Skipping gz-harmonic on ${OS_ID:-unknown}."
+        return 0
+    fi
+    case "$OS_CODENAME" in
+        jammy|noble) ;;
+        *)
+            warn "Gazebo Harmonic is not published for Ubuntu ${OS_CODENAME:-unknown}. Skipping gz-harmonic."
+            return 0
+            ;;
+    esac
+    local arch codename list
+    arch="$(dpkg --print-architecture)"
+    codename="$OS_CODENAME"
+    list="/etc/apt/sources.list.d/gazebo-stable.list"
+    step "Gazebo Harmonic repository"
+    if [ "$DRY_RUN" -eq 1 ]; then
+        printf '%b[DRY-RUN]%b  %s\n' "$C_YELLOW" "$C_RESET" \
+            "$SUDO curl -fsSL https://packages.osrfoundation.org/gazebo.gpg -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg"
+        printf '%b[DRY-RUN]%b  %s\n' "$C_YELLOW" "$C_RESET" \
+            "deb [arch=${arch} signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] https://packages.osrfoundation.org/gazebo/ubuntu-stable ${codename} main > ${list}"
+        printf '%b[DRY-RUN]%b  %s\n' "$C_YELLOW" "$C_RESET" "$SUDO apt-get update"
+        printf '%b[DRY-RUN]%b  %s\n' "$C_YELLOW" "$C_RESET" "$SUDO apt-get install -y gz-harmonic"
+        return 0
+    fi
+    run $SUDO mkdir -p /usr/share/keyrings /etc/apt/sources.list.d
+    run $SUDO curl -fsSL https://packages.osrfoundation.org/gazebo.gpg \
+        -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
+    printf 'deb [arch=%s signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] https://packages.osrfoundation.org/gazebo/ubuntu-stable %s main\n' \
+        "$arch" "$codename" | run $SUDO tee "$list" >/dev/null
+    run $SUDO apt-get update
+    run $SUDO apt-get install -y gz-harmonic
+}
+install_simulator_mediamtx() {
+    local root dest version_file
+    root="$(cd "$(dirname "$0")" && pwd)"
+    dest="${DOGGY_MEDIAMTX_BIN:-$HOME/.local/lib/doggy/mediamtx}"
+    version_file="${DOGGY_MEDIAMTX_VERSION_FILE:-$HOME/.local/lib/doggy/mediamtx.version}"
+    step "MediaMTX v1.21.0 for the host simulator"
+    if [ "$DRY_RUN" -eq 1 ]; then
+        printf '%b[DRY-RUN]%b  %s\n' "$C_YELLOW" "$C_RESET" \
+            "DOGGY_MEDIAMTX_BIN=$dest DOGGY_MEDIAMTX_VERSION_FILE=$version_file $root/packaging/install-mediamtx.sh"
+        return 0
+    fi
+    mkdir -p "$(dirname "$dest")" "$(dirname "$version_file")"
+    DOGGY_MEDIAMTX_BIN="$dest" DOGGY_MEDIAMTX_VERSION_FILE="$version_file" \
+        "$root/packaging/install-mediamtx.sh"
+}
 if [ "$MODE" = "windows" ]; then
     info "────── Windows operator packaging prerequisites ──────"
     step "apt-get install (NSIS compiler + nsis-common stubs/plugins + Go)"
@@ -354,6 +414,24 @@ if [ "$MODE" = "windows" ]; then
     apt_install_best_effort $(windows_packages)
     verify_commands cmake ninja go protoc makensis
     verify_nsis_extras
+    echo
+fi
+# ═════════════════════════════════════════════════════════════════════════════
+# HOST SIMULATOR (Gazebo Harmonic + doggy-sim)
+# ═════════════════════════════════════════════════════════════════════════════
+if [ "$MODE" = "simulator" ]; then
+    info "────── Host simulator prerequisites ──────"
+    step "apt-get install (host compiler and Gazebo tools)"
+    # shellcheck disable=SC2046
+    apt_install_best_effort $(simulator_packages)
+    verify_commands cmake ninja g++ pkg-config git curl ffmpeg
+    install_gazebo_harmonic
+    install_simulator_mediamtx
+    if command -v gz >/dev/null 2>&1; then
+        ok "gz ($(command -v gz))"
+    else
+        warn "gz not on PATH yet. Open a new shell after gz-harmonic is installed, then ./build-simulator.sh"
+    fi
     echo
 fi
 # ═════════════════════════════════════════════════════════════════════════════
@@ -374,6 +452,9 @@ if [ "$MISSING_COUNT" -eq 0 ]; then
     info "Laptop operator clients (amd64):"
     printf '  ./install-prereqs.sh --mode windows   # once, for NSIS\n'
     printf '  ./build-operator.sh                   # Ubuntu DEB + Windows NSIS\n'
+    info "Host simulator:"
+    printf '  ./install-prereqs.sh --mode simulator\n'
+    printf '  ./build-simulator.sh\n'
     exit 0
 fi
 printf '%b%d prerequisite(s) still missing after installation attempts.%b\n' \

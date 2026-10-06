@@ -12,6 +12,7 @@ Run the installer once before building. First-class hosts: **Debian / Raspberry 
 ./install-prereqs.sh --mode cross            # Ubuntu aarch64 cross toolchain
 ./install-prereqs.sh --mode all              # native + cross
 ./install-prereqs.sh --mode windows        # nsis + nsis-common + go (Windows operator installer)
+./install-prereqs.sh --mode simulator      # host compiler + Gazebo Harmonic (Ubuntu 22.04/24.04)
 # Native and cross modes also install pipx and PlatformIO Core >= 6.2.0
 # for ./build-watch.sh (Debian/Ubuntu apt PlatformIO is too old).
 ./install-prereqs.sh --dry-run               # preview without making changes
@@ -53,7 +54,7 @@ The firmware binary stays running and serves a single page (LAN, no login):
 
 - **Home** runs the homing pose (dog only)
 - On a **dog**, the table lists each named servo (PWM and angle) with a slider and an **Off** button. The slider sends `POST /api/servos/{id}` `{ "angle" }` after **100ms idle**. Off sends `{ "enabled": false }` (PWM 0; angle unknown). The page refreshes PWM/angle from `GET /api/status` every 200 ms without resetting a slider you are dragging.
-- On a **rover**, `/` is `rover.html`: a map sits to the left of the Pi camera and a joystick to the right. The joystick sends `POST /api/drive` after 100 ms idle. Its inner circle is a dead zone (no steering, speed 0). Releasing the stick springs it to center. The map opens on Givat Shmuel and marks the latest GPS fix. Tile provider and key are stored in the browser (`localStorage`); OpenStreetMap needs no key, and a custom `http`/`https` template may use `{z}`, `{x}`, `{y}`, and `{key}`. Leaflet is served from the same machine as the page (the Pi, or the LoRa operator’s own disk) and is not transferred over LoRa. **Stop** and **Brake** sit to the right of the joystick. **Stop** (`POST /api/stop`) coasts motors and **Brake** (`POST /api/brake`) short-brakes them; both set commanded `speed`/`turn` to 0. After Stop the joystick returns to center. After Brake speed returns to zero and the stick keeps its turn. Either call, and per-motor Coast/Brake, zeros the per-motor speed sliders without sending a second `/api/drive`. Drive is an arcade mix: effective turn is `turn * (turn_gain_min + (1 - turn_gain_min) * |speed|)` (default `turn_gain_min` 0.25), then that value is added to the left motors and subtracted from the right, and both sides are scaled together if either would leave `[-1, 1]`. At rest a full steer is a reduced in-place spin; at full speed the same stick still uses full turn. Mixed magnitude maps linearly to 0–4095 PWM ticks; sign selects direction. The table shows each motor’s commanded PWM, enable, and configured wiring direction. The page also sends rover-only `POST /api/heartbeat` every 750 ms over Wi-Fi or LoRa. If the page closes or the link fails, the rover coasts after `robot.gcs_timeout_s` (default 3 seconds; 2–60). Direct API clients must heartbeat or reissue motion inside that timeout; `GET /api/status` never keeps motion alive.
+- On a **rover**, `/` is `rover.html`: a map sits to the left of the Pi camera and a joystick to the right. The joystick sends `POST /api/drive` after 100 ms idle. Its inner circle is a dead zone (no steering, speed 0). Releasing the stick springs it to center. The map opens on Givat Shmuel, marks the latest GPS fix, and draws the current mission from stored 1 Hz telemetry. Previous missions (default 3) download as one zip. **New mission** starts a new file. The Pi keeps the files in `/var/lib/doggy/telemetry`; `telemetry.retain_hours` defaults to 168. Tile provider and key are stored in the browser (`localStorage`); OpenStreetMap needs no key, and a custom `http`/`https` template may use `{z}`, `{x}`, `{y}`, and `{key}`. Leaflet is served from the same machine as the page (the Pi, or the LoRa operator’s own disk) and is not transferred over LoRa. **Stop** and **Brake** sit to the right of the joystick. **Stop** (`POST /api/stop`) coasts motors and **Brake** (`POST /api/brake`) short-brakes them; both set commanded `speed`/`turn` to 0. After Stop the joystick returns to center. After Brake speed returns to zero and the stick keeps its turn. Either call, and per-motor Coast/Brake, zeros the per-motor speed sliders without sending a second `/api/drive`. Drive is an arcade mix: effective turn is `turn * (turn_gain_min + (1 - turn_gain_min) * |speed|)` (default `turn_gain_min` 0.25), then that value is added to the left motors and subtracted from the right, and both sides are scaled together if either would leave `[-1, 1]`. At rest a full steer is a reduced in-place spin; at full speed the same stick still uses full turn. Mixed magnitude maps linearly to 0–4095 PWM ticks; sign selects direction. The table shows each motor’s commanded PWM, enable, and configured wiring direction. The page also sends rover-only `POST /api/heartbeat` every 750 ms over Wi-Fi or LoRa. If the page closes or the link fails, the rover coasts after `robot.gcs_timeout_s` (default 3 seconds; 2–60). Direct API clients must heartbeat or reissue motion inside that timeout; `GET /api/status` never keeps motion alive.
 - The camera panel plays WebRTC from MediaMTX (`GET /api/cameras`). MPEG-TS is recorded continuously while a stream is published (`GET /api/recordings`). **Snapshot** grabs a JPEG (`POST /api/snapshots`). Recordings close about every 15 minutes. Cleanup runs every 15 minutes: it drops files older than `media.retain_hours` (default 24) and deletes the oldest recordings until `media.min_free_mb` (default 512) stays free on that filesystem. An open segment is left alone. Two identical USB cameras are detected at runtime (no `/dev/videoN` in config): enable `usb_left` / `usb_right` (default 1280×720 at 5 fps, software H.264). An explicit `fps` in `doggy.json` remains authoritative. Left/right binding is stored as `camera_pair.left_stable_id` / `camera_pair.right_stable_id` (auto-filled when both cameras are seen). The rover/dog pages show a second row with **Swap L/R** (`POST /api/camera-pair/swap`; `/api/stereo/swap` is a legacy alias) and binding via `POST /api/camera-pair/assign` with `{ "left", "right" }` stable ids from `GET /api/camera-devices`. Pi `cam0` stays `source: auto` / `rpicam-vid`, using hardware H.264 with a two-buffer, denoise-free low-latency capture path; each stream publishes to `rtsp://127.0.0.1:8554/<id>`.
 - The IMU section shows the last body MPU6050 sample (accel in g, gyro in °/s, temperature in °C).
 - The battery section shows pack voltage from the ADS7830 (channel 0).
@@ -185,6 +186,22 @@ x86_64 only. Does not build Pi firmware. Needs `golang-go`; Windows NSIS also ne
 
 CMake presets: `operator-linux-amd64`, `operator-windows-amd64` (`--target package`). The Windows binary is `GOOS=windows GOARCH=amd64` with `CGO_ENABLED=0` (no MinGW). The installer creates the `DoggyLoraOperator` service (LocalSystem, localhost HTTP) using CPack NSIS, same idea as other CPack NSIS projects.
 
+## Host simulator
+
+`./build-simulator.sh` builds `doggy-sim` for the machine you are on. It does not package the Pi. The simulator build uses the system protobuf so Gazebo and doggy-sim can share one process.
+
+```sh
+./install-prereqs.sh --mode simulator
+./build-simulator.sh
+./build/simulator/doggy-sim
+```
+
+The page is plain HTTP on `127.0.0.1:8080` (no TLS, no root). The Pi binary is unchanged and still uses HTTPS. Settings live in `~/.config/doggy/simulator.json` and are separate from `doggy.json`. Defaults: full stick `2.0` m/s, track `0.20` m, origin Givat Shmuel. `DOGGY_SIM_SPAWN=0` serves the page without starting Gazebo.
+
+`doggy-sim` starts Gazebo and subscribes to odometry, IMU, and the two cameras over gz-transport. It publishes `gz.msgs.Twist` on `/model/doggy_rover/cmd_vel`. A command older than about half a second becomes a zero twist. The world is `sim/worlds/street.sdf` (road, shoulder, curb, pavement, one obstacle). The map shows a GPS fix with a 1 Hz error of at most 0.2 m and a 0.01 Hz error of at most 2.5 m. Simulator telemetry is stored in `~/.config/doggy/simulator/telemetry` unless `DOGGY_TELEMETRY_DIR` is set. Truth pose stays inside the simulator for a later filter. Per-motor sliders do not move the simulated rover; arcade drive does.
+
+The two Gazebo cameras are fed through FFmpeg into a loopback MediaMTX (`usb_left` and `usb_right`). `/api/cameras` then returns `http://127.0.0.1:18889/<id>/whep`, which the rover page already plays. That MediaMTX does not use TLS and does not record. The Pi camera URLs stay `https`. `./install-prereqs.sh --mode simulator` installs MediaMTX v1.21.0 under `~/.local/lib/doggy/mediamtx`.
+
 ## Tests
 
 CTest covers installer scripts, the SSH helper, PWM math, HTTP API, and log rotation (no I2C):
@@ -216,7 +233,9 @@ cmake/                        protobuf generation, packaging, and toolchains
 tests/                        C++ and shell integration/regression tests
 CMakeLists.txt                firmware, sidecar, generated models, tests, install
 CMakePresets.json             native, cross, Linux operator, Windows operator
-build.sh / build-operator.sh  firmware and laptop package entry points
+sim/                          Gazebo street world and gz-transport bridge
+build.sh / build-operator.sh / build-simulator.sh
+                              firmware, laptop, and host simulator entry points
 install.sh                    newest firmware-DEB remote installer
 install-watch-s3.sh / -c6.sh  USB flash for each watch board
 ```

@@ -249,6 +249,24 @@ void Rover::expireGcsUnlocked(std::chrono::steady_clock::time_point now) {
     status_.set_speed(0.0);
     status_.set_turn(0.0);
     last_gcs_.reset();
+    onCommandChangedUnlocked();
+}
+
+// ================================================================================
+
+double Rover::commandedSpeedUnlocked() const {
+    return status_.speed();
+}
+
+// ================================================================================
+
+double Rover::commandedTurnUnlocked() const {
+    return status_.turn();
+}
+
+// ================================================================================
+
+void Rover::onCommandChangedUnlocked() {
 }
 
 // ================================================================================
@@ -335,6 +353,7 @@ CommandResult Rover::setDrive(double speed, double turn) {
     status_.set_speed(speed);
     status_.set_turn(turn);
     refreshGcsUnlocked();
+    onCommandChangedUnlocked();
     return CommandResult::ok;
 }
 
@@ -366,6 +385,7 @@ CommandResult Rover::stop() {
     status_.set_speed(0.0);
     status_.set_turn(0.0);
     last_gcs_.reset();
+    onCommandChangedUnlocked();
     return CommandResult::ok;
 }
 
@@ -386,6 +406,7 @@ CommandResult Rover::brake() {
     status_.set_speed(0.0);
     status_.set_turn(0.0);
     last_gcs_.reset();
+    onCommandChangedUnlocked();
     return CommandResult::ok;
 }
 

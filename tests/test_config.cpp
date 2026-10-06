@@ -35,6 +35,8 @@ int main() {
            "media retention defaults to 24 hours");
     expect(defaults.media().min_free_mb() == 512,
            "media min free space defaults to 512 MB");
+    expect(defaults.telemetry().retain_hours() == 168,
+           "telemetry retention defaults to 168 hours");
     expect(defaults.cameras().items_size() == 3,
            "default config includes primary and USB pair camera entries");
     expect(defaults.cameras().items(0).id() == "cam0"

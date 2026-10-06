@@ -5,9 +5,18 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 class CameraPipeline;
 class MediaStore;
+
+// ================================================================================
+
+struct OfferedCamera {
+    std::string id;
+    std::string name;
+    std::string webrtc_url;
+};
 
 // ================================================================================
 
@@ -33,6 +42,7 @@ public:
     ~WebServer();
 
     bool start();
+    void offerCameras(std::vector<OfferedCamera> cameras);
     void run();
     void stop();
     int port() const;

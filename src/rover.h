@@ -35,6 +35,11 @@ private:
     void pollImu(doggy::v1::Imu &reading);
     void pollBattery(doggy::v1::Battery &reading);
 
+protected:
+    double commandedSpeedUnlocked() const;
+    double commandedTurnUnlocked() const;
+    virtual void onCommandChangedUnlocked();
+
 public:
     Imu imu;
     Ads7830 ads;

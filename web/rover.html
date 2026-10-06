@@ -44,7 +44,7 @@
     .robot-marker { background: transparent; border: none; }
     .map-tiles label { display: block; margin: 0.35rem 0; }
     .map-tiles input { width: 100%; }
-    .map-tiles button { margin-top: 0.3rem; }
+    .map-tiles button { margin-top: 0.3rem; margin-right: 0.4rem; }
     .stick-row { display: flex; align-items: center; gap: 0.6rem; }
     .stick-actions { display: flex; flex-direction: column; gap: 0.5rem; }
     .stick-actions button { min-width: 5.5rem; min-height: 2.75rem; }
@@ -169,6 +169,15 @@
           <button type="submit">Apply</button>
         </form>
         <p id="map-note" role="status"></p>
+        <p id="mission-label">Mission: —</p>
+        <form id="telemetry-download" class="map-tiles">
+          <label>Previous missions
+            <input id="telemetry-previous" type="number" min="0" max="100" value="3"
+                   aria-label="Number of previous missions to download">
+          </label>
+          <button type="submit">Download telemetry</button>
+          <button type="button" id="telemetry-new">New mission</button>
+        </form>
       </div>
       <div class="drive-video" id="drive-video" aria-label="Live camera">
         <video id="camera-video" autoplay muted playsinline aria-label="Live robot camera"></video>
@@ -789,6 +798,7 @@
         applyImu(data.imu);
         applyBattery(data.battery);
         applyGps(data.gps);
+        applyMission(data);
         applyMotors(data.motors && data.motors.items);
         // Never adopt reported speed/turn while the user is driving or a command is
         // still in flight: doing so would re-send the stale value we just replaced.
@@ -1933,6 +1943,8 @@
     const mapKeyLabelEl = document.getElementById("map-key-label");
     let robotMap = null;
     let robotMarker = null;
+    let trackLine = null;
+    let trackBusy = false;
     let robotSeen = false;
     let mapMoved = false;
     let tileLayer = null;
@@ -2080,6 +2092,115 @@
 
     // ================================================================================
 
+    function applyMission(data) {
+      const label = document.getElementById("mission-label");
+      if (label === null) {
+        return;
+      }
+      if (data.mission === undefined || data.mission === null) {
+        label.textContent = "Mission: —";
+        return;
+      }
+      const started = Number(data.mission_start_unix);
+      const when = Number.isFinite(started)
+              ? new Date(started * 1000).toISOString()
+              : "—";
+      label.textContent = "Mission " + data.mission + " started " + when;
+    }
+
+    // ================================================================================
+
+    function drawTrack(track) {
+      if (robotMap === null || track === undefined || track === null
+              || Array.isArray(track.points) == false) {
+        return;
+      }
+      const latlngs = [];
+      for (const point of track.points) {
+        if (typeof point.latitude_deg === "number"
+                && typeof point.longitude_deg === "number") {
+          latlngs.push([point.latitude_deg, point.longitude_deg]);
+        }
+      }
+      if (trackLine === null) {
+        trackLine = L.polyline(latlngs, { color: "#1d4e89", weight: 3 }).addTo(robotMap);
+      } else {
+        trackLine.setLatLngs(latlngs);
+      }
+    }
+
+    // ================================================================================
+
+    async function loadTelemetryTrack() {
+      if (trackBusy) {
+        return;
+      }
+      trackBusy = true;
+      try {
+        const res = await fetch("/api/telemetry/track?max_points=2000");
+        if (res.ok == false) {
+          return;
+        }
+        drawTrack(await res.json());
+      } catch (err) {
+        if (mapNoteEl !== null && mapNoteEl.textContent.length === 0) {
+          mapNoteEl.textContent = "Track did not load.";
+        }
+      } finally {
+        trackBusy = false;
+      }
+    }
+
+    // ================================================================================
+
+    async function downloadTelemetry(event) {
+      event.preventDefault();
+      const input = document.getElementById("telemetry-previous");
+      let previous = input === null ? 3 : Number(input.value);
+      if (Number.isFinite(previous) == false) {
+        previous = 3;
+      }
+      if (previous < 0) {
+        previous = 0;
+      }
+      if (previous > 100) {
+        previous = 100;
+      }
+      try {
+        const res = await fetch("/api/telemetry/download?previous=" + String(previous));
+        if (res.ok == false) {
+          mapNoteEl.textContent = "Telemetry download failed.";
+          return;
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "doggy-telemetry.zip";
+        link.click();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        mapNoteEl.textContent = "Telemetry download failed.";
+      }
+    }
+
+    // ================================================================================
+
+    async function startTelemetryMission() {
+      try {
+        const res = await fetch("/api/telemetry/mission", { method: "POST" });
+        if (res.ok == false) {
+          mapNoteEl.textContent = "Could not start a new mission.";
+          return;
+        }
+        await loadTelemetryTrack();
+      } catch (err) {
+        mapNoteEl.textContent = "Could not start a new mission.";
+      }
+    }
+
+    // ================================================================================
+
     function initMap() {
       if (mapEl === null) {
         return;
@@ -2111,6 +2232,18 @@
         saveTileChoice(next);
         setTileLayer(next);
       });
+      const telemetryForm = document.getElementById("telemetry-download");
+      const telemetryNew = document.getElementById("telemetry-new");
+      if (telemetryForm !== null) {
+        telemetryForm.addEventListener("submit", (event) => {
+          downloadTelemetry(event);
+        });
+      }
+      if (telemetryNew !== null) {
+        telemetryNew.addEventListener("click", () => {
+          startTelemetryMission();
+        });
+      }
     }
 
     // Liveness is armed before anything optional, so camera work can never
@@ -2121,6 +2254,8 @@
     loadConfig();
     loadRoverStatus();
     setInterval(loadRoverStatus, POLL_MS);
+    loadTelemetryTrack();
+    setInterval(loadTelemetryTrack, 2000);
     loadCamera();
     loadMedia();
   </script>

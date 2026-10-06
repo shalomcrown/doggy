@@ -113,6 +113,44 @@ func TestCameraAPIIsNotSupportedOverAir(t *testing.T) {
 	if _, err := HTTPToAir("POST", "/api/snapshots", nil); err == nil {
 		t.Fatal("snapshot API unexpectedly mapped onto LoRa")
 	}
+	if _, err := HTTPToAir("GET", "/api/telemetry/download", nil); err == nil {
+		t.Fatal("telemetry zip unexpectedly mapped onto LoRa")
+	}
+}
+
+// ================================================================================
+
+func TestTelemetryTrackOverAir(t *testing.T) {
+	req, err := HTTPToAir("GET", "/api/telemetry/track?max_points=2000", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpReq, err := AirToHTTP(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if httpReq.Method != "GET" || httpReq.Path != "/api/telemetry/track?max_points=80" {
+		t.Fatalf("track mapped to %s %s", httpReq.Method, httpReq.Path)
+	}
+	airResp := HTTPToAirResponse(req, HttpResponse{
+		Status: 200,
+		Body:   []byte(`{"mission":"7","points":[{"latitude_deg":1,"longitude_deg":2}]}`),
+	})
+	status, _, body := AirHTTP(airResp)
+	if status != 200 || strings.Contains(string(body), "latitude_deg") == false {
+		t.Fatalf("track response %d %s", status, body)
+	}
+	mission, err := HTTPToAir("POST", "/api/telemetry/mission", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missionHTTP, err := AirToHTTP(mission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if missionHTTP.Method != "POST" || missionHTTP.Path != "/api/telemetry/mission" {
+		t.Fatalf("mission mapped to %s %s", missionHTTP.Method, missionHTTP.Path)
+	}
 }
 
 // ================================================================================

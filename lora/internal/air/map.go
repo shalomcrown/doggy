@@ -76,6 +76,10 @@ func HTTPToAir(method, path string, body []byte) (*pb.AirRequest, error) {
 			return nil, err
 		}
 		req.Op = &pb.AirRequest_SetPin{SetPin: cmd}
+	case method == http.MethodGet && path == "/api/telemetry/track":
+		req.Op = &pb.AirRequest_GetTrack{GetTrack: &pb.Empty{}}
+	case method == http.MethodPost && path == "/api/telemetry/mission":
+		req.Op = &pb.AirRequest_NewMission{NewMission: &pb.Empty{}}
 	default:
 		return nil, fmt.Errorf("unsupported air path %s %s", method, path)
 	}
@@ -151,6 +155,10 @@ func AirToHTTP(req *pb.AirRequest) (HttpRequest, error) {
 			ContentType: "application/json",
 			Body:        marshalJSON(op.SetPin),
 		}, nil
+	case *pb.AirRequest_GetTrack:
+		return HttpRequest{Method: http.MethodGet, Path: "/api/telemetry/track?max_points=80"}, nil
+	case *pb.AirRequest_NewMission:
+		return HttpRequest{Method: http.MethodPost, Path: "/api/telemetry/mission"}, nil
 	default:
 		return HttpRequest{}, fmt.Errorf("unsupported air op")
 	}
@@ -196,6 +204,10 @@ func HTTPToAirResponse(req *pb.AirRequest, resp HttpResponse) *pb.AirResponse {
 		cfg := &pb.Config{}
 		_ = protojson.Unmarshal(resp.Body, cfg)
 		out.Payload = &pb.AirResponse_Config{Config: cfg}
+	case *pb.AirRequest_GetTrack:
+		track := &pb.TelemetryTrack{}
+		_ = protojson.Unmarshal(resp.Body, track)
+		out.Payload = &pb.AirResponse_Track{Track: track}
 	}
 	return out
 }
@@ -225,6 +237,8 @@ func AirHTTP(resp *pb.AirResponse) (status int, contentType string, body []byte)
 		body = marshalJSON(p.SystemAccepted)
 	case *pb.AirResponse_Error:
 		body = marshalJSON(p.Error)
+	case *pb.AirResponse_Track:
+		body = marshalJSON(p.Track)
 	default:
 		body = []byte{}
 	}

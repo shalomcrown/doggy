@@ -1,0 +1,27 @@
+# Host-simulator MediaMTX. Loopback only, no TLS, no recordings.
+# The Pi config is packaging/mediamtx.yml and is unchanged.
+# RTP/RTCP stay off the default :8000/:8001 so a system MediaMTX can keep them.
+logLevel: warn
+api: false
+rtspAddress: 127.0.0.1:18554
+rtpAddress: 127.0.0.1:18000
+rtcpAddress: 127.0.0.1:18001
+rtmp: false
+hls: false
+srt: false
+moq: false
+webrtc: true
+webrtcAddress: 127.0.0.1:18889
+webrtcEncryption: false
+webrtcLocalUDPAddress: 127.0.0.1:18189
+
+pathDefaults:
+  record: false
+
+paths:
+  usb_left:
+    source: publisher
+    record: false
+  usb_right:
+    source: publisher
+    record: false

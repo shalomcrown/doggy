@@ -124,6 +124,21 @@ endif()
 
 # protobuf 3.21.x: C++ library without Abseil. Host `protoc` is used when
 # cross-compiling; native builds compile protoc from this tarball.
+# The simulator preset sets DOGGY_SYSTEM_PROTOBUF so doggy-sim and Gazebo
+# link the same shared libprotobuf.
+option(DOGGY_SYSTEM_PROTOBUF "Use the system protobuf 3.21 library" OFF)
+if(DOGGY_SYSTEM_PROTOBUF)
+    find_package(Protobuf 3.21 REQUIRED)
+    if(NOT TARGET protobuf::libprotobuf)
+        message(FATAL_ERROR "system protobuf did not provide protobuf::libprotobuf")
+    endif()
+    if(TARGET protobuf::protoc)
+        set(DOGGY_PROTOC_CMD "$<TARGET_FILE:protobuf::protoc>")
+    else()
+        find_program(DOGGY_PROTOC protoc REQUIRED)
+        set(DOGGY_PROTOC_CMD "${DOGGY_PROTOC}")
+    endif()
+else()
 FetchContent_Declare(
     protobuf
     URL https://github.com/protocolbuffers/protobuf/releases/download/v21.12/protobuf-cpp-3.21.12.tar.gz
@@ -150,6 +165,7 @@ else()
 endif()
 if(NOT TARGET protobuf::libprotobuf)
     message(FATAL_ERROR "FetchContent protobuf did not create protobuf::libprotobuf")
+endif()
 endif()
 
 set(DOGGY_PROTO "${CMAKE_SOURCE_DIR}/proto/doggy.proto")
@@ -203,6 +219,7 @@ add_library(doggy_web STATIC
     src/camera_pipeline.cpp
     src/stereo_bindings.cpp
     src/media_store.cpp
+    src/telemetry.cpp
     src/web_server.cpp
     src/robot_api.cpp
     src/system_control.cpp
@@ -302,6 +319,62 @@ target_include_directories(doggy PRIVATE
     "${CMAKE_BINARY_DIR}/generated"
 )
 target_link_libraries(doggy PRIVATE doggy_web nlohmann_json::nlohmann_json)
+
+add_executable(doggy-sim
+    src/sim_main.cpp
+    src/sim_link.cpp
+    src/simulated_rover.cpp
+    src/rover.h
+    src/rover.cpp
+    src/motor_math.h
+    src/i2c_interface.cpp
+    src/i2c_interface.hpp
+    src/servo_board.h
+    src/servo_board.cpp
+    src/pca9685.cpp
+    src/servo.h
+    src/servo.cpp
+    src/imu.h
+    src/imu.cpp
+    src/ads7830.h
+    src/ads7830.cpp
+    src/system_control.h
+)
+target_link_libraries(doggy-sim PRIVATE doggy_web nlohmann_json::nlohmann_json)
+target_compile_definitions(doggy-sim PRIVATE DOGGY_SIM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_dependencies(doggy-sim doggy_version_stamp)
+
+find_package(Threads REQUIRED)
+target_link_libraries(doggy-sim PRIVATE Threads::Threads)
+
+set(DOGGY_WITH_GAZEBO OFF)
+if(DOGGY_SYSTEM_PROTOBUF)
+    find_package(gz-transport13 QUIET)
+    find_package(gz-msgs10 QUIET)
+    set(DOGGY_GZ_TRANSPORT "")
+    set(DOGGY_GZ_MSGS "")
+    if(TARGET gz-transport13::gz-transport13)
+        set(DOGGY_GZ_TRANSPORT gz-transport13::gz-transport13)
+    elseif(TARGET gz-transport13::core)
+        set(DOGGY_GZ_TRANSPORT gz-transport13::core)
+    endif()
+    if(TARGET gz-msgs10::gz-msgs10)
+        set(DOGGY_GZ_MSGS gz-msgs10::gz-msgs10)
+    elseif(TARGET gz-msgs10::core)
+        set(DOGGY_GZ_MSGS gz-msgs10::core)
+    endif()
+    if(DOGGY_GZ_TRANSPORT AND DOGGY_GZ_MSGS)
+        set(DOGGY_WITH_GAZEBO ON)
+    endif()
+endif()
+if(DOGGY_WITH_GAZEBO)
+    target_sources(doggy-sim PRIVATE src/gz_link.cpp src/sim_video.cpp)
+    target_compile_definitions(doggy-sim PRIVATE DOGGY_WITH_GAZEBO=1)
+    target_link_libraries(doggy-sim PRIVATE ${DOGGY_GZ_TRANSPORT} ${DOGGY_GZ_MSGS})
+else()
+    target_sources(doggy-sim PRIVATE src/sim_plant_stub.cpp)
+endif()
+message(STATUS "doggy simulator gazebo link: ${DOGGY_WITH_GAZEBO}")
 target_compile_definitions(doggy
     PRIVATE
         DOGGY_WEB_SOURCE_DIR="${CMAKE_SOURCE_DIR}/web"
@@ -399,6 +472,34 @@ add_executable(test_motor_math tests/test_motor_math.cpp)
 target_include_directories(test_motor_math PRIVATE "${CMAKE_SOURCE_DIR}/src")
 add_test(NAME motor_math COMMAND test_motor_math)
 
+add_executable(test_sim_link
+    tests/test_sim_link.cpp
+    src/sim_link.cpp
+)
+target_include_directories(test_sim_link PRIVATE "${CMAKE_SOURCE_DIR}/src")
+target_link_libraries(test_sim_link PRIVATE nlohmann_json::nlohmann_json)
+add_test(NAME sim_link COMMAND test_sim_link)
+
+add_executable(test_sim_video
+    tests/test_sim_video.cpp
+    src/sim_video.cpp
+)
+target_include_directories(test_sim_video PRIVATE "${CMAKE_SOURCE_DIR}/src")
+target_compile_definitions(test_sim_video PRIVATE DOGGY_SIM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(test_sim_video PRIVATE Threads::Threads)
+add_test(NAME sim_video COMMAND test_sim_video)
+
+add_test(
+    NAME build-simulator-script
+    COMMAND bash "${CMAKE_SOURCE_DIR}/tests/build-simulator-script.test.sh"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+add_test(
+    NAME sim-http
+    COMMAND bash "${CMAKE_SOURCE_DIR}/tests/sim-http.test.sh" $<TARGET_FILE:doggy-sim>
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
 add_executable(test_rover_drive
     tests/test_rover_drive.cpp
     src/gps_parse.cpp
@@ -442,6 +543,10 @@ add_test(NAME stereo_bindings COMMAND test_stereo_bindings)
 add_executable(test_media_store tests/test_media_store.cpp)
 target_link_libraries(test_media_store PRIVATE doggy_web)
 add_test(NAME media_store COMMAND test_media_store)
+
+add_executable(test_telemetry tests/test_telemetry.cpp)
+target_link_libraries(test_telemetry PRIVATE doggy_web)
+add_test(NAME telemetry COMMAND test_telemetry)
 
 add_executable(test_dog_poll
     tests/test_dog_poll.cpp

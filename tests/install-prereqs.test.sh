@@ -276,6 +276,18 @@ else
     fail "--mode native on x86_64 overrides auto-detect"
 fi
 
+if DOGGY_HOST_MACHINE=x86_64 run_plan "$TMPDIR/noble" \
+        "$TMPDIR/plan-simulator" --mode simulator \
+        && grep -q 'mode=simulator' "$TMPDIR/plan-simulator" \
+        && grep -q 'gazebo_package=gz-harmonic' "$TMPDIR/plan-simulator" \
+        && grep -q 'simulator_packages=.*g++' "$TMPDIR/plan-simulator" \
+        && grep -q 'simulator_packages=.*ffmpeg' "$TMPDIR/plan-simulator" \
+        && grep -q 'simulator_mediamtx_version=v1.21.0' "$TMPDIR/plan-simulator"; then
+    pass "simulator mode plans Gazebo Harmonic, ffmpeg, and MediaMTX"
+else
+    fail "simulator mode plans Gazebo Harmonic, ffmpeg, and MediaMTX"
+fi
+
 # ── No pip --user (PEP 668) ──────────────────────────────────────────────────
 if grep -E 'pip[[:space:]]+install[[:space:]]+--user' "$SCRIPT" >/dev/null 2>&1; then
     fail "script must not pip install --user (PEP 668)"

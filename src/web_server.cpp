@@ -4,6 +4,7 @@
 #include "dog_api.h"
 #include "media_store.h"
 #include "rover_api.h"
+#include "telemetry.h"
 #include "utils.h"
 #include "web_json.h"
 #include "doggy_version.h"
@@ -17,9 +18,11 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <thread>
+#include <vector>
 #include <unistd.h>
 #include <utility>
 
@@ -439,10 +442,64 @@ std::string read_file_bytes(const std::string &path) {
     return os.str();
 }
 
+// ================================================================================
+
+bool offered_camera_ok(const OfferedCamera &item) {
+    if (item.id != "usb_left" && item.id != "usb_right") {
+        return false;
+    }
+    const std::string prefix = "http://127.0.0.1:";
+    if (item.webrtc_url.rfind(prefix, 0) != 0) {
+        return false;
+    }
+    if (item.webrtc_url.find(' ') != std::string::npos
+            || item.webrtc_url.find('\n') != std::string::npos) {
+        return false;
+    }
+    const std::string suffix = "/" + item.id + "/whep";
+    return item.webrtc_url.size() >= suffix.size()
+            && item.webrtc_url.compare(
+                    item.webrtc_url.size() - suffix.size(),
+                    suffix.size(),
+                    suffix) == 0;
+}
+
+// ================================================================================
+
+bool query_bounded(
+        const httplib::Request &req,
+        const char *key,
+        int fallback,
+        int min_value,
+        int max_value,
+        int &value) {
+    if (req.has_param(key) == false) {
+        value = fallback;
+        return true;
+    }
+    const std::string text = req.get_param_value(key);
+    if (text.empty()) {
+        return false;
+    }
+    char *end = nullptr;
+    const long parsed = std::strtol(text.c_str(), &end, 10);
+    if (end == text.c_str() || *end != '\0') {
+        return false;
+    }
+    if (parsed < min_value || parsed > max_value) {
+        return false;
+    }
+    value = static_cast<int>(parsed);
+    return true;
+}
+
+// ================================================================================
+
 void register_api(httplib::Server &server, RobotApi &api,
                   const std::string &index_html_path,
                   CameraPipeline *camera_pipeline,
-                  MediaStore *media_store) {
+                  MediaStore *media_store,
+                  const std::shared_ptr<std::vector<OfferedCamera>> &offered_cameras) {
     server.set_payload_max_length(4096);
     server.Get("/", [&index_html_path](const httplib::Request &, httplib::Response &res) {
         const std::string html = read_file(index_html_path);
@@ -490,12 +547,88 @@ void register_api(httplib::Server &server, RobotApi &api,
         res.set_content(status_to_json(api.getStatus(), DOGGY_VERSION), "application/json");
     });
 
+    server.Get("/api/telemetry/track", [](const httplib::Request &req, httplib::Response &res) {
+        TelemetryLog *log = telemetry_current();
+        if (log == nullptr || log->ok() == false) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        int max_points = 0;
+        if (query_bounded(
+                    req,
+                    "max_points",
+                    static_cast<int>(kTelemetryTrackPoints),
+                    1,
+                    5000,
+                    max_points) == false) {
+            res.status = 400;
+            res.set_content(error_json("bad_request"), "application/json");
+            return;
+        }
+        try {
+            res.set_content(
+                    proto_to_json(log->track(static_cast<std::size_t>(max_points))),
+                    "application/json");
+        } catch (const std::exception &) {
+            res.status = 500;
+            res.set_content(error_json("telemetry"), "application/json");
+        }
+    });
+
+    server.Get("/api/telemetry/download", [](const httplib::Request &req, httplib::Response &res) {
+        TelemetryLog *log = telemetry_current();
+        if (log == nullptr || log->ok() == false) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        int previous = 0;
+        if (query_bounded(req, "previous", 0, 0, kTelemetryMaxPrevious, previous) == false) {
+            res.status = 400;
+            res.set_content(error_json("bad_request"), "application/json");
+            return;
+        }
+        std::string bytes;
+        std::string name;
+        if (log->download_zip(previous, bytes, name) == false) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        res.set_header("Content-Disposition", "attachment; filename=\"" + name + "\"");
+        res.set_content(std::move(bytes), "application/zip");
+    });
+
+    server.Post("/api/telemetry/mission", [](const httplib::Request &, httplib::Response &res) {
+        TelemetryLog *log = telemetry_current();
+        if (log == nullptr || log->ok() == false) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        log->start_mission();
+        res.set_content("{\"accepted\":true}", "application/json");
+    });
+
     server.Get("/api/config", [&api](const httplib::Request &, httplib::Response &res) {
         res.set_content(config_to_public_json(api.getConfig()), "application/json");
     });
 
-    server.Get("/api/cameras", [&api, camera_pipeline](
+    server.Get("/api/cameras", [&api, camera_pipeline, offered_cameras](
             const httplib::Request &req, httplib::Response &res) {
+        if (offered_cameras != nullptr && offered_cameras->empty() == false) {
+            doggy::v1::CameraStreamList list;
+            for (const OfferedCamera &item : *offered_cameras) {
+                doggy::v1::CameraStream *stream = list.add_items();
+                stream->set_id(item.id);
+                stream->set_name(item.name);
+                stream->set_webrtc_url(item.webrtc_url);
+                stream->set_ready(true);
+            }
+            res.set_content(proto_to_json(list), "application/json");
+            return;
+        }
         if (camera_pipeline == nullptr) {
             res.status = 404;
             res.set_content(error_json("not_found"), "application/json");
@@ -1072,19 +1205,21 @@ public:
     std::unique_ptr<httplib::Server> http;
     std::thread https_worker;
     std::thread http_worker;
+    std::shared_ptr<std::vector<OfferedCamera>> offered;
 
     Impl(RobotApi &api, std::string index_html_path, WebListen listen,
          CameraPipeline *camera_pipeline, MediaStore *media_store) :
         api(api),
         index_html_path(std::move(index_html_path)),
-        listen(std::move(listen)) {
+        listen(std::move(listen)),
+        offered(std::make_shared<std::vector<OfferedCamera>>()) {
         if (this->listen.https_port >= 0) {
             https = std::make_unique<httplib::SSLServer>(
                     this->listen.cert_path.c_str(), this->listen.key_path.c_str());
             if (https->is_valid()) {
                 register_api(
                         *https, this->api, this->index_html_path, camera_pipeline,
-                        media_store);
+                        media_store, offered);
             } else {
                 https.reset();
             }
@@ -1094,7 +1229,7 @@ public:
             http = std::make_unique<httplib::Server>();
             register_api(
                     *http, this->api, this->index_html_path, camera_pipeline,
-                    media_store);
+                    media_store, offered);
             return;
         }
 
@@ -1128,6 +1263,21 @@ WebServer::WebServer(RobotApi &api, std::string index_html_path, WebListen liste
 
 WebServer::~WebServer() {
     stop();
+}
+
+// ================================================================================
+
+void WebServer::offerCameras(std::vector<OfferedCamera> cameras) {
+    if (impl == nullptr || impl->offered == nullptr) {
+        return;
+    }
+    for (const OfferedCamera &item : cameras) {
+        if (offered_camera_ok(item) == false) {
+            impl->offered->clear();
+            return;
+        }
+    }
+    *impl->offered = std::move(cameras);
 }
 
 // ================================================================================

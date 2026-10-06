@@ -222,6 +222,14 @@ static void validate_camera_pair(const doggy::v1::CameraPair &pair) {
 
 // ================================================================================
 
+static void validate_telemetry(const doggy::v1::Telemetry &telemetry) {
+    if (telemetry.retain_hours() < 1 || telemetry.retain_hours() > 8760) {
+        throw ConfigError("config telemetry.retain_hours out of range");
+    }
+}
+
+// ================================================================================
+
 static void validate_media(const doggy::v1::Media &media) {
     if (media.retain_hours() < 1 || media.retain_hours() > 168) {
         throw ConfigError("config media.retain_hours out of range");
@@ -270,6 +278,7 @@ static void validate_config(const Config &config) {
         validate_camera_pair(config.camera_pair());
     }
     validate_media(config.media());
+    validate_telemetry(config.telemetry());
     validate_gps(config.gps());
 }
 
@@ -314,6 +323,9 @@ void fill_config_defaults(Config &config) {
     }
     if (config.media().has_min_free_mb() == false) {
         config.mutable_media()->set_min_free_mb(512);
+    }
+    if (config.telemetry().has_retain_hours() == false) {
+        config.mutable_telemetry()->set_retain_hours(168);
     }
     if (config.gps().has_enabled() == false) {
         config.mutable_gps()->set_enabled(false);

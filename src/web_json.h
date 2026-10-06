@@ -3,6 +3,7 @@
 
 #include "config.h"
 #include "robot_api.h"
+#include "telemetry.h"
 
 #include <chrono>
 #include <cmath>
@@ -29,6 +30,7 @@ inline std::string status_to_json(DogStatus status, const char *version) {
     } else {
         status.mutable_servos();
     }
+    telemetry_attach_status(status);
     return proto_to_json(status);
 }
 

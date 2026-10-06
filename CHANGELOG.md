@@ -12,6 +12,19 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 > Work merged but not yet shipped. Move entries to a versioned section on release.
 
 ### Added
+- Rover telemetry. Status is sampled at 1 Hz into hourly mission files under
+  `/var/lib/doggy/telemetry`. The open file is plain JSONL; rolled files are
+  gzipped. A mission counter lasts for the life of the robot. The rover map
+  draws that mission, and the page can download the current mission plus
+  earlier ones. `telemetry.retain_hours` defaults to 168.
+- Host simulator. `./build-simulator.sh` builds `doggy-sim`, which serves the
+  rover page on `http://127.0.0.1:8080`. Gazebo Harmonic stays a separate
+  physics process. doggy-sim links gz-transport in-process, using the system
+  protobuf on that preset only, and publishes the two Gazebo cameras through
+  FFmpeg into a loopback MediaMTX so the existing rover page can play them.
+  Full stick is 2 m/s. GPS error is at most 0.2 m at 1 Hz plus 2.5 m at
+  0.01 Hz. Simulator settings are not stored in `doggy.json`.
+  The Pi build still vendors its own protobuf and serves cameras over HTTPS.
 - Dog and rover status now includes a GPS fix when `gps.enabled` is set in
   `doggy.json`. The receiver may be NMEA, u-blox, Septentrio, or NovAtel on a
   USB or serial port. `type: auto` with an empty device selects one u-blox or
