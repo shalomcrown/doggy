@@ -282,6 +282,8 @@ if DOGGY_HOST_MACHINE=x86_64 run_plan "$TMPDIR/noble" \
         && grep -q 'gazebo_package=gz-harmonic' "$TMPDIR/plan-simulator" \
         && grep -q 'simulator_packages=.*g++' "$TMPDIR/plan-simulator" \
         && grep -q 'simulator_packages=.*ffmpeg' "$TMPDIR/plan-simulator" \
+        && grep -q 'simulator_packages=.*libprotobuf-dev' "$TMPDIR/plan-simulator" \
+        && grep -q 'simulator_packages=.*protobuf-compiler' "$TMPDIR/plan-simulator" \
         && grep -q 'simulator_mediamtx_version=v1.21.0' "$TMPDIR/plan-simulator"; then
     pass "simulator mode plans Gazebo Harmonic, ffmpeg, and MediaMTX"
 else

@@ -61,6 +61,17 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 - `robot.turn_gain_min` (default 0.25) so low-speed steering is less twitchy while full-speed turns stay authoritative.
 
 ### Fixed
+- Native `./build.sh` on a Raspberry Pi can package again. `lora/go.mod` was
+  missing, so Go looked up to the repo root, saw `.git/config`, and stopped
+  with "cannot find main module". The same `package` target also failed to
+  link `test_pwm_math` after `status_to_json` started calling
+  `telemetry_attach_status`. Cross builds could still succeed from leftover
+  binaries or an untracked module file.
+- `./build-simulator.sh` configures on a host that lacks `libprotobuf-dev`.
+  The simulator preset still prefers system protobuf 3.21 so it can share
+  Gazebo's library, but it vendors protobuf and skips the Gazebo link when
+  headers or `protoc` are missing. Simulator prereqs now include
+  `libprotobuf-dev` and `protobuf-compiler`.
 - Watch discovery retries an empty `_doggy._tcp` browse up to three times
   before deciding the LAN is empty. The first query often races `MDNS.begin()`,
   so a single miss used to latch "No doggys found" until Refresh. The log now

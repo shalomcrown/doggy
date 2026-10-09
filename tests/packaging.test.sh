@@ -750,6 +750,33 @@ else
     fail "MediaMTX config render substitutes the hostname"
 fi
 
+if awk '/add_executable\(test_pwm_math/,/^\)/' "$CMAKE" | grep -q 'src/telemetry.cpp'; then
+    pass "test_pwm_math links telemetry.cpp for status_to_json"
+else
+    fail "test_pwm_math links telemetry.cpp for status_to_json"
+fi
+
+if grep -q 'find_package(Protobuf 3.21 REQUIRED)' "$CMAKE"; then
+    fail "simulator protobuf is optional when system 3.21 is missing"
+else
+    pass "simulator protobuf is optional when system 3.21 is missing"
+fi
+
+if grep -q 'find_package(Protobuf 3.21 QUIET)' "$CMAKE" \
+        && grep -q 'DOGGY_USE_SYSTEM_PROTOBUF' "$CMAKE" \
+        && grep -q 'vendoring protobuf (Gazebo link disabled)' "$CMAKE"; then
+    pass "simulator vendors protobuf when system 3.21 is missing"
+else
+    fail "simulator vendors protobuf when system 3.21 is missing"
+fi
+
+if grep -q 'if(DOGGY_USE_SYSTEM_PROTOBUF)' "$CMAKE" \
+        && grep -q 'find_package(gz-transport13 QUIET)' "$CMAKE"; then
+    pass "Gazebo links only when system protobuf is in use"
+else
+    fail "Gazebo links only when system protobuf is in use"
+fi
+
 if [ "$FAILS" -ne 0 ]; then
     printf '%s\n' "---- captured ----"
     if [ -f "$MOCK_LOG/commands" ]; then

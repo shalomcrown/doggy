@@ -162,7 +162,7 @@ watch_packages() {
     printf '%s' "python3 python3-venv python3-pip pipx"
 }
 simulator_packages() {
-    printf '%s' "ca-certificates cmake ninja-build g++ build-essential pkg-config git curl gnupg lsb-release ffmpeg"
+    printf '%s' "ca-certificates cmake ninja-build g++ build-essential pkg-config git curl gnupg lsb-release ffmpeg libprotobuf-dev protobuf-compiler"
 }
 print_plan() {
     printf 'os_id=%s\n' "$OS_ID"

@@ -103,6 +103,13 @@ else
     fail "go.mod includes protobuf for generated models"
 fi
 
+GOMOD=$(cd "$ROOT/lora" && go env GOMOD)
+if [ "$GOMOD" = "$ROOT/lora/go.mod" ]; then
+    pass "Go treats lora/ as the main module"
+else
+    fail "Go treats lora/ as the main module (GOMOD=$GOMOD)"
+fi
+
 if grep -q 'windowsServiceName' "$ROOT/lora/cmd/doggy-lora/service_windows.go" \
         && grep -q 'svc.Run' "$ROOT/lora/cmd/doggy-lora/service_windows.go"; then
     pass "Windows build uses SCM svc.Run"

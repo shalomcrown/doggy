@@ -125,18 +125,34 @@ endif()
 # protobuf 3.21.x: C++ library without Abseil. Host `protoc` is used when
 # cross-compiling; native builds compile protoc from this tarball.
 # The simulator preset sets DOGGY_SYSTEM_PROTOBUF so doggy-sim and Gazebo
-# link the same shared libprotobuf.
+# link the same shared libprotobuf. If headers or protoc are missing (typical
+# on a Pi that only has firmware prereqs), vendor protobuf and skip Gazebo.
 option(DOGGY_SYSTEM_PROTOBUF "Use the system protobuf 3.21 library" OFF)
+set(DOGGY_USE_SYSTEM_PROTOBUF OFF)
 if(DOGGY_SYSTEM_PROTOBUF)
-    find_package(Protobuf 3.21 REQUIRED)
+    find_package(Protobuf 3.21 QUIET)
+    if(TARGET protobuf::libprotobuf)
+        if(TARGET protobuf::protoc)
+            set(DOGGY_USE_SYSTEM_PROTOBUF ON)
+            set(DOGGY_PROTOC_CMD "$<TARGET_FILE:protobuf::protoc>")
+        else()
+            find_program(DOGGY_PROTOC protoc)
+            if(DOGGY_PROTOC)
+                set(DOGGY_USE_SYSTEM_PROTOBUF ON)
+                set(DOGGY_PROTOC_CMD "${DOGGY_PROTOC}")
+            endif()
+        endif()
+    endif()
+    if(DOGGY_USE_SYSTEM_PROTOBUF)
+        message(STATUS "using system protobuf 3.21")
+    else()
+        message(STATUS "system protobuf 3.21 not found; vendoring protobuf (Gazebo link disabled)")
+    endif()
+endif()
+
+if(DOGGY_USE_SYSTEM_PROTOBUF)
     if(NOT TARGET protobuf::libprotobuf)
         message(FATAL_ERROR "system protobuf did not provide protobuf::libprotobuf")
-    endif()
-    if(TARGET protobuf::protoc)
-        set(DOGGY_PROTOC_CMD "$<TARGET_FILE:protobuf::protoc>")
-    else()
-        find_program(DOGGY_PROTOC protoc REQUIRED)
-        set(DOGGY_PROTOC_CMD "${DOGGY_PROTOC}")
     endif()
 else()
 FetchContent_Declare(
@@ -348,7 +364,7 @@ find_package(Threads REQUIRED)
 target_link_libraries(doggy-sim PRIVATE Threads::Threads)
 
 set(DOGGY_WITH_GAZEBO OFF)
-if(DOGGY_SYSTEM_PROTOBUF)
+if(DOGGY_USE_SYSTEM_PROTOBUF)
     find_package(gz-transport13 QUIET)
     find_package(gz-msgs10 QUIET)
     set(DOGGY_GZ_TRANSPORT "")
@@ -445,13 +461,14 @@ add_executable(test_pwm_math
     src/config.cpp
     src/stereo_bindings.cpp
     src/utils.cpp
+    src/telemetry.cpp
     "${DOGGY_PB_CC}"
 )
 target_include_directories(test_pwm_math PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_BINARY_DIR}/generated"
 )
-target_link_libraries(test_pwm_math PRIVATE nlohmann_json::nlohmann_json mbedcrypto protobuf::libprotobuf)
+target_link_libraries(test_pwm_math PRIVATE pthread nlohmann_json::nlohmann_json mbedcrypto protobuf::libprotobuf plog::plog ${DOGGY_ZLIB})
 add_dependencies(test_pwm_math doggy_proto)
 add_test(NAME pwm_math COMMAND test_pwm_math)
 
