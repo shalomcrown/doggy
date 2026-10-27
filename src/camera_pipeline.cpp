@@ -2,6 +2,8 @@
 
 #include "camera_ids.h"
 
+#include <plog/Log.h>
+
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -13,6 +15,7 @@
 #include <unordered_map>
 #include <poll.h>
 #include <cstring>
+#include <sstream>
 #include <string>
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
@@ -33,6 +36,9 @@ static constexpr int kUsbBringUpDelayUs = 400000;
 
 // Target ~250 ms max IDR spacing at the configured frame rate.
 static constexpr int kLowLatencyGopDivisor = 4;
+static constexpr int kLivePublishFps = 15;
+static constexpr int kUsbFallbackWidth = 1280;
+static constexpr int kUsbFallbackHeight = 720;
 
 // ================================================================================
 
@@ -229,6 +235,35 @@ private:
 
 // ================================================================================
 
+static void append_mjpeg_discrete_sizes(
+        int fd,
+        uint32_t buffer_type,
+        std::vector<V4l2FrameSize> *sizes) {
+    v4l2_fmtdesc format{};
+    format.type = buffer_type;
+    for (format.index = 0; ioctl(fd, VIDIOC_ENUM_FMT, &format) == 0; format.index += 1) {
+        if (format.pixelformat != V4L2_PIX_FMT_MJPEG) {
+            continue;
+        }
+
+        v4l2_frmsizeenum frame{};
+        frame.pixel_format = V4L2_PIX_FMT_MJPEG;
+        for (frame.index = 0; ioctl(fd, VIDIOC_ENUM_FRAMESIZES, &frame) == 0;
+                frame.index += 1) {
+            if (frame.type != V4L2_FRMSIZE_TYPE_DISCRETE) {
+                continue;
+            }
+
+            V4l2FrameSize size;
+            size.width = static_cast<int>(frame.discrete.width);
+            size.height = static_cast<int>(frame.discrete.height);
+            sizes->push_back(size);
+        }
+    }
+}
+
+// ================================================================================
+
 static std::optional<V4l2CaptureDevice> probe_usb_capture_node(const fs::path &path) {
     const int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK);
     if (fd < 0) {
@@ -239,13 +274,13 @@ static std::optional<V4l2CaptureDevice> probe_usb_capture_node(const fs::path &p
         close(fd);
         return std::nullopt;
     }
-    close(fd);
 
     const uint32_t caps = (capability.capabilities & V4L2_CAP_DEVICE_CAPS)
             ? capability.device_caps
             : capability.capabilities;
     if ((caps & V4L2_CAP_VIDEO_CAPTURE) == 0
             && (caps & V4L2_CAP_VIDEO_CAPTURE_MPLANE) == 0) {
+        close(fd);
         return std::nullopt;
     }
 
@@ -254,6 +289,7 @@ static std::optional<V4l2CaptureDevice> probe_usb_capture_node(const fs::path &p
             strnlen(reinterpret_cast<const char *>(capability.bus_info),
                     sizeof(capability.bus_info)));
     if (bus_info.rfind("usb-", 0) != 0) {
+        close(fd);
         return std::nullopt;
     }
 
@@ -264,6 +300,14 @@ static std::optional<V4l2CaptureDevice> probe_usb_capture_node(const fs::path &p
             strnlen(reinterpret_cast<const char *>(capability.card),
                     sizeof(capability.card)));
     item.stable_id = bus_info;
+    if ((caps & V4L2_CAP_VIDEO_CAPTURE) != 0) {
+        append_mjpeg_discrete_sizes(fd, V4L2_BUF_TYPE_VIDEO_CAPTURE, &item.mjpeg_sizes);
+    }
+    if (item.mjpeg_sizes.empty() && (caps & V4L2_CAP_VIDEO_CAPTURE_MPLANE) != 0) {
+        append_mjpeg_discrete_sizes(
+                fd, V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, &item.mjpeg_sizes);
+    }
+    close(fd);
     return item;
 }
 
@@ -406,6 +450,158 @@ public:
 
 // ================================================================================
 
+static bool mjpeg_size_is_stereo_pair(
+        const V4l2FrameSize &size,
+        const std::vector<V4l2FrameSize> &sizes) {
+    if (size.width < 2 || (size.width % 2) != 0 || size.height <= 0) {
+        return false;
+    }
+
+    const int half_width = size.width / 2;
+    for (const V4l2FrameSize &other : sizes) {
+        if (other.width == half_width && other.height == size.height) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// ================================================================================
+
+static bool mjpeg_sizes_contain(
+        const std::vector<V4l2FrameSize> &sizes,
+        int width,
+        int height) {
+    for (const V4l2FrameSize &size : sizes) {
+        if (size.width == width && size.height == height) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// ================================================================================
+
+std::optional<V4l2FrameSize> select_stereo_mjpeg_size(
+        const std::vector<V4l2FrameSize> &sizes) {
+    const V4l2FrameSize preferred[] = {
+        {1280, 480},
+        {2560, 720},
+        {1280, 360},
+    };
+    for (const V4l2FrameSize &want : preferred) {
+        if (mjpeg_sizes_contain(sizes, want.width, want.height)
+                && mjpeg_size_is_stereo_pair(want, sizes)) {
+            return want;
+        }
+    }
+
+    std::optional<V4l2FrameSize> best;
+    for (const V4l2FrameSize &size : sizes) {
+        if (mjpeg_size_is_stereo_pair(size, sizes) == false) {
+            continue;
+        }
+        if (best.has_value() == false
+                || size.width > best->width
+                || (size.width == best->width && size.height > best->height)) {
+            best = size;
+        }
+    }
+
+    return best;
+}
+
+// ================================================================================
+
+static void usb_fallback_frame_size(
+        int configured_width,
+        int configured_height,
+        int *width,
+        int *height) {
+    *width = kUsbFallbackWidth;
+    *height = kUsbFallbackHeight;
+    if (configured_width > 0 && configured_height > 0
+            && configured_width <= kUsbFallbackWidth
+            && configured_height <= kUsbFallbackHeight) {
+        *width = configured_width;
+        *height = configured_height;
+    }
+}
+
+// ================================================================================
+
+std::vector<LiveCameraChoice> rank_live_cameras(
+        const std::vector<V4l2CaptureDevice> &devices,
+        bool rpi_available,
+        int configured_width,
+        int configured_height,
+        int configured_fps,
+        int configured_rotation,
+        bool swap_halves) {
+    std::vector<V4l2CaptureDevice> ordered = devices;
+    std::sort(ordered.begin(), ordered.end(),
+            [](const V4l2CaptureDevice &left, const V4l2CaptureDevice &right) {
+                if (left.stable_id != right.stable_id) {
+                    return left.stable_id < right.stable_id;
+                }
+                return left.device < right.device;
+            });
+
+    std::vector<LiveCameraChoice> ranked;
+    for (const V4l2CaptureDevice &device : ordered) {
+        const std::optional<V4l2FrameSize> mode =
+                select_stereo_mjpeg_size(device.mjpeg_sizes);
+        if (mode.has_value() == false) {
+            continue;
+        }
+
+        LiveCameraChoice choice;
+        choice.kind = LiveCameraKind::stereo;
+        choice.device = device.device;
+        choice.name = "Stereo camera";
+        choice.width = mode->width;
+        choice.height = mode->height;
+        choice.fps = kLivePublishFps;
+        choice.rotation_deg = configured_rotation;
+        choice.swap_halves = swap_halves;
+        ranked.push_back(choice);
+    }
+
+    if (rpi_available) {
+        LiveCameraChoice choice;
+        choice.kind = LiveCameraKind::rpi;
+        choice.name = "Pi camera";
+        choice.width = configured_width > 0 ? configured_width : kUsbFallbackWidth;
+        choice.height = configured_height > 0 ? configured_height : kUsbFallbackHeight;
+        choice.fps = configured_fps > 0 ? configured_fps : kLivePublishFps;
+        choice.rotation_deg = configured_rotation;
+        ranked.push_back(choice);
+    }
+
+    for (const V4l2CaptureDevice &device : ordered) {
+        if (select_stereo_mjpeg_size(device.mjpeg_sizes).has_value()) {
+            continue;
+        }
+
+        LiveCameraChoice choice;
+        choice.kind = LiveCameraKind::usb;
+        choice.device = device.device;
+        choice.name = "USB camera";
+        usb_fallback_frame_size(
+                configured_width, configured_height, &choice.width, &choice.height);
+        choice.fps = kLivePublishFps;
+        choice.rotation_deg = configured_rotation;
+        ranked.push_back(choice);
+        break;
+    }
+
+    return ranked;
+}
+
+// ================================================================================
+
 static CameraProcessSpec rpi_process_spec(const doggy::v1::Camera &camera) {
     CameraProcessSpec spec;
     spec.commands.push_back({
@@ -470,7 +666,18 @@ static CameraProcessSpec v4l2_process_spec(
         std::to_string(camera.width()) + "x" + std::to_string(camera.height()),
         "-i", device
     });
-    if (camera.rotation_deg() == 180) {
+    if (camera.swap_halves()) {
+        std::string graph =
+                "[0:v]split[a][b];"
+                "[b]crop=iw/2:ih:iw/2:0[right];"
+                "[a]crop=iw/2:ih:0:0[left];"
+                "[right][left]hstack";
+        if (camera.rotation_deg() == 180) {
+            graph += ",hflip,vflip";
+        }
+        graph += "[v]";
+        command.insert(command.end(), {"-filter_complex", graph, "-map", "[v]"});
+    } else if (camera.rotation_deg() == 180) {
         command.insert(command.end(), {"-vf", "hflip,vflip"});
     }
     const int gop = low_latency_gop_frames(camera.fps());
@@ -593,26 +800,6 @@ std::vector<V4l2CaptureDevice> CameraPipeline::discoverV4l2Locked() {
 
 // ================================================================================
 
-StereoBindings CameraPipeline::prepareBindingsLocked(
-        const Config &config,
-        const std::vector<V4l2CaptureDevice> &devices,
-        bool *changed) {
-    StereoBindings bindings = stereo_bindings_from_config(config);
-    std::vector<std::string> stable_ids;
-    for (const V4l2CaptureDevice &device : devices) {
-        stable_ids.push_back(device.stable_id);
-    }
-
-    const bool updated = stereo_bindings_ensure_defaults(&bindings, stable_ids);
-    if (changed != nullptr) {
-        *changed = updated;
-    }
-
-    return bindings;
-}
-
-// ================================================================================
-
 std::string CameraPipeline::roleForStableIdLocked(
         const std::string &stable_id,
         const StereoBindings &bindings) const {
@@ -628,93 +815,6 @@ std::string CameraPipeline::roleForStableIdLocked(
 
 // ================================================================================
 
-std::optional<std::string> CameraPipeline::deviceForStableId(
-        const std::string &stable_id,
-        const std::vector<V4l2CaptureDevice> &devices) const {
-    for (const V4l2CaptureDevice &device : devices) {
-        if (device.stable_id == stable_id) {
-            return device.device;
-        }
-    }
-
-    return std::nullopt;
-}
-
-// ================================================================================
-
-bool CameraPipeline::resolveSourceForCamera(
-        const doggy::v1::Camera &camera,
-        const std::vector<V4l2CaptureDevice> &devices,
-        const StereoBindings &bindings,
-        bool rpi_reserved,
-        bool rpi_available,
-        std::string &source,
-        std::string &device) const {
-    source = camera.source();
-    device = camera.device();
-
-    if (camera_id_is_usb_pair(camera.id())) {
-        const std::string stable = camera_id_is_usb_pair_left(camera.id())
-                ? bindings.left_stable_id
-                : bindings.right_stable_id;
-        if (stable.empty()) {
-            return false;
-        }
-
-        const std::optional<std::string> resolved = deviceForStableId(stable, devices);
-        if (resolved.has_value() == false) {
-            return false;
-        }
-
-        source = "v4l2";
-        device = *resolved;
-        return true;
-    }
-
-    if (source == "auto") {
-        if (rpi_reserved && rpi_available) {
-            source = "rpi";
-            device.clear();
-            return true;
-        }
-
-        for (const V4l2CaptureDevice &item : devices) {
-            if (item.stable_id == bindings.left_stable_id
-                    || item.stable_id == bindings.right_stable_id) {
-                continue;
-            }
-
-            source = "v4l2";
-            device = item.device;
-            return true;
-        }
-
-        return false;
-    }
-
-    if (source == "rpi") {
-        return rpi_reserved && rpi_available;
-    }
-
-    if (source == "v4l2") {
-        if (device.empty()) {
-            const std::optional<std::string> found =
-                    discovery_->firstV4l2CaptureDevice();
-            if (found.has_value() == false) {
-                return false;
-            }
-
-            device = *found;
-        }
-
-        return true;
-    }
-
-    return false;
-}
-
-// ================================================================================
-
 void CameraPipeline::stopFeeder(const std::string &id) {
     auto found = feeders_.find(id);
     if (found == feeders_.end()) {
@@ -726,6 +826,19 @@ void CameraPipeline::stopFeeder(const std::string &id) {
     }
 
     feeders_.erase(found);
+}
+
+// ================================================================================
+
+void CameraPipeline::stopFeedersLocked() {
+    std::vector<std::string> ids;
+    ids.reserve(feeders_.size());
+    for (const auto &entry : feeders_) {
+        ids.push_back(entry.first);
+    }
+    for (const std::string &id : ids) {
+        stopFeeder(id);
+    }
 }
 
 // ================================================================================
@@ -801,48 +914,175 @@ doggy::v1::CameraDeviceList CameraPipeline::listDevices(const Config &config) {
     return list;
 }
 
-CameraQueryResult CameraPipeline::streamsFor(
-        const std::vector<const doggy::v1::Camera *> &cameras,
-        const std::string &host,
-        const std::vector<V4l2CaptureDevice> &devices,
-        const StereoBindings &bindings,
-        bool rpi_available) {
-    CameraQueryResult result;
-    result.result = CameraResult::ok;
+// ================================================================================
 
-    for (const doggy::v1::Camera *camera : cameras) {
-        doggy::v1::CameraStream *stream = result.streams.add_items();
-        stream->set_id(camera->id());
-        stream->set_name(camera->name());
-
-        std::string source;
-        std::string device;
-        const bool rpi_reserved = camera->id() == kCameraPrimaryId
-                || camera->source() == "rpi"
-                || camera->source() == "auto";
-        const bool resolved = resolveSourceForCamera(
-                *camera,
-                devices,
-                bindings,
-                rpi_reserved,
-                rpi_available,
-                source,
-                device);
-        const auto feeder = feeders_.find(camera->id());
-        const bool running = feeder != feeders_.end()
-                && feeder->second.process
-                && feeder->second.process->running();
-        stream->set_ready(resolved && running);
-        if (resolved == false || running == false) {
-            continue;
+static bool any_camera_enabled(const Config &config) {
+    for (const doggy::v1::Camera &camera : config.cameras().items()) {
+        if (camera.enabled()) {
+            return true;
         }
-
-        stream->set_webrtc_url(
-                "https://" + host + ":" + std::to_string(kWebRtcPort) + "/"
-                + camera->id() + "/whep");
     }
 
-    return result;
+    return false;
+}
+
+// ================================================================================
+
+static const doggy::v1::Camera *primary_camera(const Config &config) {
+    for (const doggy::v1::Camera &camera : config.cameras().items()) {
+        if (camera.id() == kCameraPrimaryId) {
+            return &camera;
+        }
+    }
+
+    return nullptr;
+}
+
+// ================================================================================
+
+static std::string live_selection_key(const Config &config) {
+    std::string key = "enabled:";
+    for (const doggy::v1::Camera &camera : config.cameras().items()) {
+        if (camera.enabled()) {
+            key += camera.id();
+            key += ",";
+        }
+    }
+
+    const doggy::v1::Camera *primary = primary_camera(config);
+    key += "|w=";
+    key += primary == nullptr ? "0" : std::to_string(primary->width());
+    key += "|h=";
+    key += primary == nullptr ? "0" : std::to_string(primary->height());
+    key += "|fps=";
+    key += primary == nullptr ? "0" : std::to_string(primary->fps());
+    key += "|rot=";
+    key += primary == nullptr ? "0" : std::to_string(primary->rotation_deg());
+    key += "|swap=";
+    key += primary != nullptr && primary->swap_halves() ? "1" : "0";
+    return key;
+}
+
+// ================================================================================
+
+static void append_live_stream(
+        doggy::v1::CameraStreamList *streams,
+        const std::string &host,
+        const std::string &name,
+        bool ready) {
+    doggy::v1::CameraStream *stream = streams->add_items();
+    stream->set_id(kCameraPrimaryId);
+    stream->set_name(name);
+    stream->set_ready(ready);
+    if (ready) {
+        stream->set_webrtc_url(
+                "https://" + host + ":" + std::to_string(kWebRtcPort) + "/"
+                + std::string(kCameraPrimaryId) + "/whep");
+    }
+}
+
+// ================================================================================
+
+static const char *live_camera_kind_label(LiveCameraKind kind) {
+    if (kind == LiveCameraKind::stereo) {
+        return "stereo";
+    }
+    if (kind == LiveCameraKind::rpi) {
+        return "rpi";
+    }
+    if (kind == LiveCameraKind::usb) {
+        return "usb";
+    }
+
+    return "none";
+}
+
+// ================================================================================
+
+static std::string mjpeg_size_list(const std::vector<V4l2FrameSize> &sizes) {
+    std::string text;
+    for (const V4l2FrameSize &size : sizes) {
+        if (text.empty() == false) {
+            text += ",";
+        }
+        text += std::to_string(size.width);
+        text += "x";
+        text += std::to_string(size.height);
+    }
+    if (text.empty()) {
+        return "none";
+    }
+
+    return text;
+}
+
+// ================================================================================
+
+static void log_discovered_cameras(
+        const std::vector<V4l2CaptureDevice> &devices,
+        bool rpi_available) {
+    PLOG_INFO << "camera probe raspberry pi " << (rpi_available ? "yes" : "no")
+            << " usb " << devices.size();
+    for (const V4l2CaptureDevice &device : devices) {
+        const std::optional<V4l2FrameSize> mode =
+                select_stereo_mjpeg_size(device.mjpeg_sizes);
+        std::string line = "camera found ";
+        line += device.device;
+        line += " name ";
+        line += device.name;
+        line += " id ";
+        line += device.stable_id;
+        line += " stereo ";
+        line += mode.has_value() ? "yes" : "no";
+        line += " mjpeg ";
+        line += mjpeg_size_list(device.mjpeg_sizes);
+        if (mode.has_value()) {
+            line += " selected ";
+            line += std::to_string(mode->width);
+            line += "x";
+            line += std::to_string(mode->height);
+        }
+        PLOG_INFO << line;
+    }
+}
+
+// ================================================================================
+
+static void log_live_camera(
+        const char *event,
+        const LiveCameraChoice &choice,
+        bool warning) {
+    const std::string device = choice.device.empty() ? "-" : choice.device;
+    std::ostringstream line;
+    line << "camera " << event << " " << live_camera_kind_label(choice.kind)
+            << " " << device << " " << choice.width << "x" << choice.height
+            << " " << choice.fps << " fps stereo "
+            << (choice.kind == LiveCameraKind::stereo ? "yes" : "no")
+            << " invert " << (choice.rotation_deg == 180 ? "yes" : "no")
+            << " swap " << (choice.swap_halves ? "yes" : "no");
+    if (warning) {
+        PLOG_WARNING << line.str();
+        return;
+    }
+
+    PLOG_INFO << line.str();
+}
+
+// ================================================================================
+
+static doggy::v1::Camera capture_camera(const LiveCameraChoice &choice) {
+    doggy::v1::Camera camera;
+    camera.set_id(kCameraPrimaryId);
+    camera.set_name(choice.name);
+    camera.set_source(choice.kind == LiveCameraKind::rpi ? "rpi" : "v4l2");
+    camera.set_device(choice.device);
+    camera.set_width(choice.width);
+    camera.set_height(choice.height);
+    camera.set_fps(choice.fps);
+    camera.set_rotation_deg(choice.rotation_deg);
+    camera.set_swap_halves(choice.swap_halves);
+    camera.set_enabled(true);
+    return camera;
 }
 
 // ================================================================================
@@ -851,179 +1091,85 @@ CameraQueryResult CameraPipeline::query(
         const Config &config,
         const std::string &host) {
     std::lock_guard<std::mutex> lock(mutex_);
-    std::vector<const doggy::v1::Camera *> enabled;
-    for (const doggy::v1::Camera &camera : config.cameras().items()) {
-        if (camera.enabled()) {
-            enabled.push_back(&camera);
-        }
-    }
-
-    if (enabled.empty()) {
-        for (auto &entry : feeders_) {
-            if (entry.second.process) {
-                entry.second.process->stop();
-            }
-        }
-        feeders_.clear();
+    if (any_camera_enabled(config) == false) {
+        stopFeedersLocked();
         return {};
     }
 
-    bool feeders_healthy = true;
-    for (const doggy::v1::Camera *camera : enabled) {
-        const std::string config_key = camera->SerializeAsString();
-        const auto found = feeders_.find(camera->id());
-        if (found == feeders_.end() || found->second.process == nullptr
-                || found->second.process->running() == false) {
-            feeders_healthy = false;
-            break;
-        }
-
-        if (found->second.config_key.size() < config_key.size()
-                || found->second.config_key.compare(0, config_key.size(), config_key) != 0) {
-            feeders_healthy = false;
-            break;
-        }
+    const std::string selection_key = live_selection_key(config);
+    const auto healthy = feeders_.find(kCameraPrimaryId);
+    if (feeders_.size() == 1
+            && healthy != feeders_.end()
+            && healthy->second.selection_key == selection_key
+            && healthy->second.process
+            && healthy->second.process->running()) {
+        CameraQueryResult result;
+        result.result = CameraResult::ok;
+        append_live_stream(
+                &result.streams, host, healthy->second.stream_name, true);
+        return result;
     }
 
-    if (feeders_healthy) {
-        bool usb_pair_enabled = false;
-        for (const doggy::v1::Camera *camera : enabled) {
-            if (camera_id_is_usb_pair(camera->id())) {
-                usb_pair_enabled = true;
-                break;
-            }
-        }
-
-        std::vector<V4l2CaptureDevice> devices;
-        StereoBindings bindings = stereo_bindings_from_config(config);
-        if (usb_pair_enabled) {
-            devices = discoverV4l2Locked();
-            std::vector<std::string> stable_ids;
-            for (const V4l2CaptureDevice &device : devices) {
-                stable_ids.push_back(device.stable_id);
-            }
-            stereo_bindings_ensure_defaults(&bindings, stable_ids);
-        }
-
-        return streamsFor(enabled, host, devices, bindings, true);
-    }
-
-    bool usb_pair_enabled = false;
-    for (const doggy::v1::Camera *camera : enabled) {
-        if (camera_id_is_usb_pair(camera->id())) {
-            usb_pair_enabled = true;
-            break;
-        }
-    }
-
-    std::vector<V4l2CaptureDevice> devices;
-    if (usb_pair_enabled) {
-        devices = discoverV4l2Locked();
-    }
-
-    bool bindings_changed = false;
-    StereoBindings bindings = usb_pair_enabled
-            ? prepareBindingsLocked(config, devices, &bindings_changed)
-            : stereo_bindings_from_config(config);
-
+    const std::vector<V4l2CaptureDevice> devices = discoverV4l2Locked();
     const bool rpi_available = discovery_->rpiCameraAvailable();
+    const doggy::v1::Camera *primary = primary_camera(config);
+    const int configured_width = primary == nullptr ? 0 : primary->width();
+    const int configured_height = primary == nullptr ? 0 : primary->height();
+    const int configured_fps = primary == nullptr ? 0 : primary->fps();
+    const int configured_rotation = primary == nullptr ? 180 : primary->rotation_deg();
+    const bool swap_halves = primary != nullptr && primary->swap_halves();
+    const std::vector<LiveCameraChoice> choices = rank_live_cameras(
+            devices,
+            rpi_available,
+            configured_width,
+            configured_height,
+            configured_fps,
+            configured_rotation,
+            swap_halves);
+    log_discovered_cameras(devices, rpi_available);
 
-    std::unordered_map<std::string, bool> want;
-    for (const doggy::v1::Camera *camera : enabled) {
-        want[camera->id()] = true;
-    }
+    stopFeedersLocked();
 
-    for (auto it = feeders_.begin(); it != feeders_.end();) {
-        if (want.find(it->first) == want.end()) {
-            if (it->second.process) {
-                it->second.process->stop();
-            }
-            it = feeders_.erase(it);
-            continue;
-        }
-
-        ++it;
+    CameraQueryResult result;
+    if (choices.empty()) {
+        PLOG_WARNING << "camera: no capture source";
+        result.result = CameraResult::not_found;
+        return result;
     }
 
     bool any_failed = false;
-    bool any_ready = false;
-
-    std::vector<const doggy::v1::Camera *> startup_order = enabled;
-    std::sort(startup_order.begin(), startup_order.end(),
-            [](const doggy::v1::Camera *a, const doggy::v1::Camera *b) {
-                return camera_feeder_start_priority(a->id())
-                        < camera_feeder_start_priority(b->id());
-            });
-
-    for (const doggy::v1::Camera *camera : startup_order) {
-        std::string source;
-        std::string device;
-        const bool rpi_reserved = camera->id() == kCameraPrimaryId
-                || camera->source() == "rpi"
-                || camera->source() == "auto";
-        if (resolveSourceForCamera(
-                    *camera,
-                    devices,
-                    bindings,
-                    rpi_reserved,
-                    rpi_available,
-                    source,
-                    device)
-                == false) {
-            stopFeeder(camera->id());
-            continue;
-        }
-
-        const std::string config_key = camera->SerializeAsString();
-        const std::string fingerprint = config_key + "|" + source + "|" + device;
-        ActiveFeeder *feeder = nullptr;
-        const auto found = feeders_.find(camera->id());
-        if (found != feeders_.end()) {
-            feeder = &found->second;
-        }
-
-        if (feeder != nullptr
-                && feeder->config_key == fingerprint
-                && feeder->process
-                && feeder->process->running()) {
-            any_ready = true;
-            continue;
-        }
-
-        stopFeeder(camera->id());
+    for (const LiveCameraChoice &choice : choices) {
+        const doggy::v1::Camera camera = capture_camera(choice);
+        const CameraProcessSpec spec = choice.kind == LiveCameraKind::rpi
+                ? rpi_process_spec(camera)
+                : v4l2_process_spec(camera, choice.device);
         ActiveFeeder next;
-        next.config_key = fingerprint;
-        next.device = device;
+        next.selection_key = selection_key;
+        next.stream_name = choice.name;
+        next.device = choice.device;
+        next.config_key = selection_key + "|" + choice.device + "|"
+                + std::to_string(choice.width) + "x" + std::to_string(choice.height)
+                + "|" + std::to_string(choice.fps);
         next.process = makeProcess();
-        const CameraProcessSpec spec = source == "rpi"
-                ? rpi_process_spec(*camera)
-                : v4l2_process_spec(*camera, device);
-        if (next.process->start(spec) == false) {
+        if (next.process->start(spec) == false || next.process->running() == false) {
+            log_live_camera("start failed", choice, true);
             any_failed = true;
             continue;
         }
+        log_live_camera("live", choice, false);
 
-        feeders_.emplace(camera->id(), std::move(next));
-        any_ready = true;
-        if (source == "rpi") {
+        feeders_.emplace(kCameraPrimaryId, std::move(next));
+        if (choice.kind == LiveCameraKind::rpi) {
             usleep(kRpiBringUpDelayUs);
-        } else if (source == "v4l2") {
+        } else {
             usleep(kUsbBringUpDelayUs);
         }
-    }
 
-    CameraQueryResult result = streamsFor(enabled, host, devices, bindings, rpi_available);
-    if (any_ready == false && any_failed) {
-        result.result = CameraResult::failed;
-    } else if (any_ready == false && enabled.empty() == false) {
-        result.result = CameraResult::not_found;
-    } else {
         result.result = CameraResult::ok;
+        append_live_stream(&result.streams, host, choice.name, true);
+        return result;
     }
 
-    if (bindings_changed) {
-        result.persist_stereo = bindings;
-    }
-
+    result.result = any_failed ? CameraResult::failed : CameraResult::not_found;
     return result;
 }

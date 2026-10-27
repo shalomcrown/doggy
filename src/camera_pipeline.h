@@ -20,11 +20,57 @@ struct CameraProcessSpec {
 
 // ================================================================================
 
+struct V4l2FrameSize {
+    int width = 0;
+    int height = 0;
+};
+
+// ================================================================================
+
 struct V4l2CaptureDevice {
     std::string device;
     std::string name;
     std::string stable_id;
+    std::vector<V4l2FrameSize> mjpeg_sizes;
 };
+
+// ================================================================================
+
+enum class LiveCameraKind {
+    none = 0,
+    stereo,
+    rpi,
+    usb
+};
+
+// ================================================================================
+
+struct LiveCameraChoice {
+    LiveCameraKind kind = LiveCameraKind::none;
+    std::string device;
+    std::string name;
+    int width = 0;
+    int height = 0;
+    int fps = 0;
+    int rotation_deg = 0;
+    bool swap_halves = false;
+};
+
+// ================================================================================
+
+std::optional<V4l2FrameSize> select_stereo_mjpeg_size(
+        const std::vector<V4l2FrameSize> &sizes);
+
+// ================================================================================
+
+std::vector<LiveCameraChoice> rank_live_cameras(
+        const std::vector<V4l2CaptureDevice> &devices,
+        bool rpi_available,
+        int configured_width,
+        int configured_height,
+        int configured_fps,
+        int configured_rotation,
+        bool swap_halves);
 
 // ================================================================================
 
@@ -91,42 +137,21 @@ public:
 private:
     struct ActiveFeeder {
         std::string config_key;
+        std::string selection_key;
+        std::string stream_name;
         std::string device;
         std::unique_ptr<CameraProcess> process;
     };
 
     std::vector<V4l2CaptureDevice> discoverV4l2Locked();
 
-    StereoBindings prepareBindingsLocked(
-            const Config &config,
-            const std::vector<V4l2CaptureDevice> &devices,
-            bool *changed);
-
     std::string roleForStableIdLocked(
             const std::string &stable_id,
             const StereoBindings &bindings) const;
 
-    std::optional<std::string> deviceForStableId(
-            const std::string &stable_id,
-            const std::vector<V4l2CaptureDevice> &devices) const;
-
-    bool resolveSourceForCamera(
-            const doggy::v1::Camera &camera,
-            const std::vector<V4l2CaptureDevice> &devices,
-            const StereoBindings &bindings,
-            bool rpi_reserved,
-            bool rpi_available,
-            std::string &source,
-            std::string &device) const;
-
-    CameraQueryResult streamsFor(
-            const std::vector<const doggy::v1::Camera *> &cameras,
-            const std::string &host,
-            const std::vector<V4l2CaptureDevice> &devices,
-            const StereoBindings &bindings,
-            bool rpi_available);
-
     void stopFeeder(const std::string &id);
+
+    void stopFeedersLocked();
 
     void stopStereoFeedersLocked();
 

@@ -1,4 +1,5 @@
 #include "web_server.h"
+#include "camera_ids.h"
 #include "camera_pipeline.h"
 #include "stereo_bindings.h"
 #include "dog_api.h"
@@ -770,15 +771,15 @@ void register_api(httplib::Server &server, RobotApi &api,
             res.set_content(error_json("not_found"), "application/json");
             return;
         }
-        const doggy::v1::Camera *selected = nullptr;
+        bool any_enabled = false;
         const Config config = api.getConfig();
         for (const doggy::v1::Camera &camera : config.cameras().items()) {
             if (camera.enabled()) {
-                selected = &camera;
+                any_enabled = true;
                 break;
             }
         }
-        if (selected == nullptr) {
+        if (any_enabled == false) {
             res.status = 404;
             res.set_content(error_json("not_found"), "application/json");
             return;
@@ -790,9 +791,9 @@ void register_api(httplib::Server &server, RobotApi &api,
             host[sizeof(host) - 1] = '\0';
         }
         const CommandResult captured = media_store->takeSnapshot(
-                std::string("rtsp://127.0.0.1:8554/") + selected->id(),
+                std::string("rtsp://127.0.0.1:8554/") + kCameraPrimaryId,
                 host,
-                selected->id());
+                kCameraPrimaryId);
         if (captured != CommandResult::ok) {
             res.status = 500;
             res.set_content(error_json("camera_io"), "application/json");

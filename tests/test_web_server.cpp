@@ -373,6 +373,33 @@ public:
 
 // ================================================================================
 
+class FakeCameraDiscovery final : public CameraDiscovery {
+public:
+    // ================================================================================
+
+    bool rpiCameraAvailable() override {
+        return false;
+    }
+
+    // ================================================================================
+
+    std::optional<std::string> firstV4l2CaptureDevice() override {
+        return std::string("/dev/video0");
+    }
+
+    // ================================================================================
+
+    std::vector<V4l2CaptureDevice> listV4l2CaptureDevices() override {
+        V4l2CaptureDevice device;
+        device.device = "/dev/video0";
+        device.name = "USB camera";
+        device.stable_id = "usb-test";
+        return {device};
+    }
+};
+
+// ================================================================================
+
 int main() {
     const char *index = std::getenv("DOGGY_TEST_INDEX");
     if (index == nullptr || index[0] == '\0') {
@@ -405,7 +432,8 @@ int main() {
 
     auto camera_process = std::make_unique<FakeCameraProcess>();
     FakeCameraProcess *camera_process_ptr = camera_process.get();
-    CameraPipeline camera_pipeline(std::move(camera_process));
+    CameraPipeline camera_pipeline(
+            std::move(camera_process), std::make_unique<FakeCameraDiscovery>());
     const std::filesystem::path media_root = std::filesystem::temp_directory_path()
             / ("doggy-web-media-" + std::to_string(getpid()));
     const std::filesystem::path recordings = media_root / "recordings";
@@ -450,8 +478,9 @@ int main() {
     expect(page && page->body.find("id=\"linux-time\"") != std::string::npos,
            "dog page displays Linux time");
     expect(page && page->body.find("id=\"camera-video\"") != std::string::npos
-                   && page->body.find("MediaMTXWebRTCReader") != std::string::npos,
-           "dog page has local WebRTC camera playback");
+                   && page->body.find("MediaMTXWebRTCReader") != std::string::npos
+                   && page->body.find("stereo-swap") == std::string::npos,
+           "dog page has one WebRTC camera and no stereo row");
     expect(page && page->body.find("id=\"camera-snapshot\"") != std::string::npos
                    && page->body.find("/api/recordings/") != std::string::npos,
            "dog page lists recordings and takes snapshots");
@@ -545,11 +574,12 @@ int main() {
     expect(page && page->body.find("[\"robot\", \"gcs_timeout_s\"]")
                    != std::string::npos,
            "dog page preserves the rover GCS timeout");
-    expect(page && page->body.find("camera-rotation") != std::string::npos
-                   && page->body.find(
-                              "[\"cameras\", \"items\", index, \"rotation_deg\"]")
-                              != std::string::npos,
-           "dog page edits camera rotation");
+    expect(page && page->body.find("camera-invert") != std::string::npos
+                   && page->body.find("Invert camera") != std::string::npos
+                   && page->body.find("swap_halves") != std::string::npos
+                   && page->body.find("[\"cameras\", \"items\", index, \"source\"]")
+                              == std::string::npos,
+           "dog page edits invert and stereo swap, not three cameras");
     expect(page && page->body.find("lora-air-key") != std::string::npos,
            "dog page can set lora air_key");
     expect(page && page->body.find("Refresh the page") != std::string::npos,
@@ -889,9 +919,10 @@ int main() {
                    && rover_page->body.find("id=\"drive-brake\"") != std::string::npos
                    && rover_page->body.find("stick-actions") != std::string::npos,
            "rover stop and brake sit with the joystick");
-    expect(rover_page && rover_page->body.find("id=\"stereo-swap\"") != std::string::npos
-                   && rover_page->body.find("stereo-left-video") != std::string::npos,
-           "rover page shows stereo row and swap control");
+    expect(rover_page && rover_page->body.find("id=\"stereo-swap\"") == std::string::npos
+                   && rover_page->body.find("stereo-left-video") == std::string::npos
+                   && rover_page->body.find("id=\"camera-video\"") != std::string::npos,
+           "rover page shows one camera and no stereo row");
     expect(rover_page && rover_page->body.find("class=\"drive-layout\"") != std::string::npos,
            "rover drive row lays out map, camera, and joystick");
     expect(rover_page && rover_page->body.find("id=\"drive-video\"") != std::string::npos,
@@ -942,12 +973,11 @@ int main() {
                               != std::string::npos,
            "rover page edits the GCS timeout and min free space");
     expect(rover_page
-                   && rover_page->body.find("camera-rotation")
-                              != std::string::npos
-                   && rover_page->body.find(
-                              "[\"cameras\", \"items\", index, \"rotation_deg\"]")
-                              != std::string::npos,
-           "rover page edits camera rotation");
+                   && rover_page->body.find("camera-invert") != std::string::npos
+                   && rover_page->body.find("swap_halves") != std::string::npos
+                   && rover_page->body.find("[\"cameras\", \"items\", index, \"source\"]")
+                              == std::string::npos,
+           "rover page edits invert and stereo swap, not three cameras");
     expect(rover_page && rover_page->body.find("input.min = \"2\"") != std::string::npos
                    && rover_page->body.find("input.max = \"60\"") != std::string::npos,
            "rover page constrains GCS timeout to the API range");

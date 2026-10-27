@@ -60,6 +60,15 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 - Always-on MPEG-TS camera recording (hourly MediaMTX segments), JPEG snapshots, list/download APIs, and hourly retention from `media.retain_hours` (default 24). File names are `<hostname>-<camera id>-YYYY-MM-DD-HHMMSS.{ts,jpg}`.
 - `robot.turn_gain_min` (default 0.25) so low-speed steering is less twitchy while full-speed turns stay authoritative.
 
+### Changed
+- The driving and dog pages show one camera. A side-by-side USB stereo module
+  is published as `cam0` (MJPEG 1280×480 at 15 fps when that mode is offered).
+  If it is absent or fails to start, the Raspberry Pi camera is used, then a
+  single other USB camera. The second video row and Swap L/R control are gone.
+  The choice, including which nodes were stereo and the published size, is
+  written to `doggy.log`. Settings keep one camera row: Invert, and Swap halves
+  for a side-by-side stereo picture.
+
 ### Fixed
 - Native `./build.sh` on a Raspberry Pi can package again. `lora/go.mod` was
   missing, so Go looked up to the repo root, saw `.git/config`, and stopped

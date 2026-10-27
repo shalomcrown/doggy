@@ -147,6 +147,8 @@ message Camera {
   optional int32 fps = 7;
   optional bool enabled = 8;
   optional int32 rotation_deg = 9;
+  // Stereo side-by-side only: exchange the two halves, then apply rotation_deg.
+  optional bool swap_halves = 10;
 }
 
 // ================================================================================
