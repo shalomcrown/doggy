@@ -1,4 +1,5 @@
 #include "web_server.h"
+#include "calibration_session.h"
 #include "camera_ids.h"
 #include "camera_pipeline.h"
 #include "stereo_bindings.h"
@@ -496,10 +497,35 @@ bool query_bounded(
 
 // ================================================================================
 
+void send_calibration(const CalibrationReply &reply, httplib::Response &res) {
+    res.status = reply.status;
+    if (reply.file_path.empty() == false) {
+        res.set_header(
+                "Content-Disposition",
+                "attachment; filename=\"camera_calibration.yml\"");
+        res.set_file_content(reply.file_path, reply.content_type);
+        return;
+    }
+    res.set_content(reply.body, reply.content_type);
+}
+
+// ================================================================================
+
+std::string calibration_host(const httplib::Request &req) {
+    const std::string host = host_without_port(req.get_header_value("Host"));
+    if (host_name_ok(host) == false) {
+        return "localhost";
+    }
+    return host;
+}
+
+// ================================================================================
+
 void register_api(httplib::Server &server, RobotApi &api,
                   const std::string &index_html_path,
                   CameraPipeline *camera_pipeline,
                   MediaStore *media_store,
+                  CalibrationService *calibration,
                   const std::shared_ptr<std::vector<OfferedCamera>> &offered_cameras) {
     server.set_payload_max_length(4096);
     server.Get("/", [&index_html_path](const httplib::Request &, httplib::Response &res) {
@@ -523,6 +549,28 @@ void register_api(httplib::Server &server, RobotApi &api,
             return;
         }
         res.set_content(script, "text/javascript; charset=utf-8");
+    });
+
+    server.Get("/calibration.js", [&index_html_path](
+            const httplib::Request &, httplib::Response &res) {
+        const std::string script = read_file(
+                (fs::path(index_html_path).parent_path() / "calibration.js").string());
+        if (script.empty()) {
+            res.status = 404;
+            return;
+        }
+        res.set_content(script, "text/javascript; charset=utf-8");
+    });
+
+    server.Get("/calibration.css", [&index_html_path](
+            const httplib::Request &, httplib::Response &res) {
+        const std::string style = read_file(
+                (fs::path(index_html_path).parent_path() / "calibration.css").string());
+        if (style.empty()) {
+            res.status = 404;
+            return;
+        }
+        res.set_content(style, "text/css; charset=utf-8");
     });
 
     // Leaflet is a local file. The LoRa operator serves the same path from its
@@ -801,6 +849,102 @@ void register_api(httplib::Server &server, RobotApi &api,
         }
         res.set_content(proto_to_json(media_store->listSnapshots()),
                 "application/json");
+    });
+
+    server.Post("/api/calibration", [&api, camera_pipeline, calibration](
+            const httplib::Request &req, httplib::Response &res) {
+        if (calibration == nullptr || camera_pipeline == nullptr) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        const CameraQueryResult result = camera_pipeline->query(
+                api.getConfig(), calibration_host(req));
+        if (result.result == CameraResult::not_found) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        if (result.result != CameraResult::ok) {
+            res.status = 500;
+            res.set_content(error_json("camera_io"), "application/json");
+            return;
+        }
+        const std::optional<LiveCameraChoice> live = camera_pipeline->liveCamera();
+        if (live.has_value() == false) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        send_calibration(calibration->begin(req.body, *live), res);
+    });
+
+    server.Get("/api/calibration", [camera_pipeline, calibration](
+            const httplib::Request &, httplib::Response &res) {
+        if (calibration == nullptr) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        const LiveCameraChoice *live_ptr = nullptr;
+        std::optional<LiveCameraChoice> live;
+        if (camera_pipeline != nullptr) {
+            live = camera_pipeline->liveCamera();
+            if (live.has_value()) {
+                live_ptr = &(*live);
+            }
+        }
+        send_calibration(calibration->status(live_ptr), res);
+    });
+
+    server.Post("/api/calibration/capture", [calibration](
+            const httplib::Request &, httplib::Response &res) {
+        if (calibration == nullptr) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        send_calibration(calibration->capture(), res);
+    });
+
+    server.Post("/api/calibration/finish", [calibration](
+            const httplib::Request &, httplib::Response &res) {
+        if (calibration == nullptr) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        send_calibration(calibration->finish(), res);
+    });
+
+    server.Post("/api/calibration/save", [calibration](
+            const httplib::Request &, httplib::Response &res) {
+        if (calibration == nullptr) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        send_calibration(calibration->save(), res);
+    });
+
+    server.Delete("/api/calibration", [calibration](
+            const httplib::Request &, httplib::Response &res) {
+        if (calibration == nullptr) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        send_calibration(calibration->cancel(), res);
+    });
+
+    server.Get("/api/calibration/result", [calibration](
+            const httplib::Request &, httplib::Response &res) {
+        if (calibration == nullptr) {
+            res.status = 404;
+            res.set_content(error_json("not_found"), "application/json");
+            return;
+        }
+        send_calibration(calibration->download(), res);
     });
 
     server.Put("/api/config", [&api](const httplib::Request &req, httplib::Response &res) {
@@ -1209,7 +1353,8 @@ public:
     std::shared_ptr<std::vector<OfferedCamera>> offered;
 
     Impl(RobotApi &api, std::string index_html_path, WebListen listen,
-         CameraPipeline *camera_pipeline, MediaStore *media_store) :
+         CameraPipeline *camera_pipeline, MediaStore *media_store,
+         CalibrationService *calibration) :
         api(api),
         index_html_path(std::move(index_html_path)),
         listen(std::move(listen)),
@@ -1220,7 +1365,7 @@ public:
             if (https->is_valid()) {
                 register_api(
                         *https, this->api, this->index_html_path, camera_pipeline,
-                        media_store, offered);
+                        media_store, calibration, offered);
             } else {
                 https.reset();
             }
@@ -1230,7 +1375,7 @@ public:
             http = std::make_unique<httplib::Server>();
             register_api(
                     *http, this->api, this->index_html_path, camera_pipeline,
-                    media_store, offered);
+                    media_store, calibration, offered);
             return;
         }
 
@@ -1245,19 +1390,20 @@ public:
 
 WebServer::WebServer(RobotApi &api, std::string index_html_path, std::string bind_host,
                      int port, CameraPipeline *camera_pipeline,
-                     MediaStore *media_store) :
+                     MediaStore *media_store, CalibrationService *calibration) :
     WebServer(api, std::move(index_html_path),
               WebListen{std::move(bind_host), port, -1, {}, {}},
-              camera_pipeline, media_store) {
+              camera_pipeline, media_store, calibration) {
 }
 
 // ================================================================================
 
 WebServer::WebServer(RobotApi &api, std::string index_html_path, WebListen listen,
-                     CameraPipeline *camera_pipeline, MediaStore *media_store) :
+                     CameraPipeline *camera_pipeline, MediaStore *media_store,
+                     CalibrationService *calibration) :
     impl(std::make_unique<Impl>(
             api, std::move(index_html_path), std::move(listen), camera_pipeline,
-            media_store)) {
+            media_store, calibration)) {
 }
 
 // ================================================================================

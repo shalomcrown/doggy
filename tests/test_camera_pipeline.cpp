@@ -425,6 +425,13 @@ int main() {
                     && stereo_result.streams.items(0).id() == "cam0"
                     && stereo_result.streams.items(0).name() == "Stereo camera",
            "a stereo module wins over the Pi camera and a second USB camera");
+    const std::optional<LiveCameraChoice> live = stereo_pipeline.liveCamera();
+    expect(live.has_value()
+                    && live->kind == LiveCameraKind::stereo
+                    && live->stable_id == "usb-/dev/video4"
+                    && live->width == 1280
+                    && live->height == 480,
+           "the live camera records the stereo module");
     expect(stereo_process_ptr->starts == 1
                     && has_arg(stereo_process_ptr->last_spec, "/dev/video4")
                     && has_arg(stereo_process_ptr->last_spec, "1280x480")

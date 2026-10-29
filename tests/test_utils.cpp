@@ -1,6 +1,8 @@
 #include "utils.h"
 
+#include <fcntl.h>
 #include <iostream>
+#include <unistd.h>
 
 static int failures = 0;
 
@@ -38,6 +40,12 @@ int main() {
     expect(json_escape("line\nbreak") == "line\\nbreak", "json_escape escapes newline");
     expect(json_escape(std::string("bell\x07")) == "bell\\u0007",
            "json_escape escapes other control characters");
+
+    const int extra = open("/dev/null", O_RDONLY);
+    expect(extra > STDERR_FILENO, "opened a descriptor above stderr");
+    close_inherited_descriptors();
+    expect(fcntl(extra, F_GETFD) < 0, "close_inherited_descriptors closes it");
+    expect(fcntl(STDOUT_FILENO, F_GETFD) >= 0, "stdout stays open");
 
     if (failures != 0) {
         return 1;

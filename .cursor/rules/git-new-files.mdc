@@ -1,0 +1,8 @@
+---
+description: Offer to add new repo files to git at the end of a task
+alwaysApply: true
+---
+
+# New files and git
+
+When a task creates files that belong in the repo, end that task by offering to add them to git and list the paths. Do not `git add` or commit until the user asks. Do not offer secrets, private keys, certificates, editor settings, or backup binaries.

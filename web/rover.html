@@ -118,6 +118,7 @@
       .drive-media ul { max-height: none; }
     }
   </style>
+  <link rel="stylesheet" href="/calibration.css">
 </head>
 <body>
   <h1 id="page-title">Doggy</h1>
@@ -179,7 +180,9 @@
         <div class="drive-media">
           <p>
             <button type="button" id="camera-snapshot">Snapshot</button>
+            <button type="button" id="camera-calibrate">Calibrate</button>
           </p>
+          <div id="calibration-mount"></div>
           <p id="snapshot-status" role="status"></p>
           <h3>Snapshots</h3>
           <ul id="snapshot-list"></ul>
@@ -2151,5 +2154,6 @@
     loadCamera();
     loadMedia();
   </script>
+  <script src="/calibration.js"></script>
 </body>
 </html>

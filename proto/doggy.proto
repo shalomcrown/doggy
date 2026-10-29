@@ -436,6 +436,70 @@ message Empty {}
 
 // ================================================================================
 
+// LAN calibration only. These messages are not carried on the LoRa air request.
+
+enum CalibrationState {
+  CALIBRATION_IDLE = 0;
+  CALIBRATION_CAPTURING = 1;
+  CALIBRATION_COMPUTING = 2;
+  CALIBRATION_DONE = 3;
+  CALIBRATION_FAILED = 4;
+}
+
+// ================================================================================
+
+message CalibrationStart {
+  optional int32 inner_cols = 1;
+  optional int32 inner_rows = 2;
+  optional double square_mm = 3;
+}
+
+// ================================================================================
+
+message CalibrationBox {
+  optional double x = 1;
+  optional double y = 2;
+  optional double width = 3;
+  optional double height = 4;
+}
+
+// ================================================================================
+
+message CalibrationEye {
+  optional bool found = 1;
+  optional CalibrationBox bounds = 2;
+}
+
+// ================================================================================
+
+message CalibrationSummary {
+  optional double rms_left_px = 1;
+  optional double rms_right_px = 2;
+  optional double rms_stereo_px = 3;
+  optional double focal_px = 4;
+  optional double baseline_mm = 5;
+  optional bool coverage_complete = 6;
+  optional bool stale = 7;
+  optional bool saved = 8;
+}
+
+// ================================================================================
+
+message CalibrationStatus {
+  optional CalibrationState state = 1;
+  optional bool stereo = 2;
+  optional int32 accepted = 3;
+  optional int32 target_count = 4;
+  optional string message = 5;
+  optional CalibrationBox next_target = 6;
+  optional CalibrationEye left = 7;
+  optional CalibrationEye right = 8;
+  optional CalibrationSummary result = 9;
+  optional bool can_finish = 10;
+}
+
+// ================================================================================
+
 message AirRequest {
   oneof op {
     Empty get_status = 1;

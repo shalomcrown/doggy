@@ -54,6 +54,7 @@ struct LiveCameraChoice {
     int fps = 0;
     int rotation_deg = 0;
     bool swap_halves = false;
+    std::string stable_id;
 };
 
 // ================================================================================
@@ -128,6 +129,8 @@ public:
 
     CameraQueryResult query(const Config &config, const std::string &host);
 
+    std::optional<LiveCameraChoice> liveCamera();
+
     doggy::v1::CameraDeviceList listDevices(const Config &config);
 
     void invalidateStereoFeeders();
@@ -140,6 +143,7 @@ private:
         std::string selection_key;
         std::string stream_name;
         std::string device;
+        LiveCameraChoice choice;
         std::unique_ptr<CameraProcess> process;
     };
 

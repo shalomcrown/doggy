@@ -21,4 +21,9 @@ bool hashes_equal(const char *left, const char *right);
 // Escapes text for use inside a JSON string literal (quotes, backslash, control chars).
 std::string json_escape(const std::string &text);
 
+// ================================================================================
+
+// Closes every descriptor above stderr. Used after fork, before exec.
+void close_inherited_descriptors();
+
 #endif

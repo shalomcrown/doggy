@@ -77,6 +77,19 @@ else
     pass "operator postinst does not start doggy.service"
 fi
 
+web_install=$(awk '
+    /install\(FILES/ { grab=1; block="" }
+    grab { block = block $0 "\n" }
+    grab && /DESTINATION share\/doggy/ { exit }
+    END { printf "%s", block }
+' "$OP")
+if printf '%s' "$web_install" | grep -q 'web/calibration.js' \
+        && printf '%s' "$web_install" | grep -q 'web/calibration.css'; then
+    pass "operator package installs calibration.js and calibration.css"
+else
+    fail "operator package installs calibration.js and calibration.css"
+fi
+
 if grep -q 'doggy-lora-operator-${DOGGY_VERSION}-win64' "$ROOT/cmake/cpack-stamp.cmake"; then
     pass "NSIS artifact name includes doggy-lora-operator and win64"
 else

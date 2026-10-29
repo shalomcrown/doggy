@@ -277,6 +277,19 @@ else
     fail "CMake installs doggy-lora unit and lora.html"
 fi
 
+web_install=$(awk '
+    /install\(FILES web\/index.html/ { grab=1 }
+    grab { block = block $0 "\n" }
+    grab && /DESTINATION share\/doggy/ { exit }
+    END { printf "%s", block }
+' "$CMAKE")
+if printf '%s' "$web_install" | grep -q 'web/calibration.js' \
+        && printf '%s' "$web_install" | grep -q 'web/calibration.css'; then
+    pass "firmware package installs calibration.js and calibration.css"
+else
+    fail "firmware package installs calibration.js and calibration.css"
+fi
+
 if [ -f "$UNIT" ] && grep -Eq '^SupplementaryGroups=i2c( |$)' "$UNIT"; then
     pass "unit SupplementaryGroups includes i2c"
 else

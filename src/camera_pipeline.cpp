@@ -1,6 +1,7 @@
 #include "camera_pipeline.h"
 
 #include "camera_ids.h"
+#include "utils.h"
 
 #include <plog/Log.h>
 
@@ -18,7 +19,6 @@
 #include <sstream>
 #include <string>
 #include <sys/ioctl.h>
-#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <utility>
@@ -90,21 +90,6 @@ static std::vector<char *> argv_for(std::vector<std::string> &command) {
     }
     argv.push_back(nullptr);
     return argv;
-}
-
-// ================================================================================
-
-static void close_inherited_descriptors() {
-#if defined(__linux__) && defined(SYS_close_range)
-    if (syscall(SYS_close_range, STDERR_FILENO + 1, ~0U, 0) == 0) {
-        return;
-    }
-#endif
-    const long limit = sysconf(_SC_OPEN_MAX);
-    const int last = limit > 0 && limit < 4096 ? static_cast<int>(limit) : 4096;
-    for (int fd = STDERR_FILENO + 1; fd < last; ++fd) {
-        close(fd);
-    }
 }
 
 // ================================================================================
@@ -566,6 +551,7 @@ std::vector<LiveCameraChoice> rank_live_cameras(
         choice.fps = kLivePublishFps;
         choice.rotation_deg = configured_rotation;
         choice.swap_halves = swap_halves;
+        choice.stable_id = device.stable_id;
         ranked.push_back(choice);
     }
 
@@ -577,6 +563,7 @@ std::vector<LiveCameraChoice> rank_live_cameras(
         choice.height = configured_height > 0 ? configured_height : kUsbFallbackHeight;
         choice.fps = configured_fps > 0 ? configured_fps : kLivePublishFps;
         choice.rotation_deg = configured_rotation;
+        choice.stable_id = "rpi";
         ranked.push_back(choice);
     }
 
@@ -593,6 +580,7 @@ std::vector<LiveCameraChoice> rank_live_cameras(
                 configured_width, configured_height, &choice.width, &choice.height);
         choice.fps = kLivePublishFps;
         choice.rotation_deg = configured_rotation;
+        choice.stable_id = device.stable_id;
         ranked.push_back(choice);
         break;
     }
@@ -1147,6 +1135,7 @@ CameraQueryResult CameraPipeline::query(
         next.selection_key = selection_key;
         next.stream_name = choice.name;
         next.device = choice.device;
+        next.choice = choice;
         next.config_key = selection_key + "|" + choice.device + "|"
                 + std::to_string(choice.width) + "x" + std::to_string(choice.height)
                 + "|" + std::to_string(choice.fps);
@@ -1172,4 +1161,16 @@ CameraQueryResult CameraPipeline::query(
 
     result.result = any_failed ? CameraResult::failed : CameraResult::not_found;
     return result;
+}
+
+// ================================================================================
+
+std::optional<LiveCameraChoice> CameraPipeline::liveCamera() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto healthy = feeders_.find(kCameraPrimaryId);
+    if (healthy == feeders_.end() || healthy->second.process == nullptr
+            || healthy->second.process->running() == false) {
+        return std::nullopt;
+    }
+    return healthy->second.choice;
 }

@@ -6,6 +6,7 @@
 #include <iostream>
 #include <thread>
 
+#include "calibration_session.h"
 #include "config.h"
 #include "camera_pipeline.h"
 #include "gps.h"
@@ -131,9 +132,14 @@ int main() {
 
     CameraPipeline camera_pipeline;
     MediaStore media_store;
+    CalibrationService calibration(CalibrationPaths{
+            calibration_snapshots_root(),
+            calibration_result_path(),
+    });
     TelemetryLog telemetry(telemetry_default_directory());
     telemetry_bind(telemetry.ok() ? &telemetry : nullptr);
-    WebServer server(*robot, index, listen, &camera_pipeline, &media_store);
+    WebServer server(
+            *robot, index, listen, &camera_pipeline, &media_store, &calibration);
     if (server.start() == false) {
         std::cerr << "Failed to listen on https://" << listen.bind_host << ":"
                   << https_port << std::endl;

@@ -229,9 +229,14 @@ target_link_libraries(doggy_log PUBLIC plog::plog ${DOGGY_ZLIB})
 
 # ==============================================================================
 
+include("${CMAKE_SOURCE_DIR}/cmake/opencv.cmake")
+
 add_library(doggy_web STATIC
     src/gps_parse.cpp
     src/gps_service.cpp
+    src/calibration.cpp
+    src/calibration_session.cpp
+    src/image_ops.cpp
     src/camera_pipeline.cpp
     src/stereo_bindings.cpp
     src/media_store.cpp
@@ -252,6 +257,7 @@ target_include_directories(doggy_web
 target_link_libraries(doggy_web PUBLIC
     pthread
     httplib::httplib
+    doggy_opencv
     doggy_log
     nlohmann_json::nlohmann_json
     mbedtls
@@ -302,7 +308,7 @@ add_custom_target(doggy_version_stamp ALL
     COMMENT "Stamping doggy version (time + git hash)"
 )
 add_dependencies(doggy doggy_version_stamp)
-add_dependencies(doggy_web doggy_version_stamp doggy_proto)
+add_dependencies(doggy_web doggy_version_stamp doggy_proto opencv_build)
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
     set(DOGGY_GOARCH arm64)
@@ -398,7 +404,8 @@ target_compile_definitions(doggy
 
 install(TARGETS doggy RUNTIME DESTINATION bin)
 install(FILES web/index.html web/rover.html web/lora.html
-        web/mediamtx-webrtc-reader.js DESTINATION share/doggy)
+        web/mediamtx-webrtc-reader.js
+        web/calibration.js web/calibration.css DESTINATION share/doggy)
 install(DIRECTORY web/vendor/leaflet DESTINATION share/doggy/vendor)
 install(FILES packaging/doggy.service packaging/doggy-lora.service
         packaging/doggy-lora-operator.service packaging/mediamtx.service
@@ -552,6 +559,23 @@ set_tests_properties(web_server PROPERTIES
 add_executable(test_camera_pipeline tests/test_camera_pipeline.cpp)
 target_link_libraries(test_camera_pipeline PRIVATE doggy_web)
 add_test(NAME camera_pipeline COMMAND test_camera_pipeline)
+
+add_executable(test_calibration tests/test_calibration.cpp)
+target_link_libraries(test_calibration PRIVATE doggy_web)
+add_test(NAME calibration COMMAND test_calibration)
+set_tests_properties(calibration PROPERTIES TIMEOUT 180)
+
+add_test(
+    NAME calibration-pdf
+    COMMAND bash "${CMAKE_SOURCE_DIR}/tests/calibration-pdf.test.sh"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
+add_test(
+    NAME calibration-large
+    COMMAND bash "${CMAKE_SOURCE_DIR}/tests/calibration-large.test.sh"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
 
 add_executable(test_stereo_bindings tests/test_stereo_bindings.cpp)
 target_link_libraries(test_stereo_bindings PRIVATE doggy_web)

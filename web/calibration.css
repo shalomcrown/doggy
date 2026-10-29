@@ -1,0 +1,122 @@
+.camera-view,
+#drive-video {
+  position: relative;
+}
+
+.calibration-overlay {
+  position: absolute;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.calibration-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.calibration-card {
+  box-sizing: border-box;
+  width: min(28rem, calc(100% - 2rem));
+  max-height: calc(100% - 2rem);
+  overflow: auto;
+  padding: 1rem 1.1rem;
+  background: #fff;
+  color: #111;
+}
+
+.calibration-card h2 {
+  margin: 0 0 0.6rem;
+  font-size: 1.15rem;
+}
+
+.calibration-card label {
+  display: block;
+  margin: 0.45rem 0;
+}
+
+.calibration-card input,
+.calibration-card select {
+  display: block;
+  width: 100%;
+  margin-top: 0.2rem;
+  box-sizing: border-box;
+}
+
+.calibration-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.8rem;
+}
+
+.calibration-panel {
+  margin-top: 0.7rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #ccc;
+}
+
+.calibration-panel h3 {
+  margin: 0 0 0.3rem;
+  font-size: 1rem;
+}
+
+.calibration-panel p {
+  margin: 0.3rem 0;
+}
+
+body.calibration-large {
+  overflow: hidden;
+}
+
+body.calibration-large .calibration-stage,
+body.calibration-large #drive-video.calibration-stage {
+  position: fixed;
+  inset: 0;
+  /* Leaflet panes and controls use z-index values up to 1000. */
+  z-index: 2000;
+  margin: 0;
+  padding: 0;
+  background: #000;
+  max-height: none;
+  max-width: none;
+  min-height: 0;
+}
+
+body.calibration-large .calibration-stage video,
+body.calibration-large #drive-video.calibration-stage video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  max-width: none;
+  min-height: 0;
+  object-fit: contain;
+  background: #000;
+}
+
+body.calibration-large #camera-status {
+  display: none;
+}
+
+body.calibration-large .calibration-panel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2010;
+  margin: 0;
+  padding: 0.55rem 0.8rem 0.7rem;
+  border: 0;
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+}
+
+body.calibration-large .calibration-panel h3,
+body.calibration-large .calibration-panel p {
+  color: #fff;
+}

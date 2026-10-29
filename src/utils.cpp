@@ -2,6 +2,10 @@
 
 #include <cstdio>
 #include <string>
+#include <unistd.h>
+#if defined(__linux__)
+#include <sys/syscall.h>
+#endif
 
 // ================================================================================
 
@@ -76,4 +80,19 @@ std::string json_escape(const std::string &text) {
     }
 
     return out;
+}
+
+// ================================================================================
+
+void close_inherited_descriptors() {
+#if defined(__linux__) && defined(SYS_close_range)
+    if (syscall(SYS_close_range, STDERR_FILENO + 1, ~0U, 0) == 0) {
+        return;
+    }
+#endif
+    const long limit = sysconf(_SC_OPEN_MAX);
+    const int last = limit > 0 && limit < 4096 ? static_cast<int>(limit) : 4096;
+    for (int fd = STDERR_FILENO + 1; fd < last; ++fd) {
+        close(fd);
+    }
 }

@@ -45,6 +45,8 @@ install(FILES
     "${CMAKE_SOURCE_DIR}/web/index.html"
     "${CMAKE_SOURCE_DIR}/web/rover.html"
     "${CMAKE_SOURCE_DIR}/web/lora.html"
+    "${CMAKE_SOURCE_DIR}/web/calibration.js"
+    "${CMAKE_SOURCE_DIR}/web/calibration.css"
     DESTINATION share/doggy
 )
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/web/vendor/leaflet"

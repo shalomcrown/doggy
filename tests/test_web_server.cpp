@@ -466,6 +466,20 @@ int main() {
     httplib::Client cli("127.0.0.1", server.port());
     cli.set_connection_timeout(1, 0);
 
+    auto missing_calibration = cli.Get("/api/calibration");
+    expect(missing_calibration && missing_calibration->status == 404,
+           "calibration stays off when the service is not running");
+    auto calibration_script = cli.Get("/calibration.js");
+    expect(calibration_script && calibration_script->status == 200
+                   && calibration_script->body.find("bindCalibration") != std::string::npos
+                   && calibration_script->body.find("Exit large view") != std::string::npos,
+           "calibration script is served");
+    auto calibration_style = cli.Get("/calibration.css");
+    expect(calibration_style && calibration_style->status == 200
+                   && calibration_style->body.find("calibration-large") != std::string::npos
+                   && calibration_style->body.find("calibration-stage") != std::string::npos,
+           "calibration style enlarges the live picture");
+
     auto page = get_retry(cli, "/");
     expect(page && page->status == 200, "GET / is 200");
     expect(page && page->body.find("IDLE_MS = 100") != std::string::npos,
@@ -484,6 +498,11 @@ int main() {
     expect(page && page->body.find("id=\"camera-snapshot\"") != std::string::npos
                    && page->body.find("/api/recordings/") != std::string::npos,
            "dog page lists recordings and takes snapshots");
+    expect(page && page->body.find("id=\"camera-calibrate\"") != std::string::npos
+                   && page->body.find("/calibration.js") != std::string::npos
+                   && page->body.find("/calibration.css") != std::string::npos
+                   && page->body.find("id=\"calibration-mount\"") != std::string::npos,
+           "dog page shares the calibration dialog");
     expect(page && page->body.find("class=\"camera-media\"") != std::string::npos
                    && page->body.find("class=\"camera-media\"")
                               > page->body.find("id=\"camera-video\""),
@@ -936,6 +955,10 @@ int main() {
                    && rover_page->body.find("[\"robot\", \"turn_gain_min\"]")
                               != std::string::npos,
            "rover page snapshots and edits turn gain");
+    expect(rover_page && rover_page->body.find("id=\"camera-calibrate\"") != std::string::npos
+                   && rover_page->body.find("/calibration.js") != std::string::npos
+                   && rover_page->body.find("id=\"calibration-mount\"") != std::string::npos,
+           "rover page shares the calibration dialog");
     expect(rover_page && rover_page->body.find("class=\"drive-media\"") != std::string::npos
                    && rover_page->body.find("class=\"drive-media\"")
                               > rover_page->body.find("id=\"joystick\"")

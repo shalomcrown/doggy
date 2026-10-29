@@ -12,6 +12,15 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 > Work merged but not yet shipped. Move entries to a versioned section on release.
 
 ### Added
+- Camera calibration on the dog and rover pages. **Calibrate** asks for the
+  chessboard (default 9×6 inner corners, 25 mm squares) and can download an
+  A4, Letter, or A3 PDF. The sheet is captioned with the paper, square size,
+  board size, and inner corners, and it says to print at 100%. Snapshots are
+  taken from the live picture, the solve
+  runs on the Pi, and **Save** writes `camera_calibration.yml` next to
+  `doggy.json`. Stereo calibrates both eyes and the baseline. This is LAN
+  only. The first build also compiles a pinned static OpenCV for that solve
+  and for a later depth map.
 - Rover telemetry. Status is sampled at 1 Hz into hourly mission files under
   `/var/lib/doggy/telemetry`. The open file is plain JSONL; rolled files are
   gzipped. A mission counter lasts for the life of the robot. The rover map
@@ -70,6 +79,25 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
   for a side-by-side stereo picture.
 
 ### Fixed
+- Automatic calibration checks every camera keyframe, about five times a
+  second. A held board may move 12 pixels between checks, and a chessboard
+  read upside down still counts as straight.
+- Calibration shows the same guide rectangle inside each stereo half, starting
+  in the middle of that half.
+  The grabber decodes keyframes and keeps only the newest frame, so a slow board
+  check does not stall the camera stream.
+- The calibration guide stays drawn in the large picture, and that picture
+  stays above the drive-page map.
+- Calibration large view fills the drive page. The picture box is `#drive-video`,
+  and that id was more specific than the large-view rule, so the picture stayed
+  in its column.
+- Calibration no longer asks FFmpeg to invent frames at 2 fps. Invented frames
+  filled the grab pipe until the RTSP reader was dropped, which stopped a
+  session with `no_frame`. The calibration picture now fills the screen, and
+  each grab decision is logged.
+- The firmware and operator packages install `calibration.js` and
+  `calibration.css` beside the web pages. The pages already requested those
+  files, and a package that omitted them answered 404.
 - Native `./build.sh` on a Raspberry Pi can package again. `lora/go.mod` was
   missing, so Go looked up to the repo root, saw `.git/config`, and stopped
   with "cannot find main module". The same `package` target also failed to

@@ -113,6 +113,12 @@ func TestCameraAPIIsNotSupportedOverAir(t *testing.T) {
 	if _, err := HTTPToAir("POST", "/api/snapshots", nil); err == nil {
 		t.Fatal("snapshot API unexpectedly mapped onto LoRa")
 	}
+	if _, err := HTTPToAir("POST", "/api/calibration", []byte(`{}`)); err == nil {
+		t.Fatal("calibration API unexpectedly mapped onto LoRa")
+	}
+	if _, err := HTTPToAir("GET", "/api/calibration/result", nil); err == nil {
+		t.Fatal("calibration result unexpectedly mapped onto LoRa")
+	}
 	if _, err := HTTPToAir("GET", "/api/telemetry/download", nil); err == nil {
 		t.Fatal("telemetry zip unexpectedly mapped onto LoRa")
 	}
