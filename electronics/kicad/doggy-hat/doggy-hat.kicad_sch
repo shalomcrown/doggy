@@ -1,0 +1,14 @@
+(kicad_sch (version 20230121) (generator eeschema)
+  (uuid 293afe6d-8b41-40bb-ae3d-f17d801ef599)
+  (paper "A4")
+  (title_block
+    (title "doggy hat moved")
+    (comment 1 "Open doggy-lower or doggy-upper. This root is not the circuit.")
+  )
+  (lib_symbols)
+  (text "The hat is two boards. Lower: electronics/kicad/doggy-lower. Upper: electronics/kicad/doggy-upper. Sheet files still live in doggy-hat."
+    (at 20 20 0)
+    (effects (font (size 1.27 1.27)) (justify left))
+    (uuid 612db9b1-4cc5-4f21-9d19-a76bcf40ba92)
+  )
+)

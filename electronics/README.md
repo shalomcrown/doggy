@@ -7,6 +7,29 @@ A Raspberry Pi HAT for **Pi 3 Model B+** and later 40-pin boards (Pi 3B+, Pi 4, 
 
 The device bus is I2C1 on GPIO2/GPIO3. GPIO0/GPIO1 stay the HAT ID bus.
 
+### Two boards
+
+The circuit is two boards on one stacking GPIO header. The lower board is a standard HAT: pack input, Pi 5 V, hat 3.3 V, the ID EEPROM, the IMU, and the barometer. The upper board is that HAT plus 20 mm on the left (away from USB and Ethernet) and a 10 mm strip on the far edge from about x = 118 mm to the HDMI end. That strip holds the motor screws. The sixteen servo headers stay on a 5.08 mm pitch along the far edge. The left ear holds the wheel connectors, the compass connector, and the USB-C receptacle for the RP2040. The battery screw is on the lower board, at the far-left corner, with the wire leaving into the gap where the upper board is not extended.
+
+Actuator current does not use the GPIO header. A second connector, J30, sits at the same place on both boards, inboard of the GPIO header. Its paralleled pins carry the pack. A generic 1 A pin is not enough: the header has to be rated so those pins together carry 15 A, and the stacking pins have to be long enough for two boards.
+
+| J30 pins | Net | Role |
+|---|---|---|
+| 1–8 | `VBAT_LOAD` | Pack after the shunt, fuse, and ideal diode |
+| 9–16, 20 | `GND` | Common return |
+| 17–18 | `+3V3` | Hat 3.3 V, made on the lower board |
+| 19 | `ACT_DISABLE` on the lower board, `ACT_LATCH` on the upper | Latch output. The e-stop sits between those two names |
+| 21–22 | `I2C1_SDA`, `I2C1_SCL` | Device side of the 47 Ω resistors |
+| 23–24 | `+5V_PI` | Buck output, before the ideal diode, for the RP2040 mux |
+
+The upper header records pins 2 and 4 as `+5V_HDR`. That is the Pi side of the ideal diode. It is not joined to `+5V_PI`. I2C reaches the upper board only through J30, after the series resistors. The upper header does not connect pins 3, 5, 27, or 28. Only the lower board connects `ID_SD` and `ID_SC`.
+
+The e-stop is on the upper board. It is a normally closed switch in the actuator-disable line, with a 100 kΩ pull-up to hat 3.3 V, so an open switch forces the rails off. The Pi rail stays up. The footprint on the sheet is a small tactile switch, not a panel e-stop. If the upper board has no 3.3 V, that pull-up does nothing and the rail's own enable divider can still turn the buck on; driving the disable transistor is what holds the rail off.
+
+The 10 mm screw strip sits one stacking height above the HDMI end of a Pi 3. Check a full-size HDMI plug before ordering the boards. The lower board does not grow.
+
+Projects: `electronics/kicad/doggy-lower/` and `electronics/kicad/doggy-upper/`. The sheets stay in `electronics/kicad/doggy-hat/`. `build_split.py` rewrites the generated link sheets, the sensor split, and the e-stop edit on `pack.kicad_sch`. Do not rerun `generate_schematic.py`.
+
 ### Requirements
 
 * One battery input: a screw-terminal pair. The Pi is powered only through the header.
@@ -19,7 +42,7 @@ The device bus is I2C1 on GPIO2/GPIO3. GPIO0/GPIO1 stay the HAT ID bus.
 
 ### Power
 
-* **Input:** one screw-terminal pair, battery positive and negative. No second power connector. The Pi's own USB power socket stays unused while the hat is fitted.
+* **Input:** one screw-terminal pair, battery positive and negative. That is the only external pack connector. The boards join through J30. The Pi's own USB power socket stays unused while the hat is fitted.
 * **Range:** the input path is rated for a 4S pack at cutoff through an 8S pack at full charge. Electrical window is 10 V to 36 V operating, 40 V absolute, so 8 × 4.2 V (33.6 V) still has margin. Software may set the cutoff higher. It cannot rely on the regulators below 10 V.
 * **INA228** high-side shunt on this input, ahead of every regulator. Terminals, shunt, and input copper are sized for 15 A, which covers the Pi, sixteen servos at stall, and four motors at stall while the pack is at the low end of the window.
 * Reverse-polarity protection on the pack input. A fuse on the pack input.
@@ -43,12 +66,12 @@ These are firmware configuration, not resistors:
 
 The PCA9685 produces 3.3 V PWM. It does not switch motor current. One PCA9685 has 16 channels, and the servos use all of them, so the motors need a second PCA9685. The Pi has two hardware PWM channels, which is not enough for four motors.
 
-* **Servo PCA9685** at `0x40`. Sixteen 3-pin headers (signal, 5 V servo power, ground), grouped to match the leg harness. Series resistor on each signal. `OE` pulled inactive (outputs off) until software enables them.
-* **Motor PCA9685** at `0x60`. Four H-bridge channels, each rated for at least 1 A continuous. Each motor uses three logic signals: `PWM`, `IN1`, `IN2`.
+* **Servo PCA9685** at `0x40`. Sixteen 3-pin headers (signal, 5 V servo power, ground), grouped to match the leg harness. Series resistor on each signal. `OE` is pulled up, so the outputs stay off until the RP2040 drives it.
+* **Motor PCA9685** at `0x60`. Four H-bridge channels, each rated for at least 1 A continuous. Each motor uses three logic signals: `PWM`, `IN1`, `IN2`. Its `OE` is pulled up on its own net, separate from the servo `OE`.
   * `IN1`/`IN2` opposite: forward or reverse, speed from `PWM`
   * both high: short brake
   * both low: coast
-* Driver standby/enable is pulled off at power-up, so the wheels coast until software enables them. Outputs return to that off state if the Pi stops refreshing within the motor watchdog (about 100 ms).
+* The RP2040 drives servo `OE`, motor `OE`, and TB6612 `STBY`. `STBY` is pulled down, and the TB6612 treats that pin low as standby, so the wheels coast until firmware drives it. Firmware returns all three to the off state if the Pi stops refreshing within about 100 ms.
 
 This split matches the firmware: the dog uses a PCA9685 at `0x40` for servos, and the rover uses `0x60` with `pwm` / `in1` / `in2` per motor.
 
@@ -71,13 +94,13 @@ GPIO2 and GPIO3 already have about 1.8 kΩ pull-ups to 3.3 V on the Pi. A second
 * Series resistors of 47 Ω in SDA and SCL next to the GPIO header, to damp the edges.
 * The compass board adds capacitance and no pull-ups.
 
-The ID bus is separate. ID_SD and ID_SC connect only to a 3.3 V, 16-bit-address, non-paged EEPROM (CAT24C32 or equivalent) at `0x50`, plus 3.9 kΩ pull-ups to hat 3.3 V. Write-protect goes to a test point, pulled up. The EEPROM is specified for 100 kHz and does not clock-stretch. Nothing else connects to those pins.
+The ID bus is separate. ID_SD and ID_SC connect only to a 3.3 V, 16-bit-address, non-paged EEPROM at `0x50`, plus 3.9 kΩ pull-ups to hat 3.3 V. The schematic uses a 24LC32A (CAT24C32 equivalent) with A0, A1, and A2 tied to ground. Write-protect goes to a test point, pulled up. The EEPROM is specified for 100 kHz and does not clock-stretch. Nothing else connects to those pins.
 
 ### I2C map
 
 | Device | Bus | Address |
 |---|---|---|
-| HAT EEPROM (CAT24C32) | ID (GPIO0/GPIO1) | `0x50` |
+| HAT EEPROM (24LC32A) | ID (GPIO0/GPIO1) | `0x50` |
 | PCA9685, servos | I2C1 | `0x40` |
 | PCA9685, motors | I2C1 | `0x60` |
 | INA228 | I2C1 | `0x45` |
@@ -100,7 +123,11 @@ The ID bus is separate. ID_SD and ID_SC connect only to a 3.3 V, 16-bit-address,
 
 Before a chip is placed in the schematic, its manufacturer datasheet is in `datasheets/` at the repo root. Use a file already there when it matches the part. Otherwise download it as part of implementation. Symbols, footprints, and pin wiring come from that datasheet.
 
-Already present: `PCA9685.pdf`, `TB6612FNG_datasheet_en_20121101.pdf`, `DS_SX1261-2_V1.2.pdf`, `raspberry_pi_schem1.png`.
+The sheets live in `electronics/kicad/doggy-hat/`. The lower project is `electronics/kicad/doggy-lower/` and the upper project is `electronics/kicad/doggy-upper/`. `servos.kicad_sch` draws the sixteen 3-pin servo headers, grouped by leg. `motors.kicad_sch` draws the four motor screw terminals. Datasheets for the parts on those sheets:
+
+`INA228.pdf`, `TPS54560B.pdf`, `LM5176.pdf`, `LM74700-Q1.pdf`, `CSD18540Q5B.pdf`, `LR8.pdf`, `AMS1117.pdf`, `2N3904.pdf`, `SN74HC00.pdf`, `SN74HC14.pdf`, `LM393.pdf`, `PCA9685.pdf`, `TB6612FNG_datasheet_en_20121101.pdf`, `MPU-6050.pdf`, `BMP280.pdf`, `24LC32A.pdf`, `RP2040.pdf`, `RP2040-hardware-design.pdf`, `W25Q32JV.pdf`.
+
+Also in `datasheets/`, not placed on this hat: `DS_SX1261-2_V1.2.pdf`, `raspberry_pi_schem1.png`.
 
 ### Encoder microcontroller
 
